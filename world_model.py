@@ -2006,14 +2006,9 @@ class SlotAttentionAEv5(nn.Module):
             nn.Conv2d(64, 64, 5, stride=1, padding=2), nn.ReLU(),
             nn.Conv2d(64, 64, 5, stride=1, padding=2), nn.ReLU(),
         )
-        # Fix encoder init: PyTorch default kaiming_uniform_(a=sqrt(5)) has
-        # gain=0.577 instead of optimal sqrt(2) for ReLU. Over 4 layers this
-        # causes features to shrink ~24x, making position embed dominate.
-        for layer in self.encoder_cnn:
-            if isinstance(layer, nn.Conv2d):
-                nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
-                if layer.bias is not None:
-                    nn.init.zeros_(layer.bias)
+        # Encoder init: use PyTorch default (kaiming_uniform_, a=sqrt(5)).
+        # This keeps features small so position embedding has relative influence,
+        # which helps SA differentiate spatial positions and break symmetry.
 
         self.encoder_pos = SoftPositionEmbed(64, (64, 64))
         # MLP after position embedding (matching reference architecture:

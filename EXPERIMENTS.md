@@ -137,8 +137,11 @@ The `kaiming_normal_` init was added in Phase 26f to "fix dying features" (featu
 
 ---
 
-## Current State (Feb 19 night)
+## Phase 26h: Remove kaiming_normal_ Init (Match Standalone)
+**Date:** Feb 19 | **Status:** RUNNING
 
-**Phase 26h** (next): Remove `kaiming_normal_` encoder init from `SlotAttentionAEv5`. This is the last remaining difference from the working standalone test. Everything else is already ported.
-
-**Confidence:** High — the standalone test with PyTorch default init achieved entropy=0.53. The only difference is the encoder init.
+- **Change:** Removed `kaiming_normal_` encoder CNN init (was lines 2009-2016). Now uses PyTorch default `kaiming_uniform_(a=sqrt(5))`, matching the standalone test exactly.
+- **Config:** Same as 26g (300 epochs, batch=32, constant LR 4e-4, 4096 tokens, 7 slots)
+- **Exit criteria:** entropy < 0.2 = SUCCESS, entropy > 0.8 at epoch 100 = FAIL
+- **Result:** (pending)
+- **Verdict:** (pending)
