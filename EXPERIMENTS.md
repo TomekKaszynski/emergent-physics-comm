@@ -107,8 +107,38 @@ Simplified test: colored circles on gray background (64x64). Goal: isolate archi
 
 ---
 
-## Current State (Feb 19 evening)
+## Phase 26g: Port Reference Fixes + Constant LR (FAIL)
+**Date:** Feb 19 ~20:45 | **Duration:** killed at epoch 40
 
-**Phase 26g** (ready to run): Port the 3 reference fixes into `SlotAttentionAEv5` + constant LR schedule (warmup 30ep → constant 4e-4 → halve at ep 250). 300 epochs, batch=32, 5000 CLEVR images. Early stop if entropy < 0.2.
+- **Changes from 26f standalone:** Ported 3 fixes (log_sigma, no stride, attn eps order) into `SlotAttentionAEv5`. Changed LR to constant (warmup 30ep → constant 4e-4 → halve at 250). 300 epochs, batch=32, 5000 CLEVR images.
+- **Result:**
+  ```
+  Ep  10: recon=0.0379 entropy=1.000 [380s]
+  Ep  20: recon=0.0301 entropy=1.000 [1715s]
+  Ep  30: recon=0.0179 entropy=1.000 [3194s]
+  Ep  40: recon=0.0142 entropy=1.000 [4415s]  ← killed
+  ```
+- **Verdict:** FAIL — entropy stuck at 1.000 through epoch 40, when standalone test was at 0.552
 
-**Key open question:** Will constant LR push entropy from 0.53 down to <0.2 (sharp binding)?
+### Root Cause: Encoder CNN Init
+
+Side-by-side comparison found ONE remaining difference between the standalone (works) and ported AEv5 (fails):
+
+| Aspect | Standalone (entropy=0.53) | AEv5 (entropy=1.00) |
+|--------|---------------------------|---------------------|
+| Encoder CNN init | **PyTorch default** (kaiming_uniform, a=sqrt(5)) | **kaiming_normal_(fan_out, relu)** |
+| Everything else | identical | identical |
+
+The `kaiming_normal_` init was added in Phase 26f to "fix dying features" (features shrank 24x across 4 conv layers with default init). But the standalone test WORKED with default init.
+
+**Why the "fix" broke it:** With default init, encoder features are small → position embedding has MORE relative influence → spatial positions are distinguishable → SA can differentiate positions → symmetry breaking. With kaiming_normal_, features start large → position embedding is relatively weak → all positions look similar → SA can't differentiate → slots stay uniform.
+
+**Fix for Phase 26h:** Remove the `kaiming_normal_` init block (lines 2009-2016 in world_model.py). Use PyTorch default init, matching the standalone test exactly.
+
+---
+
+## Current State (Feb 19 night)
+
+**Phase 26h** (next): Remove `kaiming_normal_` encoder init from `SlotAttentionAEv5`. This is the last remaining difference from the working standalone test. Everything else is already ported.
+
+**Confidence:** High — the standalone test with PyTorch default init achieved entropy=0.53. The only difference is the encoder init.
