@@ -199,10 +199,24 @@ The original successful run was 1 lucky seed out of many attempts. With 2000 ima
 
 Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 slots and 64-dim, the random vectors have cosine similarity ~0, giving initial differentiation. But as training progresses, the learned μ dominates and all slots converge toward it. The random noise becomes insufficient to maintain slot diversity — hence the plateau at ~0.85 entropy.
 
-## Phase 26j Plan: Per-Slot Learnable Init (BO-QSA Style)
+## Phase 26j: Per-Slot Learnable Init (BO-QSA Style)
+**Date:** Feb 20
 
-Replace `N(μ, σ)` sampling with `nn.Parameter(torch.randn(num_slots, slot_dim))` as fixed initial vectors. This breaks symmetry by design rather than relying on random sampling. Each slot starts from a different learned position in representation space.
+- **Change:** Replaced shared Gaussian init `N(μ, σ)` with per-slot learnable vectors: `nn.Parameter(torch.randn(1, n_slots, slot_dim) * 0.02)`. No random sampling — deterministic init breaking symmetry by design.
+- **Config:** Same as 26i (500 epochs, batch=32, 7 slots, constant LR 4e-4, 5000 CLEVR images)
+- **Result:**
+  ```
+  Ep   1: recon=0.2391 entropy=1.000
+  Ep  25: recon=0.0154 entropy=0.994
+  Ep  50: recon=0.0089 entropy=0.958
+  Ep  80: recon=0.0036 entropy=0.746
+  Ep 100: recon=0.0026 entropy=0.596
+  Ep 140: recon=0.0023 entropy=0.574
+  Ep 170: recon=0.0017 entropy=0.562  ← best
+  Ep 180: recon=0.0016 entropy=0.561  ← plateau, killed
+  ```
+- **Verdict:** PARTIAL — entropy 1.000→0.562, significantly better than 26i (0.85) but far from 0.2 target. Background slot claims ~90% coverage, object slots remain blurry. Diagnosis: decoder reconstructs well without sharp masks — the loss doesn't force sharp slot boundaries. Next: need to constrain the decoder or change the loss to require sharp masks.
 
 ## Current State (Feb 20)
 
-Architecture is correct. Extended training breaks symmetry partially (entropy 1.0→0.85) but plateaus — shared Gaussian init is the bottleneck. Next: per-slot learnable init.
+Per-slot learnable init broke through 26i's plateau (0.85→0.56) but still can't achieve sharp binding. The bottleneck is no longer initialization — it's the decoder/loss. The MLP spatial broadcast decoder can reconstruct well by blending slots softly, so there's no gradient pressure for sharp per-pixel slot assignment. Next: constrain decoder or modify loss to force sharp masks.
