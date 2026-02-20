@@ -176,6 +176,33 @@ The original successful run was 1 lucky seed out of many attempts. With 2000 ima
 - Longer warmup: match paper's 10K step warmup
 - Consider 128×128 images (paper resolution)
 
+---
+
+## Phase 26i: Extended Training (500 Epochs)
+**Date:** Feb 20
+
+- **Change:** ae_epochs 300→500, LR halve at 450 (not 250), print every 5 epochs for first 25 then every 10, failure exit at epoch 100 if entropy>0.99
+- **Config:** 5000 CLEVR images, batch=32, 7 slots, constant LR 4e-4 after 30-epoch warmup
+- **Result:**
+  ```
+  Ep   1: recon=0.3259 entropy=1.000
+  Ep  25: recon=0.0249 entropy=0.999
+  Ep  50: recon=0.0124 entropy=0.982
+  Ep  70: recon=0.0070 entropy=0.935
+  Ep 100: recon=0.0054 entropy=0.869  ← passed failure exit
+  Ep 140: recon=0.0032 entropy=0.854  ← best
+  Ep 250: recon=0.0017 entropy=0.872  ← plateau, killed
+  ```
+- **Verdict:** PARTIAL — proved symmetry breaking is possible with extended training but shared Gaussian init cannot achieve sharp binding. Plateaus at ~0.85 entropy. Reconstruction excellent (0.002). Never reached 0.2 target.
+
+### Analysis
+
+Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 slots and 64-dim, the random vectors have cosine similarity ~0, giving initial differentiation. But as training progresses, the learned μ dominates and all slots converge toward it. The random noise becomes insufficient to maintain slot diversity — hence the plateau at ~0.85 entropy.
+
+## Phase 26j Plan: Per-Slot Learnable Init (BO-QSA Style)
+
+Replace `N(μ, σ)` sampling with `nn.Parameter(torch.randn(num_slots, slot_dim))` as fixed initial vectors. This breaks symmetry by design rather than relying on random sampling. Each slot starts from a different learned position in representation space.
+
 ## Current State (Feb 20)
 
-Architecture is correct (proven via forward pass test). Training scale is the bottleneck — need ~100x more gradient steps for reliable symmetry breaking.
+Architecture is correct. Extended training breaks symmetry partially (entropy 1.0→0.85) but plateaus — shared Gaussian init is the bottleneck. Next: per-slot learnable init.
