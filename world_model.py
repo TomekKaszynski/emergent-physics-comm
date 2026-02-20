@@ -1892,11 +1892,11 @@ class SoftPositionEmbed(nn.Module):
 
 
 class SlotAttentionModuleV2(nn.Module):
-    """Slot Attention matching reference implementation (Locatello et al., 2020).
+    """Slot Attention with per-slot learnable init (BO-QSA style).
 
-    Key details matching reference:
-    - Shared slot init: mu [1,1,D], log_sigma [1,1,D] (xavier_uniform_ both)
-    - sigma = exp(log_sigma) matching reference (always positive, ~1.0 at init)
+    Key details:
+    - Per-slot learnable init: slot_init [1, K, D] — each slot starts from a
+      different learned position, breaking symmetry by design (no random sampling)
     - Attention: k @ q^T → [B, N, K], softmax over slots, normalize over inputs
     - 3 iterations (paper default)
     - GRU update + MLP residual per iteration
@@ -1909,12 +1909,9 @@ class SlotAttentionModuleV2(nn.Module):
         self.n_iters = n_iters
         self.epsilon = epsilon
 
-        # Shared slot initialization (matching reference: same mu for all slots,
-        # diversity comes from random noise at each forward pass)
-        self.slots_mu = nn.Parameter(torch.empty(1, 1, slot_dim))
-        self.slots_log_sigma = nn.Parameter(torch.empty(1, 1, slot_dim))
-        nn.init.xavier_uniform_(self.slots_mu)
-        nn.init.xavier_uniform_(self.slots_log_sigma)
+        # Per-slot learnable init (BO-QSA style): each slot starts from a
+        # different learned vector, breaking symmetry by design
+        self.slot_init = nn.Parameter(torch.randn(1, n_slots, slot_dim) * 0.02)
 
         # Projection
         self.project_q = nn.Linear(slot_dim, slot_dim, bias=False)
@@ -1942,11 +1939,8 @@ class SlotAttentionModuleV2(nn.Module):
         k = self.project_k(inputs)   # [B, N, D_slot]
         v = self.project_v(inputs)   # [B, N, D_slot]
 
-        # Initialize slots by sampling from learned distribution
-        # (shared mu + learned sigma scaling, matching reference impl)
-        mu = self.slots_mu.expand(B, self.n_slots, -1)
-        sigma = self.slots_log_sigma.exp().expand(B, self.n_slots, -1)
-        slots = mu + sigma * torch.randn_like(mu)
+        # Initialize slots from per-slot learnable vectors (no random sampling)
+        slots = self.slot_init.expand(B, -1, -1)
 
         for _ in range(self.n_iters):
             slots_prev = slots
