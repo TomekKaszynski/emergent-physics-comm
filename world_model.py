@@ -2084,6 +2084,130 @@ class SlotAttentionAEv5(nn.Module):
         return total_loss, recon_loss, entropy_reg, recon, slots, alpha
 
 
+class SlotAttentionDINO(nn.Module):
+    """Slot Attention with frozen DINOv2 encoder and feature reconstruction.
+
+    Key properties:
+    1. Frozen DINOv2-Small encoder (dinov2_vits14, ~22M params frozen)
+    2. 256 patch tokens (16x16 from 224x224 input), 384-dim features
+    3. SlotAttentionModuleV2 with per-slot learnable init (feature_dim=384)
+    4. MLP spatial broadcast decoder reconstructs DINOv2 features (not pixels)
+    5. Loss: MSE between predicted and actual DINOv2 patch features
+    """
+
+    def __init__(self, n_slots=7, slot_dim=64, img_size=64):
+        super().__init__()
+        self.n_slots = n_slots
+        self.slot_dim = slot_dim
+        self.img_size = img_size
+        self.dino_dim = 384  # DINOv2-Small output dim
+        self.n_patches = 16  # 224 / 14
+
+        # Frozen DINOv2-Small encoder
+        self.dino = torch.hub.load(
+            'facebookresearch/dinov2', 'dinov2_vits14', pretrained=True)
+        self.dino.eval()
+        for p in self.dino.parameters():
+            p.requires_grad = False
+
+        # ImageNet normalization (DINOv2 expects this)
+        self.register_buffer('dino_mean',
+            torch.tensor([0.485, 0.456, 0.406]).reshape(1, 3, 1, 1))
+        self.register_buffer('dino_std',
+            torch.tensor([0.229, 0.224, 0.225]).reshape(1, 3, 1, 1))
+
+        # Encoder MLP (process DINOv2 features before SA)
+        self.encoder_mlp = nn.Sequential(
+            nn.Linear(self.dino_dim, self.dino_dim),
+            nn.ReLU(),
+            nn.Linear(self.dino_dim, self.dino_dim),
+        )
+        self.encoder_norm = nn.LayerNorm(self.dino_dim)
+
+        # Slot Attention (feature_dim=384 for DINOv2, slot_dim=64)
+        self.slot_attention = SlotAttentionModuleV2(
+            n_slots=n_slots, slot_dim=slot_dim, n_iters=3,
+            feature_dim=self.dino_dim)
+
+        # MLP Spatial Broadcast Decoder (reconstructs DINOv2 features)
+        # slot_dim + 2 (xy position) → hidden → dino_dim + 1 (features + alpha)
+        self.decoder = nn.Sequential(
+            nn.Linear(slot_dim + 2, 256), nn.ReLU(),
+            nn.Linear(256, 256), nn.ReLU(),
+            nn.Linear(256, 256), nn.ReLU(),
+            nn.Linear(256, self.dino_dim + 1),  # 384 features + 1 alpha
+        )
+
+        # Decoder position grid for 16x16 patch grid [-1, 1]
+        xs = torch.linspace(-1, 1, self.n_patches)
+        ys = torch.linspace(-1, 1, self.n_patches)
+        grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
+        self.register_buffer(
+            'grid', torch.stack([grid_x, grid_y], dim=-1).reshape(-1, 2))
+
+    def extract_dino_features(self, image):
+        """Extract frozen DINOv2 patch features from images.
+
+        Args:
+            image: [B, 3, H, W] in [0, 1] range
+        Returns:
+            patch_tokens: [B, 256, 384] DINOv2 patch features
+        """
+        with torch.no_grad():
+            # Resize to 224x224 (DINOv2 training resolution)
+            img_224 = F.interpolate(
+                image, size=(224, 224), mode='bilinear', align_corners=False)
+            # ImageNet normalization
+            img_norm = (img_224 - self.dino_mean) / self.dino_std
+            # Extract patch tokens (excluding CLS)
+            features = self.dino.forward_features(img_norm)
+            return features['x_norm_patchtokens']  # [B, 256, 384]
+
+    def encode(self, image):
+        dino_features = self.extract_dino_features(image)  # [B, 256, 384]
+        x = self.encoder_mlp(dino_features)
+        x = self.encoder_norm(x)
+        slots = self.slot_attention(x)  # [B, K, slot_dim]
+        return slots, dino_features
+
+    def decode(self, slots):
+        B, K, D = slots.shape
+        N = self.grid.shape[0]  # 256 patches
+
+        # Spatial broadcast: each slot to every patch position
+        slots_bc = slots.unsqueeze(2).expand(B, K, N, D)
+        grid = self.grid.unsqueeze(0).unsqueeze(0).expand(B, K, N, 2)
+        dec_in = torch.cat([slots_bc, grid], dim=-1)  # [B, K, N, D+2]
+
+        decoded = self.decoder(dec_in)  # [B, K, N, dino_dim+1]
+        features = decoded[:, :, :, :self.dino_dim]
+        alpha_logits = decoded[:, :, :, self.dino_dim:]
+
+        alpha = F.softmax(alpha_logits, dim=1)  # per-patch slot competition
+        recon = (alpha * features).sum(dim=1)  # [B, N, dino_dim]
+
+        alpha = alpha.squeeze(-1)  # [B, K, N]
+        return recon, alpha
+
+    def forward(self, image, training=True):
+        import numpy as np
+        slots, dino_features = self.encode(image)
+        recon_features, alpha = self.decode(slots)
+
+        # Loss: MSE on DINOv2 features
+        recon_loss = F.mse_loss(recon_features, dino_features)
+
+        # Entropy monitoring (over 256 patches instead of pixels)
+        # alpha: [B, K, N] where N=256
+        patch_entropy = -(alpha * (alpha + 1e-8).log()).sum(dim=1).mean()
+        max_entropy = np.log(self.n_slots)
+        entropy_reg = patch_entropy / max_entropy  # normalize to [0, 1]
+
+        total_loss = recon_loss  # pure feature reconstruction
+
+        return total_loss, recon_loss, entropy_reg, recon_features, slots, alpha
+
+
 def count_params(model):
     return sum(p.numel() for p in model.parameters())
 

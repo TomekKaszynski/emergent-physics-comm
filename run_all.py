@@ -35,7 +35,8 @@ from world_model import (
     SlotAttentionModule, ObjectCentricJEPA, ObjectCentricJEPAv2,
     SlotAttentionAutoencoder, SlotJEPAPredictor, SlotAttentionAEv2,
     SlotAttentionAEv3,
-    SoftPositionEmbed, SlotAttentionModuleV2, SlotAttentionAEv5
+    SoftPositionEmbed, SlotAttentionModuleV2, SlotAttentionAEv5,
+    SlotAttentionDINO
 )
 
 OUTPUT_DIR = Path("results")
@@ -10866,6 +10867,225 @@ def run_phase26f_clevr_test():
     print("└─ Done")
 
     return passed
+
+
+def run_phase27_dino_clevr():
+    """Phase 27: DINOv2 feature reconstruction with Slot Attention.
+
+    Replace pixel reconstruction with DINOv2 feature reconstruction.
+    Frozen DINOv2-Small encoder, SA groups patch features, MLP decoder
+    reconstructs DINOv2 features (not pixels). Loss: MSE on features.
+    """
+    print("=" * 60)
+    print("PHASE 27: DINOv2 Feature Reconstruction on CLEVR")
+    print("=" * 60)
+    t0 = time.time()
+
+    if torch.backends.mps.is_available():
+        device = torch.device('mps')
+    elif torch.cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
+    print(f"│  Device: {device}")
+
+    # ── Dataset ────────────────────────────────────────────────
+    print("\n┌─ Generating CLEVR images")
+    data = generate_clevr_images(n_images=5000, img_size=64, max_objects=4)
+    images = data['images']       # [5000, 3, 64, 64]
+    masks_gt = data['masks_gt']   # [5000, 5, 64, 64] (bg + 4 obj slots)
+    n = len(images)
+    n_train = int(0.8 * n)
+    print(f"│  {n} images, train={n_train}, val={n-n_train}")
+    print("└─ Done")
+
+    # ── Training ───────────────────────────────────────────────
+    n_slots = 7
+    ae_epochs = 500
+
+    print("\n" + "=" * 50)
+    print(f"Training SlotAttentionDINO on CLEVR ({n_slots} slots, {ae_epochs} epochs)")
+    print("=" * 50)
+
+    ae = SlotAttentionDINO(n_slots=n_slots, slot_dim=64, img_size=64).to(device)
+    trainable_params = sum(p.numel() for p in ae.parameters() if p.requires_grad)
+    frozen_params = sum(p.numel() for p in ae.parameters() if not p.requires_grad)
+    print(f"│  Trainable params: {trainable_params:,}")
+    print(f"│  Frozen DINOv2 params: {frozen_params:,}")
+    print(f"│  SA iters: {ae.slot_attention.n_iters}, per-slot learnable init")
+
+    base_lr = 4e-4
+    ae_opt = torch.optim.Adam(
+        [p for p in ae.parameters() if p.requires_grad], lr=base_lr)
+    warmup_epochs = 30
+
+    def lr_lambda(epoch):
+        if epoch < warmup_epochs:
+            return epoch / warmup_epochs
+        elif epoch < 450:
+            return 1.0  # constant LR
+        else:
+            return 0.5  # halve for final 50 epochs
+
+    ae_sched = torch.optim.lr_scheduler.LambdaLR(ae_opt, lr_lambda)
+    batch_size = 32
+
+    for epoch in range(ae_epochs):
+        ae.train()
+        # Keep DINOv2 in eval mode even during training
+        ae.dino.eval()
+        perm = torch.randperm(n_train)
+        ep_loss, nb = 0, 0
+
+        for i in range(0, n_train, batch_size):
+            idx = perm[i:i+batch_size]
+            imgs = images[idx].to(device)
+            total_loss, recon_loss, entropy_reg, recon_feat, slots, alpha = ae(
+                imgs, training=True)
+            ae_opt.zero_grad()
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                [p for p in ae.parameters() if p.requires_grad], 1.0)
+            ae_opt.step()
+            ep_loss += recon_loss.item(); nb += 1
+            if device.type == 'mps' and nb % 100 == 0:
+                torch.mps.empty_cache()
+
+        ae_sched.step()
+
+        # Print schedule: every 5 epochs for first 25, every 10 after
+        should_print = ((epoch + 1) <= 25 and (epoch + 1) % 5 == 0) or \
+                       ((epoch + 1) > 25 and (epoch + 1) % 10 == 0) or \
+                       (epoch + 1) == 1
+        if should_print:
+            ae.eval()
+            with torch.no_grad():
+                # Diagnostic: compute entropy over patches
+                diag_alphas = []
+                for di in range(0, 200, 32):
+                    d_batch = images[di:di+32].to(device)
+                    _, _, _, _, _, d_alpha = ae(d_batch, training=False)
+                    diag_alphas.append(d_alpha.cpu())
+                diag_alpha = torch.cat(diag_alphas, dim=0)  # [200, K, 256]
+                # Ownership over patches
+                ownership = diag_alpha.argmax(dim=1)  # [200, 256]
+                B_d = ownership.shape[0]
+                N_patches = 256
+                slot_counts = torch.zeros(B_d, n_slots)
+                for s in range(n_slots):
+                    slot_counts[:, s] = (ownership == s).float().sum(dim=1)
+                mean_fracs = (slot_counts / N_patches).mean(dim=0)
+                active = int((mean_fracs > 0.01).sum().item())
+                max_cov = mean_fracs.max().item() * 100
+                # Entropy
+                masks_f = diag_alpha  # [B, K, N] already flat
+                ent = -(masks_f * (masks_f + 1e-8).log()).sum(dim=1).mean()
+                norm_ent = ent.item() / np.log(n_slots)
+
+            elapsed = time.time() - t0
+            print(f"│  Epoch {epoch+1:3d}/{ae_epochs}: "
+                  f"recon={ep_loss/nb:.4f} "
+                  f"active={active}/{n_slots} "
+                  f"max_cov={max_cov:.1f}% "
+                  f"entropy={norm_ent:.3f} "
+                  f"[{elapsed:.0f}s]", flush=True)
+
+            # Early stopping: sharp slot binding achieved
+            if norm_ent < 0.2:
+                print(f"│", flush=True)
+                print(f"│  SUCCESS — stopping early (entropy={norm_ent:.3f} < 0.2)", flush=True)
+                break
+
+            # Failure exit: if entropy > 0.99 at epoch 100, seed didn't break symmetry
+            if (epoch + 1) == 100 and norm_ent > 0.99:
+                print(f"│", flush=True)
+                print(f"│  FAIL — seed didn't break symmetry by epoch 100 (entropy={norm_ent:.3f} > 0.99)", flush=True)
+                break
+
+    # ── Evaluation ─────────────────────────────────────────────
+    print("\n┌─ Phase 27 Evaluation")
+    ae.eval()
+    val_idx = torch.arange(n_train, n)
+
+    with torch.no_grad():
+        val_imgs = images[val_idx[:200]].to(device)
+        alpha_parts = []
+        for vi in range(0, len(val_imgs), 32):
+            vb = val_imgs[vi:vi+32]
+            _, _, _, _, _, a = ae(vb, training=False)
+            alpha_parts.append(a.cpu())
+        alpha_val = torch.cat(alpha_parts, dim=0)  # [200, K, 256]
+
+    # Slot masks over 16x16 patch grid (reshape for visualization)
+    slot_colors = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [1, 0, 1],
+                   [0, 1, 1], [1, 0.5, 0]]
+    P = 16  # patches per side
+    fig, axes = plt.subplots(2, 8, figsize=(20, 5))
+    for i in range(8):
+        axes[0, i].imshow(images[val_idx[i]].permute(1, 2, 0).numpy())
+        axes[0, i].set_title('Original' if i == 0 else '')
+        axes[0, i].axis('off')
+        # Slot mask composite (16x16 upscaled for display)
+        masks = alpha_val[i].numpy().reshape(n_slots, P, P)
+        composite = np.zeros((P, P, 3))
+        for s in range(n_slots):
+            for c in range(3):
+                composite[:, :, c] += masks[s] * slot_colors[s][c]
+        axes[1, i].imshow(np.clip(composite, 0, 1), interpolation='nearest')
+        axes[1, i].set_title('Slot masks (16x16)' if i == 0 else '')
+        axes[1, i].axis('off')
+    fig.suptitle('Phase 27: DINOv2 Feature Recon — Slot Masks', fontsize=12)
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / "phase27_dino_clevr_result.png", dpi=150)
+    plt.close()
+    print("│  → results/phase27_dino_clevr_result.png")
+
+    # Individual slot heatmaps
+    fig, axes = plt.subplots(2, n_slots, figsize=(2.5 * n_slots, 5))
+    for s in range(n_slots):
+        axes[0, s].imshow(
+            alpha_val[0, s].numpy().reshape(P, P),
+            cmap='hot', vmin=0, vmax=1, interpolation='nearest')
+        axes[0, s].set_title(f'Slot {s}', fontsize=9)
+        axes[0, s].axis('off')
+        axes[1, s].imshow(
+            alpha_val[1, s].numpy().reshape(P, P),
+            cmap='hot', vmin=0, vmax=1, interpolation='nearest')
+        axes[1, s].axis('off')
+    fig.suptitle('Phase 27: Individual Slot Masks (16x16 patches)', fontsize=12)
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / "phase27_dino_clevr_slots.png", dpi=150)
+    plt.close()
+    print("│  → results/phase27_dino_clevr_slots.png")
+
+    # Final metrics
+    with torch.no_grad():
+        all_alpha = alpha_val[:100]  # [100, K, 256]
+        ownership = all_alpha.argmax(dim=1)  # [100, 256]
+        B_d = ownership.shape[0]
+        slot_counts = torch.zeros(B_d, n_slots)
+        for s in range(n_slots):
+            slot_counts[:, s] = (ownership == s).float().sum(dim=1)
+        mean_fracs = (slot_counts / 256).mean(dim=0)
+        active = int((mean_fracs > 0.01).sum().item())
+        max_cov = mean_fracs.max().item() * 100
+        masks_f = all_alpha
+        ent = -(masks_f * (masks_f + 1e-8).log()).sum(dim=1).mean()
+        norm_ent = ent.item() / np.log(n_slots)
+
+    elapsed = time.time() - t0
+    print(f"│")
+    print(f"│  Active slots: {active}/{n_slots}")
+    print(f"│  Max coverage: {max_cov:.1f}%")
+    print(f"│  Entropy: {norm_ent:.3f}")
+    print(f"│  Time: {elapsed:.0f}s")
+    print("└─ Done")
+
+    # Save model
+    torch.save(ae.state_dict(), OUTPUT_DIR / "phase27_model.pt")
+    print(f"│  → results/phase27_model.pt")
+
+    return norm_ent < 0.2
 
 
 def run_phase26f():
