@@ -10666,7 +10666,7 @@ def run_phase26f_clevr_test():
 
     # ── Training ───────────────────────────────────────────────
     n_slots = 7
-    ae_epochs = 300
+    ae_epochs = 500
 
     print("\n" + "=" * 50)
     print(f"Training SlotAttentionAEv5 on CLEVR ({n_slots} slots, {ae_epochs} epochs, 4096 tokens)")
@@ -10684,7 +10684,7 @@ def run_phase26f_clevr_test():
     def lr_lambda(epoch):
         if epoch < warmup_epochs:
             return epoch / warmup_epochs
-        elif epoch < 250:
+        elif epoch < 450:
             return 1.0  # constant LR (reference-faithful)
         else:
             return 0.5  # halve for final 50 epochs
@@ -10712,7 +10712,11 @@ def run_phase26f_clevr_test():
 
         ae_sched.step()
 
-        if (epoch + 1) % 10 == 0:
+        # Print schedule: every 5 epochs for first 25, every 10 after
+        should_print = ((epoch + 1) <= 25 and (epoch + 1) % 5 == 0) or \
+                       ((epoch + 1) > 25 and (epoch + 1) % 10 == 0) or \
+                       (epoch + 1) == 1
+        if should_print:
             ae.eval()
             with torch.no_grad():
                 # Process in small batches to avoid MPS OOM
@@ -10746,6 +10750,12 @@ def run_phase26f_clevr_test():
             if norm_ent < 0.2:
                 print(f"│", flush=True)
                 print(f"│  SUCCESS — stopping early (entropy={norm_ent:.3f} < 0.2)", flush=True)
+                break
+
+            # Failure exit: if entropy > 0.99 at epoch 100, seed didn't break symmetry
+            if (epoch + 1) == 100 and norm_ent > 0.99:
+                print(f"│", flush=True)
+                print(f"│  FAIL — seed didn't break symmetry by 5K steps (entropy={norm_ent:.3f} > 0.99)", flush=True)
                 break
 
     # ── Evaluation ─────────────────────────────────────────────
