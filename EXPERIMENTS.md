@@ -138,10 +138,44 @@ The `kaiming_normal_` init was added in Phase 26f to "fix dying features" (featu
 ---
 
 ## Phase 26h: Remove kaiming_normal_ Init (Match Standalone)
-**Date:** Feb 19 | **Status:** RUNNING
+**Date:** Feb 20
 
 - **Change:** Removed `kaiming_normal_` encoder CNN init (was lines 2009-2016). Now uses PyTorch default `kaiming_uniform_(a=sqrt(5))`, matching the standalone test exactly.
 - **Config:** Same as 26g (300 epochs, batch=32, constant LR 4e-4, 4096 tokens, 7 slots)
-- **Exit criteria:** entropy < 0.2 = SUCCESS, entropy > 0.8 at epoch 100 = FAIL
-- **Result:** (pending)
-- **Verdict:** (pending)
+- **Result:** entropy=1.000 through epoch 30 (killed). Same failure as 26g.
+- **Verdict:** FAIL — removing kaiming_normal_ was not the root cause
+
+### Diagnosis: Architecture Equivalence Proven, Original Run Was Lucky Seed
+
+**Forward pass comparison test:** Wrote `debug_compare.py` — copied weights from standalone `SlotAttentionAE` to `SlotAttentionAEv5`, fed same input with same random seed. Results: **bit-for-bit identical** outputs (loss, recon, slots, alpha all match). Architectures are provably equivalent.
+
+**AEv5 with standalone training loop:** Ran `debug_train_aev5.py` — imported AEv5 from world_model.py, used standalone's data (2000 images), standalone's step-level LR warmup + 0.98 decay. Result: entropy=1.000 through epoch 40. Same failure.
+
+**Standalone re-run:** Re-ran `test_reference_sa.py` (unchanged file). Result: entropy=1.000 through epoch 50. **The standalone itself no longer reproduces the breakthrough.** The original successful run (entropy=0.53) was a lucky random seed.
+
+### Multi-Seed Reliability Test
+
+Ran `debug_multiseed.py`: 5 seeds × 60 epochs each, standalone SA model, 2000 images, 2-3 circles.
+
+| Seed | Best Entropy | Breakthrough | Verdict |
+|------|-------------|-------------|---------|
+| 0 | 1.000 | NONE | FAIL |
+| 1 | 0.999 | NONE | FAIL |
+| 2 | 1.000 | NONE | FAIL |
+| 3-4 | (not reached, killed) | — | — |
+
+**Success rate: 0/3 (0%) in 60 epochs.** SA is unreliable with current training scale.
+
+### Root Cause: Insufficient Training
+
+The original successful run was 1 lucky seed out of many attempts. With 2000 images × 32 batch × 60 epochs = 3000 gradient steps, SA doesn't reliably break symmetry. The reference paper trains for **500K steps** with batch 64 on 128×128 CLEVR. We're at ~3K steps — **167x fewer** than the paper.
+
+**Fix for next session:** Scale up training:
+- More steps: 500+ epochs (25K+ steps) or larger dataset
+- Larger batch: 64 (if MPS memory allows with 4096 tokens)
+- Longer warmup: match paper's 10K step warmup
+- Consider 128×128 images (paper resolution)
+
+## Current State (Feb 20)
+
+Architecture is correct (proven via forward pass test). Training scale is the bottleneck — need ~100x more gradient steps for reliable symmetry breaking.
