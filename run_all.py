@@ -11380,8 +11380,8 @@ def run_phase28_slot_jepa():
             r = random.randint(5, 10)
             cx = random.uniform(r + 2, S - r - 3)
             cy = random.uniform(r + 2, S - r - 3)
-            vx = random.uniform(-1.5, 1.5)
-            vy = random.uniform(-1.5, 1.5)
+            vx = random.uniform(-5.0, 5.0)
+            vy = random.uniform(-5.0, 5.0)
             objects.append({'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy, 'r': r,
                             'color': palette[oi % len(palette)]})
 
@@ -11451,22 +11451,30 @@ def run_phase28_slot_jepa():
     if device.type == 'mps':
         torch.mps.empty_cache()
 
-    # ── Build training pairs ──────────────────────────────────
+    # ── Build training pairs (Δ=1 and Δ=3) ─────────────────
     n_train_seq = 800
     n_val_seq = 200
+    delta = 3  # predict 3 frames ahead
 
-    # slots_t → slots_t+1 pairs: [n_seq * 19, 7, 64]
-    train_slots_t = all_slots[:n_train_seq, :-1].reshape(-1, 7, 64)  # [15200, 7, 64]
-    train_slots_tp1 = all_slots[:n_train_seq, 1:].reshape(-1, 7, 64)
-    val_slots_t = all_slots[n_train_seq:, :-1].reshape(-1, 7, 64)    # [3800, 7, 64]
-    val_slots_tp1 = all_slots[n_train_seq:, 1:].reshape(-1, 7, 64)
+    # Δ=1 pairs for comparison
+    val_slots_t_d1 = all_slots[n_train_seq:, :-1].reshape(-1, 7, 64)
+    val_slots_tp1_d1 = all_slots[n_train_seq:, 1:].reshape(-1, 7, 64)
+    copy_mse_d1 = F.mse_loss(val_slots_t_d1, val_slots_tp1_d1).item()
 
-    print(f"\n│  Train pairs: {len(train_slots_t)}", flush=True)
+    # Δ=delta pairs: slots_t → slots_{t+delta}
+    train_slots_t = all_slots[:n_train_seq, :-delta].reshape(-1, 7, 64)
+    train_slots_tp1 = all_slots[:n_train_seq, delta:].reshape(-1, 7, 64)
+    val_slots_t = all_slots[n_train_seq:, :-delta].reshape(-1, 7, 64)
+    val_slots_tp1 = all_slots[n_train_seq:, delta:].reshape(-1, 7, 64)
+
+    print(f"\n│  Prediction delta: {delta} frames", flush=True)
+    print(f"│  Train pairs: {len(train_slots_t)}", flush=True)
     print(f"│  Val pairs: {len(val_slots_t)}", flush=True)
 
-    # Baseline: copy-previous MSE (predicting slots_t = slots_t+1)
+    # Baselines
     copy_mse = F.mse_loss(val_slots_t, val_slots_tp1).item()
-    print(f"│  Copy-previous baseline MSE: {copy_mse:.6f}", flush=True)
+    print(f"│  Copy baseline MSE (Δ={delta}): {copy_mse:.6f}", flush=True)
+    print(f"│  Copy baseline MSE (Δ=1): {copy_mse_d1:.6f}", flush=True)
 
     # ── Train SlotPredictor ───────────────────────────────────
     n_slots = 7
@@ -11555,29 +11563,32 @@ def run_phase28_slot_jepa():
     predictor.eval()
 
     # ── Autoregressive evaluation ─────────────────────────────
-    print(f"\n┌─ Autoregressive Rollout Evaluation", flush=True)
-    print(f"│  Given frames 1-5, predict frames 6-10", flush=True)
+    print(f"\n┌─ Autoregressive Rollout Evaluation (Δ={delta})", flush=True)
+    # Each predictor step jumps delta frames
+    # From frame 2 (idx 1), predict frame 2+delta, 2+2*delta, ...
 
     val_seqs = all_slots[n_train_seq:]  # [200, 20, 7, 64]
-    n_context = 5
-    n_predict = 5
+    context_idx = 1  # use frame 2 as starting point (gives room for 5+ jumps)
+    n_predict = min(5, (n_frames - context_idx - 1) // delta)
 
-    step_mses = []  # MSE at each prediction step
-    step_cosines = []  # cosine similarity at each step
+    print(f"│  Start frame: {context_idx+1}, predict {n_predict} steps "
+          f"(frames {context_idx+1+delta} to {context_idx+1+n_predict*delta})", flush=True)
+
+    step_mses = []
+    step_cosines = []
 
     with torch.no_grad():
         for pred_step in range(n_predict):
             if pred_step == 0:
-                # First prediction: use last context frame
-                input_slots = val_seqs[:, n_context - 1].to(device)  # [200, 7, 64]
+                input_slots = val_seqs[:, context_idx].to(device)
             else:
-                input_slots = pred_slots  # use previous prediction
+                input_slots = pred_slots
 
-            pred_slots = predictor(input_slots)  # [200, 7, 64]
-            target_slots = val_seqs[:, n_context + pred_step].to(device)
+            pred_slots = predictor(input_slots)
+            target_idx = context_idx + (pred_step + 1) * delta
+            target_slots = val_seqs[:, target_idx].to(device)
 
             mse = F.mse_loss(pred_slots, target_slots).item()
-            # Cosine similarity per slot, averaged
             cos = F.cosine_similarity(
                 pred_slots.reshape(-1, slot_dim),
                 target_slots.reshape(-1, slot_dim), dim=-1).mean().item()
@@ -11585,26 +11596,27 @@ def run_phase28_slot_jepa():
             step_mses.append(mse)
             step_cosines.append(cos)
 
-            print(f"│  Step {pred_step+1} (frame {n_context+pred_step+1}): "
+            print(f"│  Step {pred_step+1} (frame {target_idx+1}): "
                   f"MSE={mse:.6f} cosine={cos:.4f}", flush=True)
 
     print(f"│", flush=True)
-    print(f"│  1-step MSE: {step_mses[0]:.6f} (copy baseline: {copy_mse:.6f}, "
+    print(f"│  1-step MSE: {step_mses[0]:.6f} (copy baseline Δ={delta}: {copy_mse:.6f}, "
           f"{(1-step_mses[0]/copy_mse)*100:.1f}% better)", flush=True)
-    print(f"│  5-step MSE: {step_mses[4]:.6f} "
-          f"(ratio to 1-step: {step_mses[4]/step_mses[0]:.2f}x)", flush=True)
+    last = len(step_mses) - 1
+    print(f"│  {last+1}-step MSE: {step_mses[last]:.6f} "
+          f"(ratio to 1-step: {step_mses[last]/step_mses[0]:.2f}x)", flush=True)
 
     # Success criteria
     success_1step = step_mses[0] < 0.1 * slot_var
-    success_rollout = step_mses[4] < 2.0 * step_mses[0]
+    success_rollout = step_mses[last] < 2.0 * step_mses[0] if last > 0 else True
     success_vs_copy = step_mses[0] < copy_mse
 
     print(f"│", flush=True)
     print(f"│  1-step < 0.1×variance ({0.1*slot_var:.6f}): "
           f"{'YES' if success_1step else 'NO'}", flush=True)
-    print(f"│  5-step < 2× 1-step: "
+    print(f"│  {last+1}-step < 2× 1-step: "
           f"{'YES' if success_rollout else 'NO'}", flush=True)
-    print(f"│  Better than copy: "
+    print(f"│  Better than copy (Δ={delta}): "
           f"{'YES' if success_vs_copy else 'NO'}", flush=True)
     print("└─ Done", flush=True)
 
@@ -11615,8 +11627,17 @@ def run_phase28_slot_jepa():
     import matplotlib.pyplot as plt
 
     vis_seqs = [0, 1]
-    vis_frames = [0, 4, 5, 7, 9]  # frames 1,5,6,8,10
-    labels = ['f1', 'f5\n(last ctx)', 'f6\n(pred 1)', 'f8\n(pred 3)', 'f10\n(pred 5)']
+    # Show: start frame, then predicted frames at delta intervals
+    vis_gt_frames = [context_idx]
+    vis_pred_indices = []
+    for ps in range(min(4, n_predict)):
+        target_idx = context_idx + (ps + 1) * delta
+        if target_idx < n_frames:
+            vis_gt_frames.append(target_idx)
+            vis_pred_indices.append(ps)
+    vis_frames = vis_gt_frames
+    labels = [f"f{fi+1}\n(start)" if i == 0 else f"f{fi+1}\n(pred {i})"
+              for i, fi in enumerate(vis_frames)]
 
     fig, axes = plt.subplots(len(vis_seqs) * 2, len(vis_frames),
                               figsize=(3 * len(vis_frames), 3 * len(vis_seqs) * 2))
@@ -11625,20 +11646,21 @@ def run_phase28_slot_jepa():
         for si_idx, si in enumerate(vis_seqs):
             seq_slots = val_seqs[si]  # [20, 7, 64]
 
-            # Ground truth alpha masks for all frames
+            # Ground truth alpha masks
             gt_alphas = {}
             for fi in vis_frames:
                 slots_fi = seq_slots[fi:fi+1].to(device)
-                _, alpha = ae.decode(slots_fi)  # [1, 7, 256]
+                _, alpha = ae.decode(slots_fi)
                 gt_alphas[fi] = alpha[0].cpu()
 
-            # Predicted alpha masks for frames 6-10
+            # Predicted alpha masks via autoregressive rollout
             pred_alphas = {}
-            cur = seq_slots[n_context - 1:n_context].to(device)
+            cur = seq_slots[context_idx:context_idx+1].to(device)
             for ps in range(n_predict):
                 cur = predictor(cur)
+                target_idx = context_idx + (ps + 1) * delta
                 _, alpha = ae.decode(cur)
-                pred_alphas[n_context + ps] = alpha[0].cpu()
+                pred_alphas[target_idx] = alpha[0].cpu()
 
             slot_colors = plt.cm.tab10(np.linspace(0, 1, 10))[:7, :3]
             P = 16
@@ -11656,13 +11678,13 @@ def run_phase28_slot_jepa():
                 ax.set_title(f"GT {labels[fi_idx]}", fontsize=8)
                 ax.axis('off')
 
-                # Row 2: predicted slot masks (use GT for context frames)
+                # Row 2: predicted slot masks (use GT for start frame)
                 ax = axes[si_idx * 2 + 1, fi_idx]
-                if fi < n_context:
+                if fi == context_idx:
                     alpha_p = gt_alphas[fi]
-                    title = f"(ctx) {labels[fi_idx]}"
+                    title = f"(start) {labels[fi_idx]}"
                 else:
-                    alpha_p = pred_alphas[fi]
+                    alpha_p = pred_alphas.get(fi, gt_alphas[fi])
                     title = f"Pred {labels[fi_idx]}"
                 owner_p = alpha_p.argmax(dim=0).numpy().reshape(P, P)
                 owner_rgb_p = np.zeros((P, P, 3))
@@ -11673,8 +11695,8 @@ def run_phase28_slot_jepa():
                 ax.set_title(title, fontsize=8)
                 ax.axis('off')
 
-    fig.suptitle(f"Phase 28: Slot JEPA — GT (top) vs Predicted (bottom)\n"
-                 f"1-step MSE={step_mses[0]:.6f}, 5-step MSE={step_mses[4]:.6f}",
+    fig.suptitle(f"Phase 28b: Slot JEPA (Δ={delta}, v=5.0) — GT (top) vs Predicted (bottom)\n"
+                 f"1-step MSE={step_mses[0]:.6f}, {last+1}-step MSE={step_mses[last]:.6f}",
                  fontsize=11, fontweight='bold')
     plt.tight_layout()
     plt.savefig(OUTPUT_DIR / "phase28_slot_jepa.png", dpi=150, bbox_inches='tight')
@@ -11686,20 +11708,20 @@ def run_phase28_slot_jepa():
     steps = list(range(1, n_predict + 1))
     ax1.plot(steps, step_mses, 'bo-', label='Predictor')
     ax1.axhline(y=copy_mse, color='r', linestyle='--', label='Copy baseline')
-    ax1.set_xlabel('Prediction step')
+    ax1.set_xlabel(f'Prediction step (Δ={delta} frames each)')
     ax1.set_ylabel('MSE')
-    ax1.set_title('Autoregressive MSE')
+    ax1.set_title(f'Autoregressive MSE (Δ={delta})')
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
     ax2.plot(steps, step_cosines, 'go-')
-    ax2.set_xlabel('Prediction step')
+    ax2.set_xlabel(f'Prediction step (Δ={delta} frames each)')
     ax2.set_ylabel('Cosine similarity')
     ax2.set_title('Slot Cosine Similarity')
     ax2.set_ylim(0, 1)
     ax2.grid(True, alpha=0.3)
 
-    plt.suptitle('Phase 28: Autoregressive Rollout', fontsize=12, fontweight='bold')
+    plt.suptitle(f'Phase 28b: Autoregressive Rollout (Δ={delta}, v=5.0)', fontsize=12, fontweight='bold')
     plt.tight_layout()
     plt.savefig(OUTPUT_DIR / "phase28_rollout_error.png", dpi=150, bbox_inches='tight')
     plt.close()
