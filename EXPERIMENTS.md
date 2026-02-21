@@ -694,6 +694,21 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Diagnosis:** The slot attention model tracks objects adequately for visual binding (90% consistency) but the centroid positions are too noisy for physics-level measurements. The 16×16 DINOv2 patch grid gives ~4px resolution — velocity changes during collisions (Δv ≈ 0.02-0.1 in normalized space = 1-6px) are at or below the noise floor. This is a fundamental resolution limit, not a feature engineering problem.
 - **Verdict:** FAIL — 54.9% val (target >80%). Slot centroids are NOT accurate enough for pairwise collision features. The vision→physics pipeline needs either: (a) higher resolution encoder, (b) end-to-end training with physics loss, or (c) larger visual effects of mass (bigger objects, higher velocities, more extreme mass ratios).
 
+### Phase 29h: Prediction Error as Mass Signal — JEPA Surprise (Feb 21)
+- **Goal:** Use frozen SlotPredictor (phase28, Δ=1, trained on v=±1.5) prediction errors as mass signal. Heavy objects deflect less in collisions → smaller prediction error spikes. Operates in 64-dim slot space, bypassing centroid noise. Target: >80%.
+- **Architecture:** Frozen SlotAttentionDINO + frozen SlotPredictor. 4 features per object from prediction error time series: avg_error, max_error, error_var, spike_frac. Classifier: Linear(4,32)+ReLU+Linear(32,1), 193 params.
+- **Feature separation (light vs heavy):**
+  ```
+  avg_error:   light=0.2239  heavy=0.2166  ratio=1.03
+  max_error:   light=0.5861  heavy=0.5720  ratio=1.02
+  error_var:   light=0.0222  heavy=0.0211  ratio=1.05
+  spike_frac:  light=0.1334  heavy=0.1223  ratio=1.09
+  ```
+  **All features ≈ 1.0× separation.** No mass signal in prediction error.
+- **Result:** Best val 50.6% (= chance). Classifier learns nothing.
+- **Diagnosis:** Prediction error is dominated by general slot representation noise (mean=0.17, std=0.21), not collision-specific physics. The predictor trained on v=±1.5 has high baseline error on v=±7 data — ALL frames are surprising, not just collision frames. The domain mismatch amplifies noise uniformly rather than selectively amplifying collision events. Additionally, the joint predictor (all 7 slots → all 7 slots) distributes prediction error across all slots, diluting per-object collision signals. Slot vector changes during collisions are not distinguishable from general frame-to-frame slot variation.
+- **Verdict:** FAIL — 50.6% val (chance). Prediction error does not encode mass. The "surprise" hypothesis fails because slot representations are too noisy and collision-specific changes are not separable from background variation.
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**
@@ -704,14 +719,18 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 
 **Mass inference (Phase 29 series):**
 - Phase 29–29f: progressed from 53% to **98.6%** by isolating bottlenecks (slot features → GT positions → dense collisions → physics features → pairwise ratios)
-- Phase 29g: slot centroids → **54.9%** (FAIL). 16×16 DINOv2 patch grid too coarse for collision physics. Centroid noise (~8.7px) drowns velocity changes (~2-5px).
-- Key insight: mass lives in pairwise collision ratios (Newton's 3rd law), but slot centroids can't measure them
+- Phase 29g: slot centroids → **54.9%** (FAIL). Centroid noise (~8.7px) drowns collision velocity changes (~2-5px).
+- Phase 29h: JEPA prediction error → **50.6%** (FAIL = chance). Prediction error dominated by general slot noise, not collision physics.
+- Key insight: mass lives in pairwise collision ratios (Newton's 3rd law), but neither slot centroids nor slot prediction errors can measure them. The vision→physics gap remains unsolved.
 
 **Emergent communication (Phase 30 series):**
 - Phase 30: mode collapse (33%). Phase 30b: overfitting (41%). Both failed trying to learn perception + communication jointly.
 - Phase 30c: **98.5%** — separated perception (frozen physics features) from communication (learned Gumbel-softmax). 3-token emergent language with near-perfect purity. Solved in 20 epochs with 1259 params.
 - Key insight: communication is easy once perception is solved. The bottleneck was never the discrete channel — it was expecting the sender to discover physics from raw trajectories.
 
-**The resolution bottleneck:** Slot centroid positions from DINOv2 (16×16 patches) have ~8.7px noise. Collision velocity changes are ~2-5px. The signal is below the noise floor. Options: (1) higher-res encoder (32×32 or 64×64 patches), (2) end-to-end training with physics loss to sharpen centroids, (3) larger mass effects (mass ratio 1:10, higher velocities), (4) learn dynamics directly from slot vectors (bypass centroid extraction).
+**The vision→physics gap:** Two approaches to bridge slots→mass have failed:
+- 29g: centroid extraction + collision features → noise floor (1.01× separation)
+- 29h: JEPA prediction error → background noise dominates (1.03× separation)
+The frozen DINOv2+SA representations don't preserve fine-grained dynamics. Options: (1) end-to-end training with mass loss to shape slot representations, (2) much larger images/objects to increase signal-to-noise, (3) different encoder architecture with higher spatial resolution, (4) skip the vision bottleneck and accept GT positions as the perception module for now.
 
-**Next steps:** (1) Try larger images (128×128) or higher-res encoder to reduce centroid noise, (2) end-to-end slot attention + mass classifier, (3) learn dynamics from slot vectors directly (JEPA-style, bypass centroid extraction), (4) transformer slot predictor.
+**Next steps:** (1) End-to-end: unfreeze slot attention, train with mass classification loss, (2) scale up: 128×128 images, mass ratio 1:10, (3) accept GT-position perception for now and focus on multi-agent communication pipeline, (4) transformer slot predictor.

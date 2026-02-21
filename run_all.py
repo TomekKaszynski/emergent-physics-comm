@@ -13594,6 +13594,502 @@ def run_phase30_emergent_comm():
     }
 
 
+def run_phase29h_prediction_surprise():
+    """Phase 29h: Prediction error as mass signal — JEPA surprise detects collisions.
+
+    Frozen SlotPredictor (Δ=1, trained on v=±1.5) predicts next-frame slots.
+    During collisions, prediction error spikes — heavy objects deflect less,
+    producing smaller spikes. The degree of "surprise" encodes mass.
+
+    Operates in 64-dim slot space, avoiding the centroid noise problem of 29g.
+    """
+    import random
+    import math
+
+    print("=" * 60, flush=True)
+    print("PHASE 29h: Prediction Error as Mass Signal", flush=True)
+    print("=" * 60, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Load frozen models ─────────────────────────────────────
+    print("\n┌─ Loading frozen SlotAttentionDINO + SlotPredictor", flush=True)
+    ae = SlotAttentionDINO(n_slots=7, slot_dim=64, img_size=64).to(device)
+    state = torch.load(OUTPUT_DIR / "phase27_model.pt", map_location=device)
+    ae.load_state_dict(state)
+    ae.eval()
+    for p in ae.parameters():
+        p.requires_grad = False
+
+    predictor = SlotPredictor(n_slots=7, slot_dim=64, hidden_dim=256).to(device)
+    pred_state = torch.load(OUTPUT_DIR / "phase28_predictor.pt", map_location=device)
+    predictor.load_state_dict(pred_state)
+    predictor.eval()
+    for p in predictor.parameters():
+        p.requires_grad = False
+
+    print("│  SlotAttentionDINO loaded (phase27)", flush=True)
+    print("│  SlotPredictor loaded (phase28, Δ=1, trained on v=±1.5)", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Generate sequences with dense mass physics ─────────────
+    n_sequences = 1000
+    n_frames = 40
+    S = 64
+
+    palette = [
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0],
+    ]
+
+    print(f"\n┌─ Generating {n_sequences} sequences with dense mass physics", flush=True)
+    all_frames = []
+    all_obj_info = []
+    all_gt_collision_dvs = []  # per-object: list of (my_dv, partner_dv) from GT
+    collision_counts = []
+
+    random.seed(42)
+    for seq_i in range(n_sequences):
+        n_obj = random.randint(3, 4)
+        masses = [1.0, 3.0]
+        for _ in range(n_obj - 2):
+            masses.append(random.choice([1.0, 3.0]))
+        random.shuffle(masses)
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(7, 10)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-7.0, 7.0)
+            vy = random.uniform(-7.0, 7.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi], 'color': palette[oi % len(palette)]
+            })
+
+        all_obj_info.append([{
+            'cx0': obj['cx'] / S, 'cy0': obj['cy'] / S,
+            'r': obj['r'], 'mass': obj['mass']
+        } for obj in objects])
+
+        obj_collision_dvs = [[] for _ in range(n_obj)]
+        seq_collisions = 0
+
+        frames = []
+        for fi in range(n_frames):
+            # Render
+            img = np.ones((S, S, 3), dtype=np.float32) * 0.5
+            for obj in objects:
+                r = obj['r']
+                cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+                color = np.array(obj['color'])
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if dx*dx + dy*dy <= r*r:
+                            px, py = cx_i + dx, cy_i + dy
+                            if 0 <= px < S and 0 <= py < S:
+                                img[py, px] = color
+            frames.append(img.transpose(2, 0, 1))
+
+            # Elastic collisions
+            for i in range(n_obj):
+                for j in range(i + 1, n_obj):
+                    oi_o, oj_o = objects[i], objects[j]
+                    dx = oj_o['cx'] - oi_o['cx']
+                    dy = oj_o['cy'] - oi_o['cy']
+                    dist = math.hypot(dx, dy)
+                    min_dist = oi_o['r'] + oj_o['r']
+                    if dist < min_dist and dist > 0.1:
+                        nx, ny = dx / dist, dy / dist
+                        dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                              (oi_o['vy'] - oj_o['vy']) * ny
+                        if dvn > 0:
+                            seq_collisions += 1
+                            m1, m2 = oi_o['mass'], oj_o['mass']
+                            imp = 2 * dvn / (m1 + m2)
+                            dv_i = imp * m2
+                            dv_j = imp * m1
+                            obj_collision_dvs[i].append((dv_i, dv_j))
+                            obj_collision_dvs[j].append((dv_j, dv_i))
+                            oi_o['vx'] -= imp * m2 * nx
+                            oi_o['vy'] -= imp * m2 * ny
+                            oj_o['vx'] += imp * m1 * nx
+                            oj_o['vy'] += imp * m1 * ny
+                            overlap = min_dist - dist
+                            oi_o['cx'] -= overlap * nx * 0.5
+                            oi_o['cy'] -= overlap * ny * 0.5
+                            oj_o['cx'] += overlap * nx * 0.5
+                            oj_o['cy'] += overlap * ny * 0.5
+
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        all_frames.append(np.array(frames))
+        all_gt_collision_dvs.append(obj_collision_dvs)
+        collision_counts.append(seq_collisions)
+
+        if (seq_i + 1) % 200 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    all_frames = torch.tensor(np.array(all_frames), dtype=torch.float32)
+    avg_coll = np.mean(collision_counts)
+    n_total_obj = sum(len(info) for info in all_obj_info)
+    n_light = sum(1 for info in all_obj_info for o in info if o['mass'] == 1.0)
+    n_heavy = n_total_obj - n_light
+    print(f"│  Frames: {list(all_frames.shape)}", flush=True)
+    print(f"│  Objects: {n_total_obj} (light={n_light}, heavy={n_heavy})", flush=True)
+    print(f"│  Avg collisions/seq: {avg_coll:.1f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Encode all frames → slots ──────────────────────────────
+    print(f"\n┌─ Encoding {n_sequences * n_frames} frames → slot vectors", flush=True)
+
+    # Also compute centroids for slot-object matching
+    P = 16
+    xs = torch.linspace(0, 1, P)
+    ys = torch.linspace(0, 1, P)
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
+    gx_flat = grid_x.reshape(-1).to(device)
+    gy_flat = grid_y.reshape(-1).to(device)
+
+    all_slots = []      # [1000, 40, 7, 64]
+    all_centroids = []  # [1000, 40, 7, 2] for matching only
+
+    with torch.no_grad():
+        for seq_i in range(n_sequences):
+            seq_slots = []
+            seq_centroids = []
+            for fi in range(0, n_frames, 8):
+                batch = all_frames[seq_i, fi:fi+8].to(device)
+                slots, _ = ae.encode(batch)          # [B, 7, 64]
+                _, alpha = ae.decode(slots)           # [B, 7, 256]
+
+                seq_slots.append(slots.cpu())
+
+                # Centroids for matching
+                ws = alpha.sum(dim=-1, keepdim=True) + 1e-8
+                cx = (alpha * gx_flat).sum(dim=-1) / ws.squeeze(-1)
+                cy = (alpha * gy_flat).sum(dim=-1) / ws.squeeze(-1)
+                centroids = torch.stack([cx, cy], dim=-1)
+                seq_centroids.append(centroids.cpu())
+
+            all_slots.append(torch.cat(seq_slots, dim=0))
+            all_centroids.append(torch.cat(seq_centroids, dim=0))
+
+            if (seq_i + 1) % 200 == 0:
+                print(f"│  Encoded {seq_i+1}/{n_sequences}", flush=True)
+                if device.type == 'mps':
+                    torch.mps.empty_cache()
+
+    all_slots = torch.stack(all_slots)          # [1000, 40, 7, 64]
+    all_centroids = torch.stack(all_centroids)  # [1000, 40, 7, 2]
+    print(f"│  Slot cache: {list(all_slots.shape)}", flush=True)
+    print("└─ Done", flush=True)
+
+    del all_frames
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    # ── Compute per-slot prediction errors ─────────────────────
+    print(f"\n┌─ Computing per-slot prediction errors (frozen JEPA)", flush=True)
+
+    # all_slots: [1000, 40, 7, 64]
+    # Predictor: [B, 448] → [B, 448]
+    # Predict t+1 from t for t=0..38, compute per-slot MSE
+
+    all_pred_errors = []  # [1000, 39, 7] — per-slot error at each transition
+
+    with torch.no_grad():
+        for seq_i in range(n_sequences):
+            slots_seq = all_slots[seq_i]  # [40, 7, 64]
+
+            # Batch all 39 transitions at once
+            input_slots = slots_seq[:-1]   # [39, 7, 64]
+            target_slots = slots_seq[1:]   # [39, 7, 64]
+
+            # Flatten for predictor: [39, 448]
+            input_flat = input_slots.reshape(39, -1).to(device)
+            predicted_flat = predictor(input_flat)  # [39, 448]
+            predicted = predicted_flat.reshape(39, 7, 64).cpu()
+
+            # Per-slot MSE: [39, 7]
+            per_slot_error = ((predicted - target_slots) ** 2).mean(dim=-1)
+            all_pred_errors.append(per_slot_error)
+
+            if (seq_i + 1) % 500 == 0:
+                print(f"│  Predicted {seq_i+1}/{n_sequences}", flush=True)
+
+    all_pred_errors = torch.stack(all_pred_errors)  # [1000, 39, 7]
+    print(f"│  Prediction errors: {list(all_pred_errors.shape)}", flush=True)
+
+    # Global stats
+    mean_err = all_pred_errors.mean().item()
+    std_err = all_pred_errors.std().item()
+    print(f"│  Global: mean_error={mean_err:.4f}, std={std_err:.4f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Match slots to objects ─────────────────────────────────
+    print(f"\n┌─ Matching slots to objects (frame-0 centroids)", flush=True)
+
+    slot_assignments = []
+    match_dists = []
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        frame0_centroids = all_centroids[seq_i, 0]  # [7, 2]
+        n_obj = len(obj_info)
+
+        used_slots = set()
+        seq_slots = []
+        for obj in obj_info:
+            best_slot, best_d = -1, float('inf')
+            for si in range(7):
+                if si in used_slots:
+                    continue
+                d = math.hypot(
+                    frame0_centroids[si, 0].item() - obj['cx0'],
+                    frame0_centroids[si, 1].item() - obj['cy0'])
+                if d < best_d:
+                    best_d = d
+                    best_slot = si
+            used_slots.add(best_slot)
+            seq_slots.append(best_slot)
+            match_dists.append(best_d)
+
+        slot_assignments.append(seq_slots)
+
+    avg_match_dist = np.mean(match_dists)
+    print(f"│  Avg match distance: {avg_match_dist:.4f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Extract prediction error features per object ───────────
+    print(f"\n┌─ Extracting prediction error features", flush=True)
+
+    # Spike threshold: global median + 2*std
+    global_median = all_pred_errors.median().item()
+    spike_threshold = global_median + 2.0 * std_err
+    print(f"│  Spike threshold: {spike_threshold:.4f} (median={global_median:.4f} + 2*std={std_err:.4f})", flush=True)
+
+    features = []
+    labels = []
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        n_obj = len(obj_info)
+        seq_slots = slot_assignments[seq_i]
+
+        for oi in range(n_obj):
+            slot_idx = seq_slots[oi]
+            error_signal = all_pred_errors[seq_i, :, slot_idx]  # [39]
+
+            avg_error = error_signal.mean().item()
+            max_error = error_signal.max().item()
+            error_var = error_signal.var().item()
+            n_spikes = (error_signal > spike_threshold).float().sum().item()
+
+            features.append([avg_error, max_error, error_var, n_spikes / 39.0])
+            labels.append(1.0 if obj_info[oi]['mass'] == 3.0 else 0.0)
+
+    features = torch.tensor(features, dtype=torch.float32)
+    labels = torch.tensor(labels, dtype=torch.float32)
+
+    # Feature statistics
+    feat_names = ['avg_error', 'max_error', 'error_var', 'spike_frac']
+    light_feats = features[labels == 0]
+    heavy_feats = features[labels == 1]
+    print(f"│  Feature means (light vs heavy):", flush=True)
+    for fi, name in enumerate(feat_names):
+        lm = light_feats[:, fi].mean().item()
+        hm = heavy_feats[:, fi].mean().item()
+        ratio_str = f"ratio={lm/hm:.2f}" if abs(hm) > 1e-8 else "ratio=inf"
+        print(f"│    {name:12s}: light={lm:.4f}  heavy={hm:.4f}  {ratio_str}", flush=True)
+    print(f"│  Samples: {len(labels)} (light={int((labels==0).sum())}, heavy={int((labels==1).sum())})", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Train/val split ────────────────────────────────────────
+    n_train = int(0.8 * len(labels))
+    perm = torch.randperm(len(labels))
+    train_feats = features[perm[:n_train]]
+    train_labels = labels[perm[:n_train]]
+    val_feats = features[perm[n_train:]]
+    val_labels = labels[perm[n_train:]]
+
+    print(f"\n│  Train: {n_train} | Val: {len(labels) - n_train}", flush=True)
+
+    # ── Train classifier ───────────────────────────────────────
+    clf_epochs = 200
+    batch_size = 64
+
+    print(f"\n{'=' * 50}", flush=True)
+    print(f"Training classifier ({clf_epochs} epochs)", flush=True)
+    print("=" * 50, flush=True)
+
+    clf = nn.Sequential(
+        nn.Linear(4, 32),
+        nn.ReLU(),
+        nn.Linear(32, 1),
+    ).to(device)
+    clf_params = sum(p.numel() for p in clf.parameters())
+    print(f"│  Classifier params: {clf_params}", flush=True)
+
+    clf_opt = torch.optim.Adam(clf.parameters(), lr=1e-3)
+    clf_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+        clf_opt, T_max=clf_epochs, eta_min=1e-5)
+
+    best_val_acc = 0.0
+    best_epoch = 0
+    best_state = None
+    history = {'epoch': [], 'train_acc': [], 'val_acc': []}
+
+    for epoch in range(clf_epochs):
+        clf.train()
+        perm_t = torch.randperm(n_train)
+        ep_loss, ep_correct, ep_total = 0, 0, 0
+
+        for i in range(0, n_train, batch_size):
+            idx = perm_t[i:i+batch_size]
+            feat_b = train_feats[idx].to(device)
+            lbl_b = train_labels[idx].to(device)
+            logits = clf(feat_b).squeeze(-1)
+            loss = F.binary_cross_entropy_with_logits(logits, lbl_b)
+            clf_opt.zero_grad()
+            loss.backward()
+            clf_opt.step()
+            ep_loss += loss.item() * len(lbl_b)
+            ep_correct += ((logits > 0).float() == lbl_b).sum().item()
+            ep_total += len(lbl_b)
+
+        clf_sched.step()
+        train_acc = ep_correct / ep_total
+
+        if (epoch + 1) % 10 == 0 or epoch == 0:
+            clf.eval()
+            with torch.no_grad():
+                v_logits = clf(val_feats.to(device)).squeeze(-1)
+                v_preds = (v_logits > 0).float()
+                val_acc = (v_preds == val_labels.to(device)).float().mean().item()
+
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_epoch = epoch + 1
+                best_state = {k: v.cpu().clone() for k, v in clf.state_dict().items()}
+
+            elapsed = time.time() - t0
+            if (epoch + 1) % 50 == 0 or epoch == 0:
+                print(f"│  Epoch {epoch+1:3d}: train={train_acc*100:.1f}% "
+                      f"val={val_acc*100:.1f}% [{elapsed:.0f}s]", flush=True)
+
+            history['epoch'].append(epoch + 1)
+            history['train_acc'].append(train_acc)
+            history['val_acc'].append(val_acc)
+
+    print(f"\n  Best val_acc = {best_val_acc*100:.1f}% at epoch {best_epoch}", flush=True)
+
+    # ── Visualization ──────────────────────────────────────────
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+
+    # 1. Feature comparison
+    ax = axes[0]
+    x = np.arange(len(feat_names))
+    width = 0.35
+    light_means = [light_feats[:, fi].mean().item() for fi in range(4)]
+    heavy_means = [heavy_feats[:, fi].mean().item() for fi in range(4)]
+    ax.bar(x - width/2, light_means, width, label='Light (m=1)', color='skyblue')
+    ax.bar(x + width/2, heavy_means, width, label='Heavy (m=3)', color='firebrick')
+    ax.set_xticks(x)
+    ax.set_xticklabels(feat_names, rotation=30, ha='right')
+    ax.legend()
+    ax.set_title('Prediction Error Features')
+    ax.set_ylabel('Mean value')
+
+    # 2. Error signal example — pick a sequence with collisions
+    ax = axes[1]
+    # Find a sequence with at least 2 objects of different mass
+    example_seq = None
+    for si in range(n_sequences):
+        obj_info = all_obj_info[si]
+        has_light = any(o['mass'] == 1.0 for o in obj_info)
+        has_heavy = any(o['mass'] == 3.0 for o in obj_info)
+        if has_light and has_heavy and collision_counts[si] >= 5:
+            example_seq = si
+            break
+
+    if example_seq is not None:
+        obj_info = all_obj_info[example_seq]
+        seq_slots_list = slot_assignments[example_seq]
+        for oi in range(len(obj_info)):
+            slot_idx = seq_slots_list[oi]
+            err = all_pred_errors[example_seq, :, slot_idx].numpy()
+            mass_str = "heavy" if obj_info[oi]['mass'] == 3.0 else "light"
+            ax.plot(err, label=f'obj{oi} ({mass_str})', alpha=0.8)
+        ax.axhline(y=spike_threshold, color='red', linestyle='--', alpha=0.5, label='spike threshold')
+        ax.set_xlabel('Frame transition')
+        ax.set_ylabel('Prediction error (MSE)')
+        ax.set_title(f'Error Signal (seq {example_seq}, {collision_counts[example_seq]} coll)')
+        ax.legend(fontsize=8)
+    else:
+        ax.text(0.5, 0.5, 'No example found', ha='center', va='center')
+
+    # 3. Summary
+    ax = axes[2]
+    ax.axis('off')
+    seps = []
+    for fi in range(4):
+        lm = light_feats[:, fi].mean().item()
+        hm = heavy_feats[:, fi].mean().item()
+        seps.append(lm / hm if abs(hm) > 1e-8 else float('inf'))
+    summary = (
+        f"Phase 29h: JEPA Surprise\n"
+        f"{'='*30}\n"
+        f"Val acc: {best_val_acc*100:.1f}% (ep {best_epoch})\n"
+        f"Classifier: 161 params\n\n"
+        f"Feature separations:\n"
+        f"  avg_error:  {seps[0]:.2f}x\n"
+        f"  max_error:  {seps[1]:.2f}x\n"
+        f"  error_var:  {seps[2]:.2f}x\n"
+        f"  spike_frac: {seps[3]:.2f}x\n\n"
+        f"Match dist: {avg_match_dist:.4f}\n"
+        f"Avg coll/seq: {avg_coll:.1f}\n"
+        f"Predictor: phase28 (Δ=1, v=±1.5)"
+    )
+    ax.text(0.1, 0.5, summary, transform=ax.transAxes, fontsize=11,
+            verticalalignment='center', fontfamily='monospace')
+
+    plt.tight_layout()
+    plt.savefig('results/phase29h_prediction_surprise.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\nSaved: results/phase29h_prediction_surprise.png", flush=True)
+
+    verdict = "SUCCESS" if best_val_acc > 0.80 else "PARTIAL" if best_val_acc > 0.60 else "FAIL"
+    print(f"\nVerdict: {verdict} (val_acc={best_val_acc*100:.1f}%, target>80%)", flush=True)
+
+    return {
+        'val_acc': best_val_acc,
+        'best_epoch': best_epoch,
+        'feature_seps': dict(zip(feat_names, seps)),
+        'avg_match_dist': avg_match_dist,
+        'verdict': verdict,
+    }
+
+
 def run_phase29g_slot_centroid_features():
     """Phase 29g: Mass inference from slot centroids + pairwise collision features.
 
