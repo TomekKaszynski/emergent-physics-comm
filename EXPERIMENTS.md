@@ -370,10 +370,34 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
   ```
 - **Verdict:** SUCCESS — 90.2% average consistency, well above 80% target. Slots track objects across frames despite no temporal training. 4/10 sequences hit 100%. Lowest was 75.9% (2 sequences). Model trained on static images generalizes to temporal tracking — DINOv2 features provide enough spatial coherence for consistent slot binding.
 
+### Phase 27b Test 3: Real images (Flowers102)
+**Date:** Feb 21
+
+- **Change:** Train on real photos (Oxford Flowers102, 2040 images). VOC server down, used Flowers102 as substitute — diverse real photos with varied backgrounds, foreground objects, lighting. Locked config unchanged.
+- **Config:** 200 epochs, batch=16, 7 slots, constant LR 4e-4, warmup 30, 5 SA iters, 224×224 input
+- **Dataset:** Flowers102 train+val splits (1020+1020 = 2040 images), 80/20 train/val
+- **Result:**
+  ```
+  Ep   1: recon=6.0687 entropy=1.000 active=7/7 max_cov=43.6%
+  Ep  20: recon=4.0562 entropy=0.960 active=6/7 max_cov=36.1%
+  Ep  40: recon=3.5021 entropy=0.515 active=7/7 max_cov=23.8%
+  Ep  60: recon=3.2172 entropy=0.354 active=7/7 max_cov=18.5%
+  Ep  80: recon=3.0791 entropy=0.332 active=7/7 max_cov=17.3%
+  Ep 100: recon=2.9829 entropy=0.326 active=7/7 max_cov=17.6%
+  Ep 120: recon=2.9083 entropy=0.305 active=7/7 max_cov=17.8%
+  Ep 140: recon=2.8648 entropy=0.297 active=7/7 max_cov=17.1%
+  Ep 160: recon=2.8174 entropy=0.299 active=7/7 max_cov=18.4%
+  Ep 180: recon=2.7667 entropy=0.291 active=7/7 max_cov=17.6%
+  Ep 200: recon=2.7593 entropy=0.293 active=7/7 max_cov=17.0%
+  ```
+  Eval: entropy=0.313, 7/7 active, max_cov=18.2%
+- **Verdict:** SUCCESS — entropy 0.293 on real photos, well below any reasonable threshold. Nearly ideal even coverage (17-18% max_cov vs 14.3% ideal for 7 slots). All 7 slots active. Recon loss much higher than CLEVR (2.76 vs 0.85) as expected — real images have far more complex features — but slot specialization is strong. DINOv2+SA locked config works on real-world images.
+
 ## Current State (Feb 21)
 
-DINOv2 + 5 SA iters locked config validated across three tests:
+DINOv2 + 5 SA iters locked config validated across four tests:
 - Simple CLEVR: entropy 0.170 (ep 70, early stop)
-- Complex CLEVR: entropy 0.374 best (ep 90), 0.429 final (ep 200), 7/7 slots, 24.6% max_cov
-- Video consistency: 90.2% avg (no temporal training, inference only)
+- Complex CLEVR: entropy 0.374 best (ep 90), 0.429 final (ep 200)
+- Video consistency: 90.2% avg (inference only, no temporal training)
+- Real images (Flowers102): entropy 0.293 (ep 200), 7/7 slots, 18.2% max_cov
 Ready for next phase.

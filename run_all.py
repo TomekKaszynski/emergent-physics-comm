@@ -11088,6 +11088,248 @@ def run_phase27_dino_clevr():
     return norm_ent < 0.2
 
 
+def run_phase27b_voc():
+    """Phase 27b Test 3: Real images (Oxford Flowers102).
+
+    Train SlotAttentionDINO on real photos (flowers with varied backgrounds).
+    Uses Flowers102 as VOC server is down. 2040 train images (train+val splits).
+    Locked config: DINOv2 + 5 SA iters + per-slot init, 7 slots, 200 epochs.
+    Images resized to 224x224 (DINOv2 native resolution).
+    """
+    from torchvision import transforms
+    from torchvision.datasets import Flowers102
+
+    print("=" * 60, flush=True)
+    print("PHASE 27b TEST 3: Real Images (Flowers102)", flush=True)
+    print("=" * 60, flush=True)
+    t0 = time.time()
+
+    if torch.backends.mps.is_available():
+        device = torch.device('mps')
+    elif torch.cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Download Flowers102 via torchvision ───────────────────
+    print("\n┌─ Loading Flowers102 (train+val splits)", flush=True)
+    ds_train = Flowers102(root="./flowers_data", split='train', download=True)
+    ds_val = Flowers102(root="./flowers_data", split='val', download=True)
+    print(f"│  Train: {len(ds_train)}, Val: {len(ds_val)}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Load and preprocess images ────────────────────────────
+    print("\n┌─ Preprocessing images to 224×224", flush=True)
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),  # [0, 1] range
+    ])
+
+    all_images = []
+    for ds in [ds_train, ds_val]:
+        for i in range(len(ds)):
+            img, _ = ds[i]
+            img_t = transform(img)
+            all_images.append(img_t)
+
+    images = torch.stack(all_images)  # [N, 3, 224, 224]
+    n = len(images)
+    n_train = int(0.8 * n)
+    print(f"│  {n} images, train={n_train}, val={n-n_train}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Training ───────────────────────────────────────────────
+    n_slots = 7
+    ae_epochs = 200
+
+    print(f"\n{'=' * 50}", flush=True)
+    print(f"Training SlotAttentionDINO on Flowers102 ({n_slots} slots, {ae_epochs} epochs)", flush=True)
+    print("=" * 50, flush=True)
+
+    ae = SlotAttentionDINO(n_slots=n_slots, slot_dim=64, img_size=224).to(device)
+    trainable_params = sum(p.numel() for p in ae.parameters() if p.requires_grad)
+    frozen_params = sum(p.numel() for p in ae.parameters() if not p.requires_grad)
+    print(f"│  Trainable params: {trainable_params:,}", flush=True)
+    print(f"│  Frozen DINOv2 params: {frozen_params:,}", flush=True)
+    print(f"│  SA iters: {ae.slot_attention.n_iters}, per-slot learnable init", flush=True)
+
+    base_lr = 4e-4
+    ae_opt = torch.optim.Adam(
+        [p for p in ae.parameters() if p.requires_grad], lr=base_lr)
+    warmup_epochs = 30
+
+    def lr_lambda(epoch):
+        if epoch < warmup_epochs:
+            return epoch / warmup_epochs
+        return 1.0  # constant after warmup
+
+    ae_sched = torch.optim.lr_scheduler.LambdaLR(ae_opt, lr_lambda)
+    batch_size = 16  # smaller batch for 224x224 images on MPS
+
+    for epoch in range(ae_epochs):
+        ae.train()
+        ae.dino.eval()
+        perm = torch.randperm(n_train)
+        ep_loss, nb = 0, 0
+
+        for i in range(0, n_train, batch_size):
+            idx = perm[i:i+batch_size]
+            imgs = images[idx].to(device)
+            total_loss, recon_loss, entropy_reg, recon_feat, slots, alpha = ae(
+                imgs, training=True)
+            ae_opt.zero_grad()
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                [p for p in ae.parameters() if p.requires_grad], 1.0)
+            ae_opt.step()
+            ep_loss += recon_loss.item(); nb += 1
+            if device.type == 'mps' and nb % 50 == 0:
+                torch.mps.empty_cache()
+
+        ae_sched.step()
+
+        # Print every 20 epochs + epoch 1
+        should_print = (epoch + 1) == 1 or (epoch + 1) % 20 == 0
+        if should_print:
+            ae.eval()
+            with torch.no_grad():
+                diag_alphas = []
+                for di in range(0, min(200, n_train), 16):
+                    d_batch = images[di:di+16].to(device)
+                    _, _, _, _, _, d_alpha = ae(d_batch, training=False)
+                    diag_alphas.append(d_alpha.cpu())
+                diag_alpha = torch.cat(diag_alphas, dim=0)
+                ownership = diag_alpha.argmax(dim=1)
+                B_d = ownership.shape[0]
+                slot_counts = torch.zeros(B_d, n_slots)
+                for s in range(n_slots):
+                    slot_counts[:, s] = (ownership == s).float().sum(dim=1)
+                mean_fracs = (slot_counts / 256).mean(dim=0)
+                active = int((mean_fracs > 0.01).sum().item())
+                max_cov = mean_fracs.max().item() * 100
+                ent = -(diag_alpha * (diag_alpha + 1e-8).log()).sum(dim=1).mean()
+                norm_ent = ent.item() / np.log(n_slots)
+
+            elapsed = time.time() - t0
+            elapsed_ep = elapsed / (epoch + 1)
+            eta = elapsed_ep * (ae_epochs - epoch - 1)
+            print(f"│  Epoch {epoch+1:3d}/{ae_epochs}: "
+                  f"recon={ep_loss/nb:.4f} "
+                  f"active={active}/{n_slots} "
+                  f"max_cov={max_cov:.1f}% "
+                  f"entropy={norm_ent:.3f} "
+                  f"[{elapsed:.0f}s] ETA={eta:.0f}s ({eta/60:.0f}min)", flush=True)
+
+    # ── Evaluation ─────────────────────────────────────────────
+    print(f"\n┌─ Phase 27b Test 3 Evaluation", flush=True)
+    ae.eval()
+    val_idx = torch.arange(n_train, n)
+
+    with torch.no_grad():
+        alpha_parts = []
+        for vi in range(0, len(val_idx), 16):
+            vb = images[val_idx[vi:vi+16]].to(device)
+            _, _, _, _, _, a = ae(vb, training=False)
+            alpha_parts.append(a.cpu())
+        alpha_val = torch.cat(alpha_parts, dim=0)
+
+    # Final metrics
+    with torch.no_grad():
+        all_alpha = alpha_val[:min(100, len(alpha_val))]
+        ownership = all_alpha.argmax(dim=1)
+        B_d = ownership.shape[0]
+        slot_counts = torch.zeros(B_d, n_slots)
+        for s in range(n_slots):
+            slot_counts[:, s] = (ownership == s).float().sum(dim=1)
+        mean_fracs = (slot_counts / 256).mean(dim=0)
+        active = int((mean_fracs > 0.01).sum().item())
+        max_cov = mean_fracs.max().item() * 100
+        ent = -(all_alpha * (all_alpha + 1e-8).log()).sum(dim=1).mean()
+        norm_ent = ent.item() / np.log(n_slots)
+
+    elapsed = time.time() - t0
+    print(f"│  Active slots: {active}/{n_slots}", flush=True)
+    print(f"│  Max coverage: {max_cov:.1f}%", flush=True)
+    print(f"│  Entropy: {norm_ent:.3f}", flush=True)
+    print(f"│  Time: {elapsed:.0f}s", flush=True)
+
+    # ── Visualization: slot masks overlaid on real photos ─────
+    slot_colors_rgb = np.array([
+        [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0],
+        [1, 0, 1], [0, 1, 1], [1, 0.5, 0]])
+    P = 16
+    n_show = 6
+
+    # Figure 1: original + overlay composite
+    fig, axes = plt.subplots(3, n_show, figsize=(3 * n_show, 9))
+    for i in range(n_show):
+        vi = val_idx[i].item()
+        img_np = images[vi].permute(1, 2, 0).numpy()
+
+        # Row 0: original image
+        axes[0, i].imshow(img_np)
+        axes[0, i].set_title(f"Image {i}", fontsize=9)
+        axes[0, i].axis('off')
+
+        # Row 1: slot ownership (argmax, colored) — upscaled to 224
+        masks = alpha_val[i].numpy().reshape(n_slots, P, P)
+        owner = alpha_val[i].argmax(dim=0).numpy().reshape(P, P)
+        owner_rgb = np.zeros((P, P, 3))
+        for s in range(n_slots):
+            owner_rgb[owner == s] = slot_colors_rgb[s]
+        owner_up = np.repeat(np.repeat(owner_rgb, 14, axis=0), 14, axis=1)
+        axes[1, i].imshow(owner_up)
+        axes[1, i].set_title("Slot ownership", fontsize=9)
+        axes[1, i].axis('off')
+
+        # Row 2: overlay (image + slot color blend)
+        overlay = img_np.copy()
+        for s in range(n_slots):
+            mask_up = np.repeat(np.repeat(
+                masks[s].reshape(P, P), 14, axis=0), 14, axis=1)
+            for c in range(3):
+                overlay[:, :, c] = overlay[:, :, c] * (1 - 0.4 * mask_up) + \
+                    0.4 * mask_up * slot_colors_rgb[s, c]
+        axes[2, i].imshow(np.clip(overlay, 0, 1))
+        axes[2, i].set_title("Overlay", fontsize=9)
+        axes[2, i].axis('off')
+
+    fig.suptitle(f"Phase 27b Test 3: Flowers102 — Entropy {norm_ent:.3f}, "
+                 f"{active}/{n_slots} active", fontsize=12, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / "phase27b_voc_results.png", dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"│  → results/phase27b_voc_results.png", flush=True)
+
+    # Figure 2: individual slot heatmaps for 2 images
+    fig, axes = plt.subplots(2, n_slots + 1, figsize=(2.5 * (n_slots + 1), 5))
+    for row in range(2):
+        vi = val_idx[row].item()
+        img_np = images[vi].permute(1, 2, 0).numpy()
+        axes[row, 0].imshow(img_np)
+        axes[row, 0].set_title("Original", fontsize=8)
+        axes[row, 0].axis('off')
+        for s in range(n_slots):
+            mask = alpha_val[row, s].numpy().reshape(P, P)
+            axes[row, s + 1].imshow(mask, cmap='hot', vmin=0, vmax=1,
+                                     interpolation='nearest')
+            axes[row, s + 1].set_title(f"Slot {s}", fontsize=8)
+            axes[row, s + 1].axis('off')
+    fig.suptitle("Phase 27b Test 3: Individual Slot Heatmaps (Flowers102)", fontsize=12)
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / "phase27b_voc_slots.png", dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"│  → results/phase27b_voc_slots.png", flush=True)
+    print("└─ Done", flush=True)
+
+    # Save model
+    torch.save(ae.state_dict(), OUTPUT_DIR / "phase27b_voc_model.pt")
+    print(f"│  → results/phase27b_voc_model.pt", flush=True)
+
+    return norm_ent
+
+
 def run_phase27b_video_consistency():
     """Phase 27b Test 2: Video frame consistency (inference only).
 
