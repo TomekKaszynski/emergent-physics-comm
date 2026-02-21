@@ -503,14 +503,38 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Verdict:** FAIL — 51.2% val accuracy vs 80% target. Neither slot vectors nor centroid trajectories extracted from frozen slot attention carry enough mass information. Root cause: the 16×16 patch grid gives only ~4px resolution for centroid positions on 64×64 images, while mass-dependent velocity differences during collisions are sub-pixel at this scale.
 - **Possible fixes:** (1) Use ground-truth positions to verify the task is solvable at all, (2) higher-resolution encoder (not DINOv2 14×14 patches), (3) end-to-end training with mass classification loss, (4) longer sequences with more collisions, (5) larger mass ratio (1:10 instead of 1:3).
 
+### Phase 29c: Ground-Truth Position Diagnostic
+**Date:** Feb 21
+
+- **Goal:** Diagnostic — classify mass from ground-truth (x,y) positions. No DINOv2, no slot attention. Tests whether mass signal exists in trajectory data at all.
+- **Architecture:** Same MassClassifier as 29b — positions(40) + velocities(38) + accelerations(36) = 114 dims → MLP → logit. 11.6K params.
+- **Collision statistics:**
+  - Sequences with ≥1 collision: 767/1000 (76.7%)
+  - Avg collisions per sequence: 1.7
+  - Distribution: 0 collisions=233, 1=278, 2=222, 3+=267
+- **Result:**
+  ```
+  Ep   1: train_acc=50.7% val_acc=49.8%
+  Ep  20: train_acc=64.3% val_acc=61.2%
+  Ep  80: train_acc=75.8% val_acc=64.9%
+  Ep 140: train_acc=80.8% val_acc=66.7%
+  Ep 180: train_acc=81.7% val_acc=67.7%  ← best val
+  Ep 200: train_acc=82.0% val_acc=66.5%
+  ```
+  Best val: 67.7% at epoch 180. Light: 63.2%, Heavy: 72.2%.
+- **Diagnosis:** Signal exists (67.7% >> 50%) but is weak. Even with perfect ground-truth positions, the MLP only reaches 67.7%. Root causes: (1) only 1.7 collisions per sequence on avg — many objects never collide and carry zero mass info, (2) 20 frames is too short for enough collision events, (3) wall bounces don't reveal mass (all masses bounce identically off walls). The overfitting gap is much smaller (82% vs 68%) than Phase 29/29b, confirming ground-truth positions are cleaner signal.
+- **Verdict:** PARTIAL — confirms mass signal exists but is weak. The task itself is hard with current physics config (sparse collisions, short sequences). To reach >80%, need: more collisions (faster objects, smaller arena, more objects) or longer sequences.
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**
 - DINOv2 + SlotAttention (5 iters, 7 slots, 64-dim): entropy 0.170 on CLEVR, 0.429 complex CLEVR, 0.293 real photos, 90.2% video consistency
 - Slot JEPA predictor: beats copy baseline by 20.5% (v=±5.0, Δ=3)
 
-**Failed:**
-- Phase 29: Mass from slot vectors — 53.2% (slot features encode appearance, not dynamics)
-- Phase 29b: Mass from centroid trajectories — 51.2% (16×16 patch grid too coarse for sub-pixel velocity differences)
+**Mass inference (Phase 29 series):**
+- Phase 29: Slot vectors → 53.2% (appearance, not dynamics)
+- Phase 29b: Slot centroids → 51.2% (16×16 grid too coarse)
+- Phase 29c: Ground-truth positions → 67.7% (signal exists but sparse collisions)
+- Conclusion: task needs denser collisions to be solvable, then perception can be addressed
 
-**Next steps:** (1) Verify task solvability with ground-truth positions, (2) multi-agent communication with different viewpoints, (3) transformer-based slot predictor for longer rollouts.
+**Next steps:** (1) Make mass task easier: faster objects + longer sequences + more collisions, then retry with GT and slot features, (2) multi-agent communication, (3) transformer slot predictor.
