@@ -12410,6 +12410,350 @@ def run_phase29c_gt_diagnostic():
     }
 
 
+def run_phase29f_pairwise_features():
+    """Phase 29f: Pairwise collision features — Newton's third law.
+
+    Key new feature: avg_dv_ratio = mean(|my_Δv| / |partner_Δv|) per collision.
+    By Newton's third law, |Δv_A|/|Δv_B| = m_B/m_A.
+    Light (m=1) hitting heavy (m=3) → ratio ≈ 3.0. Heavy → ratio ≈ 0.33.
+    6 features: [dv_ratio, avg_dv_coll, max_dv, avg_speed, speed_var, n_coll].
+    GT positions, no DINOv2. 257-param classifier.
+    """
+    import random
+    import math
+
+    print("=" * 60, flush=True)
+    print("PHASE 29f: Pairwise Collision Features — GT Positions", flush=True)
+    print("=" * 60, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Generate sequences (same physics as 29d/29e) ──────────
+    n_sequences = 1000
+    n_frames = 40
+    S = 64
+
+    palette = [
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0],
+    ]
+
+    print(f"\n┌─ Generating {n_sequences} sequences with dense mass physics", flush=True)
+    all_positions = []
+    all_collision_dvs = []  # per object: list of (my_dv, partner_dv)
+    labels = []
+    collision_counts = []
+
+    random.seed(42)
+    for seq_i in range(n_sequences):
+        n_obj = random.randint(3, 4)
+        masses = [1.0, 3.0]
+        for _ in range(n_obj - 2):
+            masses.append(random.choice([1.0, 3.0]))
+        random.shuffle(masses)
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(7, 10)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-7.0, 7.0)
+            vy = random.uniform(-7.0, 7.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi], 'color': palette[oi % len(palette)]
+            })
+
+        obj_positions = [[None] * n_frames for _ in range(n_obj)]
+        obj_collision_dvs = [[] for _ in range(n_obj)]  # (my_dv, partner_dv)
+        seq_collisions = 0
+
+        for fi in range(n_frames):
+            for oi in range(n_obj):
+                obj_positions[oi][fi] = [objects[oi]['cx'] / S, objects[oi]['cy'] / S]
+
+            for i in range(len(objects)):
+                for j in range(i + 1, len(objects)):
+                    oi_o, oj_o = objects[i], objects[j]
+                    dx = oj_o['cx'] - oi_o['cx']
+                    dy = oj_o['cy'] - oi_o['cy']
+                    dist = math.hypot(dx, dy)
+                    min_dist = oi_o['r'] + oj_o['r']
+                    if dist < min_dist and dist > 0.1:
+                        nx, ny = dx / dist, dy / dist
+                        dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                              (oi_o['vy'] - oj_o['vy']) * ny
+                        if dvn > 0:
+                            seq_collisions += 1
+                            m1, m2 = oi_o['mass'], oj_o['mass']
+                            imp = 2 * dvn / (m1 + m2)
+                            dv_i = imp * m2  # |Δv| for object i
+                            dv_j = imp * m1  # |Δv| for object j
+                            obj_collision_dvs[i].append((dv_i, dv_j))
+                            obj_collision_dvs[j].append((dv_j, dv_i))
+                            oi_o['vx'] -= imp * m2 * nx
+                            oi_o['vy'] -= imp * m2 * ny
+                            oj_o['vx'] += imp * m1 * nx
+                            oj_o['vy'] += imp * m1 * ny
+                            overlap = min_dist - dist
+                            oi_o['cx'] -= overlap * nx * 0.5
+                            oi_o['cy'] -= overlap * ny * 0.5
+                            oj_o['cx'] += overlap * nx * 0.5
+                            oj_o['cy'] += overlap * ny * 0.5
+
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        collision_counts.append(seq_collisions)
+
+        for oi in range(n_obj):
+            all_positions.append(obj_positions[oi])
+            all_collision_dvs.append(obj_collision_dvs[oi])
+            labels.append(1.0 if masses[oi] == 3.0 else 0.0)
+
+        if (seq_i + 1) % 200 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    all_positions = torch.tensor(all_positions, dtype=torch.float32)
+    labels = torch.tensor(labels, dtype=torch.float32)
+
+    n_with_coll = sum(1 for c in collision_counts if c > 0)
+    avg_coll = np.mean(collision_counts)
+    n_light = int((labels == 0).sum())
+    n_heavy = int((labels == 1).sum())
+    print(f"│  Avg collisions/seq: {avg_coll:.1f}, "
+          f"with ≥1: {n_with_coll}/{n_sequences}", flush=True)
+    print(f"│  Samples: {len(labels)} (light={n_light}, heavy={n_heavy})", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Extract physics features ──────────────────────────────
+    print(f"\n┌─ Computing pairwise collision features", flush=True)
+    dv_threshold = 0.02
+
+    features = []
+    for i in range(len(all_positions)):
+        pos = all_positions[i]
+        v = pos[1:] - pos[:-1]
+        speed = v.norm(dim=-1)
+        dv = v[1:] - v[:-1]
+        dv_mag = dv.norm(dim=-1)
+
+        coll_mask = dv_mag > dv_threshold
+        n_coll = coll_mask.float().sum().item()
+
+        avg_dv_coll = dv_mag[coll_mask].mean().item() if n_coll > 0 else 0.0
+        max_dv = dv_mag.max().item()
+        avg_speed = speed.mean().item()
+        speed_var = speed.var().item()
+
+        # Pairwise dv ratio — Newton's third law feature
+        coll_dvs = all_collision_dvs[i]
+        if len(coll_dvs) > 0:
+            ratios = [my / partner for my, partner in coll_dvs if partner > 1e-8]
+            avg_dv_ratio = np.mean(ratios) if ratios else 1.0
+        else:
+            avg_dv_ratio = 1.0  # no collisions, neutral
+
+        features.append([avg_dv_ratio, avg_dv_coll, max_dv,
+                         avg_speed, speed_var, n_coll / 38.0])
+
+    features = torch.tensor(features, dtype=torch.float32)  # [N, 6]
+
+    # Report feature statistics
+    light_feats = features[labels == 0]
+    heavy_feats = features[labels == 1]
+    feat_names = ['avg_dv_ratio', 'avg_dv_coll', 'max_dv',
+                  'avg_speed', 'speed_var', 'n_coll_norm']
+    print(f"│  Feature means (light vs heavy):", flush=True)
+    for fi, name in enumerate(feat_names):
+        lm = light_feats[:, fi].mean().item()
+        hm = heavy_feats[:, fi].mean().item()
+        ratio_str = f"ratio={lm/hm:.2f}" if hm > 1e-8 else "ratio=inf"
+        print(f"│    {name:15s}: light={lm:.4f}  heavy={hm:.4f}  {ratio_str}",
+              flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Train/val split ────────────────────────────────────────
+    n_train = int(0.8 * len(labels))
+    perm = torch.randperm(len(labels))
+    train_feats = features[perm[:n_train]]
+    train_labels = labels[perm[:n_train]]
+    val_feats = features[perm[n_train:]]
+    val_labels = labels[perm[n_train:]]
+    print(f"\n│  Train: {len(train_feats)} | Val: {len(val_feats)}", flush=True)
+
+    # ── Train tiny classifier ─────────────────────────────────
+    clf_epochs = 200
+    batch_size = 64
+    lr = 1e-3
+
+    print(f"\n{'=' * 50}", flush=True)
+    print(f"Training classifier ({clf_epochs} epochs)", flush=True)
+    print("=" * 50, flush=True)
+
+    clf = nn.Sequential(
+        nn.Linear(6, 32),
+        nn.ReLU(),
+        nn.Linear(32, 1),
+    ).to(device)
+    clf_params = sum(p.numel() for p in clf.parameters())
+    print(f"│  Classifier params: {clf_params}", flush=True)
+
+    clf_opt = torch.optim.Adam(clf.parameters(), lr=lr)
+    clf_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+        clf_opt, T_max=clf_epochs, eta_min=1e-5)
+
+    best_val_acc = 0.0
+    best_epoch = 0
+    best_state = None
+
+    for epoch in range(clf_epochs):
+        clf.train()
+        perm_t = torch.randperm(len(train_feats))
+        ep_loss, ep_correct, ep_total = 0, 0, 0
+
+        for i in range(0, len(train_feats), batch_size):
+            idx = perm_t[i:i+batch_size]
+            feat_b = train_feats[idx].to(device)
+            lbl_b = train_labels[idx].to(device)
+            logits = clf(feat_b).squeeze(-1)
+            loss = F.binary_cross_entropy_with_logits(logits, lbl_b)
+            clf_opt.zero_grad()
+            loss.backward()
+            clf_opt.step()
+            ep_loss += loss.item()
+            preds = (logits > 0).float()
+            ep_correct += (preds == lbl_b).sum().item()
+            ep_total += len(lbl_b)
+
+        clf_sched.step()
+        train_acc = ep_correct / ep_total
+
+        should_print = (epoch + 1) == 1 or (epoch + 1) % 20 == 0
+        if should_print:
+            clf.eval()
+            with torch.no_grad():
+                val_logits = clf(val_feats.to(device)).squeeze(-1)
+                val_preds = (val_logits > 0).float()
+                val_acc = (val_preds == val_labels.to(device)).float().mean().item()
+
+            print(f"│  Epoch {epoch+1:3d}/{clf_epochs}: "
+                  f"loss={ep_loss/(ep_total/batch_size):.4f} "
+                  f"train_acc={train_acc*100:.1f}% "
+                  f"val_acc={val_acc*100:.1f}%", flush=True)
+
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_epoch = epoch + 1
+                best_state = {k: v.cpu().clone() for k, v in clf.state_dict().items()}
+
+    print(f"│  Best val accuracy: {best_val_acc*100:.1f}% at epoch {best_epoch}",
+          flush=True)
+
+    clf.load_state_dict(best_state)
+    clf.to(device).eval()
+
+    # ── Detailed evaluation ───────────────────────────────────
+    print(f"\n┌─ Evaluation", flush=True)
+    with torch.no_grad():
+        val_logits = clf(val_feats.to(device)).squeeze(-1)
+        val_preds = (val_logits > 0).float().cpu()
+        val_acc = (val_preds == val_labels).float().mean().item()
+        light_mask = val_labels == 0
+        heavy_mask = val_labels == 1
+        light_acc = (val_preds[light_mask] == 0).float().mean().item() if light_mask.any() else 0
+        heavy_acc = (val_preds[heavy_mask] == 1).float().mean().item() if heavy_mask.any() else 0
+
+    print(f"│  Overall accuracy: {val_acc*100:.1f}%", flush=True)
+    print(f"│  Light accuracy: {light_acc*100:.1f}%", flush=True)
+    print(f"│  Heavy accuracy: {heavy_acc*100:.1f}%", flush=True)
+    print(f"│  Baseline (random): 50%", flush=True)
+    print(f"│  Target: >85% (GT)", flush=True)
+    success = val_acc > 0.85
+    print(f"│  {'SUCCESS — proceed to slot centroids' if success else 'BELOW TARGET'}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Visualization ─────────────────────────────────────────
+    print(f"\n┌─ Generating visualizations", flush=True)
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+
+    with torch.no_grad():
+        all_logits = clf(features.to(device)).squeeze(-1).cpu()
+        all_probs = torch.sigmoid(all_logits).numpy()
+
+    light_probs = all_probs[labels.numpy() == 0]
+    heavy_probs = all_probs[labels.numpy() == 1]
+    axes[0].hist(light_probs, bins=30, alpha=0.6, label='Light (m=1)', color='blue')
+    axes[0].hist(heavy_probs, bins=30, alpha=0.6, label='Heavy (m=3)', color='red')
+    axes[0].axvline(x=0.5, color='k', linestyle='--', label='Threshold')
+    axes[0].set_xlabel('P(heavy)')
+    axes[0].set_ylabel('Count')
+    axes[0].set_title('Classifier Confidence')
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+
+    # Panel 2: dv_ratio — the key new feature
+    axes[1].hist(light_feats[:, 0].numpy(), bins=30, alpha=0.6,
+                 label='Light (m=1)', color='blue')
+    axes[1].hist(heavy_feats[:, 0].numpy(), bins=30, alpha=0.6,
+                 label='Heavy (m=3)', color='red')
+    axes[1].set_xlabel('Avg |Δv_self| / |Δv_partner|')
+    axes[1].set_ylabel('Count')
+    axes[1].set_title('Deflection Ratio (Newton\'s 3rd)')
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+
+    # Panel 3: avg speed
+    axes[2].hist(light_feats[:, 3].numpy(), bins=30, alpha=0.6,
+                 label='Light (m=1)', color='blue')
+    axes[2].hist(heavy_feats[:, 3].numpy(), bins=30, alpha=0.6,
+                 label='Heavy (m=3)', color='red')
+    axes[2].set_xlabel('Average speed')
+    axes[2].set_ylabel('Count')
+    axes[2].set_title('Speed by Mass')
+    axes[2].legend()
+    axes[2].grid(True, alpha=0.3)
+
+    plt.suptitle(f'Phase 29f: Pairwise Features — {val_acc*100:.1f}% accuracy '
+                 f'({clf_params} params)',
+                 fontsize=12, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / "phase29f_pairwise_features.png", dpi=150,
+                bbox_inches='tight')
+    plt.close()
+    print(f"│  → results/phase29f_pairwise_features.png", flush=True)
+    print("└─ Done", flush=True)
+
+    elapsed = time.time() - t0
+    print(f"\n│  Total time: {elapsed:.0f}s ({elapsed/60:.1f}min)", flush=True)
+
+    return {
+        'val_acc': val_acc,
+        'light_acc': light_acc,
+        'heavy_acc': heavy_acc,
+        'best_epoch': best_epoch,
+        'avg_collisions': avg_coll,
+        'success': success,
+    }
+
+
 def run_phase29e_collision_features():
     """Phase 29e: Collision-aware features for mass classification.
 

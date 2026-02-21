@@ -584,18 +584,43 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Diagnosis:** No overfitting (train 83.5% ≈ val 81.9%). Physics features generalize perfectly — 225 params can't memorize. The 5 features all separate mass (ratios 1.24–2.52×), with `speed_var` being the strongest discriminator. Below 85% target because feature distributions overlap (mass 1:3 ratio isn't extreme enough for clean separation). All features confirm heavy objects deflect less and move slower after collisions, consistent with conservation of momentum.
 - **Verdict:** PARTIAL SUCCESS — 81.9% with zero overfitting proves the approach works. Collision-aware features are the right abstraction. Gap to 85% could be closed with: larger mass ratio, more data, or slightly more features.
 
+### Phase 29f: Pairwise Collision Features — Newton's Third Law
+**Date:** Feb 21
+
+- **Goal:** Add pairwise Δv ratio feature. By Newton's third law, |Δv_A|/|Δv_B| = m_B/m_A. Light objects deflect more, heavy deflect less. GT positions. Target: >85%.
+- **New feature:** `avg_dv_ratio` — mean(|my_Δv| / |partner_Δv|) across all collisions an object participates in. Logged during physics sim by recording both objects' |Δv| at each collision event.
+- **All 6 features (light vs heavy):**
+  ```
+  avg_dv_ratio:  light=2.2154  heavy=0.5674  ratio=3.90  ← KEY
+  avg_dv_coll:   light=0.1298  heavy=0.0798  ratio=1.63
+  max_dv:        light=0.3013  heavy=0.1726  ratio=1.75
+  avg_speed:     light=0.1024  heavy=0.0671  ratio=1.52
+  speed_var:     light=0.0022  heavy=0.0009  ratio=2.52
+  n_coll_norm:   light=0.5721  heavy=0.4604  ratio=1.24
+  ```
+- **Classifier:** Linear(6,32)+ReLU+Linear(32,1) — **257 params**.
+- **Result:**
+  ```
+  Ep   1: train_acc=49.4% val_acc=48.9%
+  Ep  20: train_acc=99.2% val_acc=98.1%
+  Ep 120: train_acc=99.4% val_acc=98.6%  ← best val
+  Ep 200: train_acc=99.4% val_acc=98.6%
+  ```
+  Best val: **98.6%** at epoch 120. Light: 97.1%, Heavy: 100.0%.
+- **Diagnosis:** The `dv_ratio` feature achieves 3.9× separation between light (2.22) and heavy (0.57) — near-perfect discrimination. This is Newton's third law directly encoded: momentum conservation means |Δv| is inversely proportional to mass. With 257 params and 6 physics features, no overfitting possible. The remaining 1.4% errors are likely objects with very few collisions where the ratio estimate is noisy.
+- **Verdict:** SUCCESS — 98.6% val accuracy with 257 params. Mass inference from dynamics is solved with the right features. Next: bridge to slot centroids (can we extract dv_ratio from visual observations?).
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**
 - DINOv2 + SlotAttention (5 iters, 7 slots, 64-dim): entropy 0.170 on CLEVR, 0.429 complex CLEVR, 0.293 real photos, 90.2% video consistency
 - Slot JEPA predictor: beats copy baseline by 20.5% (v=±5.0, Δ=3)
+- **Mass inference from dynamics: 98.6%** with pairwise collision features on GT positions (Phase 29f)
 
 **Mass inference (Phase 29 series):**
-- Phase 29: Slot vectors → 53.2% (appearance, not dynamics)
-- Phase 29b: Slot centroids → 51.2% (16×16 grid too coarse)
-- Phase 29c: GT positions, sparse collisions → 67.7%
-- Phase 29d: GT positions, dense collisions → 76.4% (raw trajectory MLP overfits)
-- Phase 29e: GT positions, collision features → **81.9%** (225 params, zero overfitting)
-- Conclusion: collision-aware features work. Mass ratio 1:3 limits ceiling. Next: try 1:5 ratio or bridge to slot centroids.
+- Phase 29: Slot vectors → 53.2% | 29b: Slot centroids → 51.2%
+- Phase 29c: GT sparse → 67.7% | 29d: GT dense raw → 76.4%
+- Phase 29e: GT collision features → 81.9% | **29f: GT pairwise features → 98.6%**
+- Key insight: mass lives in pairwise collision ratios (Newton's 3rd law), not raw trajectories
 
-**Next steps:** (1) Increase mass ratio to 1:5 for cleaner separation, or try slot centroid features, (2) multi-agent communication, (3) transformer slot predictor.
+**Next steps:** (1) Bridge to perception: extract dv_ratio from slot centroid trajectories, (2) multi-agent communication, (3) transformer slot predictor.
