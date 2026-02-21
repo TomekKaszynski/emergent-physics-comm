@@ -2397,6 +2397,106 @@ class MassReceiver(nn.Module):
         return self.net(message)
 
 
+class PhysicsCNN(nn.Module):
+    """Phase 29j: Trainable CNN encoder for physics perception.
+
+    RGB [3,64,64] + coord channels [2,64,64] → [128] per frame.
+    4 conv layers with stride-2, AdaptiveAvgPool, flatten.
+    """
+
+    def __init__(self, out_dim=128):
+        super().__init__()
+        # Input: 5 channels (3 RGB + 2 coord)
+        self.cnn = nn.Sequential(
+            nn.Conv2d(5, 32, 4, stride=2, padding=1),   # 64→32
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 4, stride=2, padding=1),  # 32→16
+            nn.ReLU(),
+            nn.Conv2d(64, 128, 4, stride=2, padding=1), # 16→8
+            nn.ReLU(),
+            nn.Conv2d(128, 128, 4, stride=2, padding=1), # 8→4
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d(1),                      # 4→1
+        )
+        self.out = nn.Linear(128, out_dim)
+
+    def forward(self, x):
+        # x: [B, 5, 64, 64]
+        h = self.cnn(x).squeeze(-1).squeeze(-1)  # [B, 128]
+        return self.out(h)  # [B, out_dim]
+
+
+class CommSender(nn.Module):
+    """Phase 29j: Communication-driven sender with trainable CNN perception.
+
+    PhysicsCNN (shared across frames) → subsample 8 frames → encode each
+    → [8, 128] → LSTM(128, 64) → final hidden → Linear(64, 8)
+    → Gumbel-softmax discrete token.
+    """
+
+    def __init__(self, cnn_dim=128, lstm_hidden=64, vocab_size=8,
+                 n_frames=40, subsample=5):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.subsample = subsample
+        self.n_subsampled = n_frames // subsample  # 8
+
+        self.encoder = PhysicsCNN(out_dim=cnn_dim)
+        self.lstm = nn.LSTM(cnn_dim, lstm_hidden, num_layers=1,
+                            batch_first=True)
+        self.message_head = nn.Linear(lstm_hidden, vocab_size)
+
+    def forward(self, frames, tau=1.0, hard=False):
+        # frames: [B, T, 3, 64, 64]
+        B, T = frames.shape[:2]
+
+        # Subsample frames
+        indices = list(range(0, T, self.subsample))[:self.n_subsampled]
+        subsampled = frames[:, indices]  # [B, 8, 3, 64, 64]
+
+        # Add coordinate channels
+        device = frames.device
+        coords_x = torch.linspace(-1, 1, 64, device=device)
+        coords_y = torch.linspace(-1, 1, 64, device=device)
+        gy, gx = torch.meshgrid(coords_y, coords_x, indexing='ij')
+        coord_ch = torch.stack([gx, gy], dim=0)  # [2, 64, 64]
+        coord_ch = coord_ch.unsqueeze(0).unsqueeze(0).expand(B, len(indices), -1, -1, -1)
+        subsampled = torch.cat([subsampled, coord_ch], dim=2)  # [B, 8, 5, 64, 64]
+
+        # Encode each frame with shared CNN
+        n_sub = len(indices)
+        flat = subsampled.reshape(B * n_sub, 5, 64, 64)
+        encoded = self.encoder(flat)  # [B*8, 128]
+        encoded = encoded.reshape(B, n_sub, -1)  # [B, 8, 128]
+
+        # LSTM over temporal sequence
+        _, (h_n, _) = self.lstm(encoded)  # h_n: [1, B, 64]
+        h = h_n.squeeze(0)  # [B, 64]
+
+        # Message head
+        logits = self.message_head(h)  # [B, 8]
+
+        if hard:
+            idx = logits.argmax(dim=-1)
+            return F.one_hot(idx, self.vocab_size).float(), logits
+        message = F.gumbel_softmax(logits, tau=tau, hard=True)
+        return message, logits
+
+
+class CommReceiver(nn.Module):
+    """Phase 29j: Receiver — message embedding → predict heavy object index."""
+
+    def __init__(self, vocab_size=8, embed_dim=32, n_classes=3):
+        super().__init__()
+        self.embed = nn.Linear(vocab_size, embed_dim)
+        self.head = nn.Linear(embed_dim, n_classes)
+
+    def forward(self, message):
+        # message: [B, vocab_size] one-hot or soft
+        h = F.relu(self.embed(message))
+        return self.head(h)
+
+
 def count_params(model):
     return sum(p.numel() for p in model.parameters())
 

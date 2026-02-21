@@ -13594,6 +13594,396 @@ def run_phase30_emergent_comm():
     }
 
 
+def run_phase29j_comm_driven_perception():
+    """Phase 29j: Communication-driven physics perception.
+
+    End-to-end: raw RGB frames → trainable PhysicsCNN → LSTM → Gumbel-softmax
+    → discrete message → receiver predicts heavy object index.
+    No frozen DINOv2. The CNN learns what visual features matter for mass
+    inference through the communication loss.
+    """
+    import random
+    import math
+
+    print("=" * 60, flush=True)
+    print("PHASE 29j: Communication-Driven Physics Perception", flush=True)
+    print("=" * 60, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Generate sequences ─────────────────────────────────────
+    n_sequences = 1000
+    n_frames = 40
+    S = 64
+
+    palette = [
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0],
+    ]
+
+    print(f"\n┌─ Generating {n_sequences} sequences (3-4 objects, 40 frames, v=±7)", flush=True)
+    all_frames = []    # [n_seq, 40, 3, 64, 64]
+    all_labels = []    # [n_seq] — heavy object index
+    all_n_obj = []     # [n_seq] — number of objects
+    collision_counts = []
+
+    random.seed(42)
+    for seq_i in range(n_sequences):
+        n_obj = random.randint(3, 4)
+        # Exactly one heavy object
+        heavy_idx = random.randint(0, n_obj - 1)
+        masses = [1.0] * n_obj
+        masses[heavy_idx] = 3.0
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(7, 10)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-7.0, 7.0)
+            vy = random.uniform(-7.0, 7.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi], 'color': palette[oi % len(palette)]
+            })
+
+        seq_collisions = 0
+        frames = []
+        for fi in range(n_frames):
+            img = np.ones((S, S, 3), dtype=np.float32) * 0.5
+            for obj in objects:
+                r = obj['r']
+                cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+                color = np.array(obj['color'])
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if dx*dx + dy*dy <= r*r:
+                            px, py = cx_i + dx, cy_i + dy
+                            if 0 <= px < S and 0 <= py < S:
+                                img[py, px] = color
+            frames.append(img.transpose(2, 0, 1))
+
+            for i in range(len(objects)):
+                for j in range(i + 1, len(objects)):
+                    oi_o, oj_o = objects[i], objects[j]
+                    dx = oj_o['cx'] - oi_o['cx']
+                    dy = oj_o['cy'] - oi_o['cy']
+                    dist = math.hypot(dx, dy)
+                    min_dist = oi_o['r'] + oj_o['r']
+                    if dist < min_dist and dist > 0.1:
+                        nx, ny = dx / dist, dy / dist
+                        dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                              (oi_o['vy'] - oj_o['vy']) * ny
+                        if dvn > 0:
+                            seq_collisions += 1
+                            m1, m2 = oi_o['mass'], oj_o['mass']
+                            imp = 2 * dvn / (m1 + m2)
+                            oi_o['vx'] -= imp * m2 * nx
+                            oi_o['vy'] -= imp * m2 * ny
+                            oj_o['vx'] += imp * m1 * nx
+                            oj_o['vy'] += imp * m1 * ny
+                            overlap = min_dist - dist
+                            oi_o['cx'] -= overlap * nx * 0.5
+                            oi_o['cy'] -= overlap * ny * 0.5
+                            oj_o['cx'] += overlap * nx * 0.5
+                            oj_o['cy'] += overlap * ny * 0.5
+
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        all_frames.append(np.array(frames))
+        all_labels.append(heavy_idx)
+        all_n_obj.append(n_obj)
+        collision_counts.append(seq_collisions)
+
+        if (seq_i + 1) % 200 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    # Only use sequences with exactly 3 objects for consistent classification
+    # (4-object sequences would need 4-way classification)
+    idx_3obj = [i for i in range(n_sequences) if all_n_obj[i] == 3]
+    idx_4obj = [i for i in range(n_sequences) if all_n_obj[i] == 4]
+    print(f"│  3-object sequences: {len(idx_3obj)}, 4-object: {len(idx_4obj)}", flush=True)
+    print(f"│  Using 3-object sequences only for 3-way classification", flush=True)
+
+    frames_3 = torch.tensor(np.array([all_frames[i] for i in idx_3obj]), dtype=torch.float32)
+    labels_3 = torch.tensor([all_labels[i] for i in idx_3obj], dtype=torch.long)
+    colls_3 = [collision_counts[i] for i in idx_3obj]
+
+    n_total = len(idx_3obj)
+    avg_coll = np.mean(colls_3)
+    print(f"│  Frames: {list(frames_3.shape)}", flush=True)
+    print(f"│  Label dist: {[(labels_3 == i).sum().item() for i in range(3)]}", flush=True)
+    print(f"│  Avg collisions/seq: {avg_coll:.1f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Train/val split ────────────────────────────────────────
+    n_train = 800
+    if n_total < n_train + 100:
+        n_train = int(0.8 * n_total)
+    n_val = n_total - n_train
+
+    perm = torch.randperm(n_total)
+    train_frames = frames_3[perm[:n_train]]    # [800, 40, 3, 64, 64]
+    train_labels = labels_3[perm[:n_train]]
+    val_frames = frames_3[perm[n_train:]]
+    val_labels = labels_3[perm[n_train:]]
+
+    print(f"\n│  Train: {n_train} | Val: {n_val}", flush=True)
+
+    # ── Build models ───────────────────────────────────────────
+    from world_model import CommSender, CommReceiver
+
+    sender = CommSender(cnn_dim=128, lstm_hidden=64, vocab_size=8,
+                        n_frames=40, subsample=5).to(device)
+    receiver = CommReceiver(vocab_size=8, embed_dim=32, n_classes=3).to(device)
+
+    s_params = sum(p.numel() for p in sender.parameters())
+    r_params = sum(p.numel() for p in receiver.parameters())
+    print(f"\n  Sender: {s_params:,} params", flush=True)
+    print(f"  Receiver: {r_params:,} params", flush=True)
+    print(f"  Total: {s_params + r_params:,} params", flush=True)
+
+    # ── Training ───────────────────────────────────────────────
+    n_epochs = 200
+    batch_size = 16  # small batch — 40 frames per sample on MPS
+    entropy_weight = 0.1
+
+    all_params = list(sender.parameters()) + list(receiver.parameters())
+    opt = torch.optim.Adam(all_params, lr=3e-4)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=n_epochs, eta_min=1e-5)
+
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"Training: {n_epochs} epochs, batch={batch_size}", flush=True)
+    print(f"  τ: 1.0 (ep 1-100), anneal 1.0→0.1 (ep 101-200)", flush=True)
+    print(f"  Loss = CE - {entropy_weight} * entropy(logits)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    best_val_acc = 0.0
+    best_epoch = 0
+    best_state = None
+    history = {'epoch': [], 'train_acc': [], 'val_acc': []}
+
+    for epoch in range(1, n_epochs + 1):
+        sender.train()
+        receiver.train()
+
+        # Tau schedule
+        if epoch <= 100:
+            tau = 1.0
+        else:
+            progress = (epoch - 100) / 100
+            tau = 1.0 - 0.9 * progress  # 1.0 → 0.1
+
+        perm_t = torch.randperm(n_train)
+        ep_loss, ep_correct, ep_total = 0, 0, 0
+
+        for start in range(0, n_train, batch_size):
+            idx = perm_t[start:start + batch_size]
+            frame_b = train_frames[idx].to(device)   # [B, 40, 3, 64, 64]
+            label_b = train_labels[idx].to(device)
+
+            message, logits = sender(frame_b, tau=tau)  # [B, 8], [B, 8]
+            pred = receiver(message)                     # [B, 3]
+
+            ce_loss = F.cross_entropy(pred, label_b)
+
+            # Entropy bonus — encourage diverse messages
+            msg_probs = F.softmax(logits, dim=-1)
+            entropy = -(msg_probs * (msg_probs + 1e-8).log()).sum(dim=-1).mean()
+            loss = ce_loss - entropy_weight * entropy
+
+            opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(all_params, 1.0)
+            opt.step()
+
+            ep_loss += ce_loss.item() * len(label_b)
+            ep_correct += (pred.argmax(dim=-1) == label_b).sum().item()
+            ep_total += len(label_b)
+
+            if device.type == 'mps' and (start // batch_size) % 50 == 0:
+                torch.mps.empty_cache()
+
+        sched.step()
+        train_acc = ep_correct / ep_total
+
+        if epoch % 10 == 0 or epoch == 1:
+            sender.eval()
+            receiver.eval()
+            with torch.no_grad():
+                val_correct = 0
+                val_tokens = []
+                for vi in range(0, n_val, batch_size):
+                    vf = val_frames[vi:vi+batch_size].to(device)
+                    vl = val_labels[vi:vi+batch_size].to(device)
+                    msg, _ = sender(vf, hard=True)
+                    vp = receiver(msg).argmax(dim=-1)
+                    val_correct += (vp == vl).sum().item()
+                    val_tokens.append(msg.argmax(dim=-1).cpu())
+
+                val_acc = val_correct / n_val
+                val_tokens = torch.cat(val_tokens)
+                unique_tokens = val_tokens.unique().tolist()
+
+            elapsed = time.time() - t0
+            print(f"│  Epoch {epoch:3d} | τ={tau:.2f} | loss={ep_loss/ep_total:.4f} | "
+                  f"train={train_acc:.3f} | val={val_acc:.3f} | "
+                  f"tokens={len(unique_tokens)} | [{elapsed:.0f}s]", flush=True)
+
+            # Detailed token analysis every 50 epochs
+            if epoch % 50 == 0 or epoch == 1:
+                for lbl in range(3):
+                    mask = val_labels[:len(val_tokens)] == lbl
+                    if mask.sum() > 0:
+                        tokens_for_label = val_tokens[mask]
+                        token_counts = [(t, (tokens_for_label == t).sum().item()) for t in range(8)]
+                        token_counts.sort(key=lambda x: -x[1])
+                        top3 = token_counts[:3]
+                        print(f"│    heavy={lbl}: top tokens = {top3}", flush=True)
+
+            history['epoch'].append(epoch)
+            history['train_acc'].append(train_acc)
+            history['val_acc'].append(val_acc)
+
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_epoch = epoch
+                best_state = {
+                    'sender': {k: v.cpu().clone() for k, v in sender.state_dict().items()},
+                    'receiver': {k: v.cpu().clone() for k, v in receiver.state_dict().items()},
+                }
+
+            # Early success
+            if val_acc > 0.85:
+                print(f"│  Early stop: val > 85%", flush=True)
+                break
+
+    print(f"\n  Best val_acc = {best_val_acc:.3f} at epoch {best_epoch}", flush=True)
+
+    # ── Final token analysis ───────────────────────────────────
+    sender.load_state_dict({k: v.to(device) for k, v in best_state['sender'].items()})
+    receiver.load_state_dict({k: v.to(device) for k, v in best_state['receiver'].items()})
+    sender.eval()
+    receiver.eval()
+
+    with torch.no_grad():
+        all_val_tokens = []
+        all_val_preds = []
+        for vi in range(0, n_val, batch_size):
+            vf = val_frames[vi:vi+batch_size].to(device)
+            msg, _ = sender(vf, hard=True)
+            vp = receiver(msg).argmax(dim=-1)
+            all_val_tokens.append(msg.argmax(dim=-1).cpu())
+            all_val_preds.append(vp.cpu())
+        all_val_tokens = torch.cat(all_val_tokens)
+        all_val_preds = torch.cat(all_val_preds)
+
+    print(f"\n  Token → label mapping (best model):", flush=True)
+    unique_tokens = all_val_tokens.unique().tolist()
+    for tok in sorted(unique_tokens):
+        tok_mask = all_val_tokens == tok
+        n_tok = tok_mask.sum().item()
+        if n_tok > 0:
+            labels_for_tok = val_labels[:len(all_val_tokens)][tok_mask]
+            counts = [(lbl, (labels_for_tok == lbl).sum().item()) for lbl in range(3)]
+            counts.sort(key=lambda x: -x[1])
+            purity = counts[0][1] / n_tok
+            print(f"    Token {tok}: n={n_tok}, labels={counts}, purity={purity:.2f}", flush=True)
+
+    # Confusion matrix
+    conf = torch.zeros(3, 3, dtype=torch.long)
+    for true, pred in zip(val_labels[:len(all_val_preds)], all_val_preds):
+        conf[true.item()][pred.item()] += 1
+    print(f"\n  Confusion matrix:", flush=True)
+    print(f"           Pred 0  Pred 1  Pred 2", flush=True)
+    for i in range(3):
+        row = "  ".join(f"{conf[i][j].item():6d}" for j in range(3))
+        print(f"  True {i}:  {row}", flush=True)
+
+    # ── Visualization ──────────────────────────────────────────
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+
+    # 1. Training curves
+    ax = axes[0]
+    ax.plot(history['epoch'], history['train_acc'], 'b-', label='Train')
+    ax.plot(history['epoch'], history['val_acc'], 'r-', label='Val')
+    ax.axhline(y=0.333, color='gray', linestyle='--', alpha=0.5, label='Chance')
+    ax.axhline(y=0.50, color='orange', linestyle='--', alpha=0.5, label='Target (50%)')
+    ax.axhline(y=0.65, color='green', linestyle='--', alpha=0.5, label='Strong (65%)')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Accuracy')
+    ax.set_title('Training Curves')
+    ax.legend(fontsize=8)
+    ax.set_ylim(0, 1)
+
+    # 2. Confusion matrix
+    ax = axes[1]
+    im = ax.imshow(conf.numpy(), cmap='Blues')
+    for i in range(3):
+        for j in range(3):
+            ax.text(j, i, str(conf[i][j].item()), ha='center', va='center', fontsize=14)
+    ax.set_xlabel('Predicted')
+    ax.set_ylabel('True')
+    ax.set_title(f'Confusion Matrix\nval_acc={best_val_acc:.3f}')
+    ax.set_xticks(range(3))
+    ax.set_yticks(range(3))
+    fig.colorbar(im, ax=ax)
+
+    # 3. Message distribution
+    ax = axes[2]
+    width = 0.25
+    for lbl in range(3):
+        mask = val_labels[:len(all_val_tokens)] == lbl
+        tokens = all_val_tokens[mask].numpy()
+        counts = np.bincount(tokens, minlength=8)
+        ax.bar(np.arange(8) + lbl * width - width, counts, width=width,
+               label=f'Heavy={lbl}')
+    ax.set_xlabel('Message Token')
+    ax.set_ylabel('Count')
+    ax.set_title('Message Distribution by Heavy Object')
+    ax.legend()
+    ax.set_xticks(range(8))
+
+    plt.tight_layout()
+    plt.savefig('results/phase29j_comm_driven.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\nSaved: results/phase29j_comm_driven.png", flush=True)
+
+    # Save checkpoint
+    torch.save(best_state, 'results/phase29j_model.pt')
+    print(f"Saved: results/phase29j_model.pt", flush=True)
+
+    verdict = "SUCCESS" if best_val_acc > 0.65 else "PARTIAL" if best_val_acc > 0.50 else "FAIL"
+    print(f"\nVerdict: {verdict} (val_acc={best_val_acc:.3f}, target>50%)", flush=True)
+
+    return {
+        'val_acc': best_val_acc,
+        'best_epoch': best_epoch,
+        'unique_tokens': unique_tokens,
+        'sender_params': s_params,
+        'receiver_params': r_params,
+        'verdict': verdict,
+    }
+
+
 def run_phase29i_slot_delta_lstm():
     """Phase 29i: Slot vector temporal differences with LSTM.
 

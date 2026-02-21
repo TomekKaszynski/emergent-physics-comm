@@ -725,6 +725,23 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Diagnosis:** The fundamental problem is confirmed across three approaches: frozen DINOv2+SA slot representations do NOT encode mass-related dynamics differently for heavy vs light objects. The avg delta norm ratio (1.03×) matches 29h's prediction error ratio (1.03×) and 29g's feature separation (~1.01×). The slot vectors encode appearance and spatial position — they change when objects move — but the *magnitude* of change does not reflect mass-dependent collision physics. DINOv2 features are optimized for visual similarity, not physical dynamics. Even an LSTM with 12.6K params and access to all 64 dimensions cannot find a signal that isn't there.
 - **Verdict:** FAIL — 52.3% val (chance). Slot delta sequences do not contain mass information extractable by any classifier.
 
+### Phase 29j: Communication-Driven Physics Perception (Feb 21)
+- **Goal:** End-to-end trainable CNN → LSTM → Gumbel-softmax → receiver. No frozen DINOv2. The CNN learns what visual features matter for mass through communication loss. Target: >50% (chance=33%).
+- **Architecture:** PhysicsCNN (RGB+coord→128 per frame, 4 conv layers stride-2) → subsample 8 of 40 frames → LSTM(128,64) → Linear(64,8) → Gumbel-softmax → CommReceiver(embed 8→32→3). Sender: 496K params, Receiver: 387 params.
+- **Data:** 478 three-object sequences (382 train, 96 val). Filtered from 1000 sequences — 4-object sequences excluded for consistent 3-way classification.
+- **Training:** 200 epochs, batch=16. τ=1.0 (ep 1-100), anneal 1.0→0.1 (ep 101-200). Loss = CE - 0.1*entropy. Adam lr=3e-4 cosine.
+- **Result:**
+  ```
+  Ep   1: train=33.0% val=29.2% tokens=1 (mode collapse)
+  Ep  50: train=36.4% val=37.5% tokens=4
+  Ep 100: train=42.1% val=28.1% tokens=6
+  Ep 150: train=89.8% val=27.1% tokens=3
+  Ep 200: train=92.9% val=30.2% tokens=3
+  ```
+  Best val: 37.5% at epoch 10 (= chance). Mode collapse throughout — single token dominates. Training accuracy rises to 93% by memorizing 382 samples with 496K params.
+- **Diagnosis:** Two compounding failures: (1) Severe data scarcity — 382 training sequences for 496K params = 1300× overparameterized. (2) Mode collapse — Gumbel-softmax with CNN gives same problem as Phase 30. The entropy bonus (0.1) wasn't enough to prevent collapse. Token distributions identical across all labels.
+- **Verdict:** FAIL — 37.5% val (chance). Insufficient data for end-to-end CNN training, plus mode collapse.
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**
@@ -733,23 +750,15 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Mass inference from dynamics: 98.6%** with pairwise collision features on GT positions (Phase 29f)
 - **Emergent communication: 98.5%** with physics features → Gumbel-softmax → receiver (Phase 30c)
 
-**Mass inference (Phase 29 series):**
-- Phase 29–29f: progressed from 53% to **98.6%** by isolating bottlenecks (slot features → GT positions → dense collisions → physics features → pairwise ratios)
-- Phase 29g: slot centroid features → **54.9%** (FAIL). Centroid noise drowns collision signal.
-- Phase 29h: JEPA prediction error → **50.6%** (FAIL). Background noise dominates.
-- Phase 29i: slot delta LSTM → **52.3%** (FAIL). Pure overfitting, zero generalizable signal.
-- **Conclusion:** Frozen DINOv2+SA slot representations do NOT encode mass-related dynamics. Three different approaches (hand-crafted centroid features, scalar prediction error, learned LSTM over 64-dim deltas) all show ~1.03× light/heavy separation = noise. The vision→physics gap cannot be bridged with frozen representations.
+**Mass inference from vision (Phase 29g-j):**
+- 29g: slot centroid features → **54.9%** (FAIL). Centroid noise drowns collision signal.
+- 29h: JEPA prediction error → **50.6%** (FAIL). Background noise dominates.
+- 29i: slot delta LSTM → **52.3%** (FAIL). Pure overfitting, no generalizable signal in frozen slots.
+- 29j: end-to-end CNN+LSTM+Gumbel → **37.5%** (FAIL). Mode collapse + data scarcity (382 train, 496K params).
+- **Conclusion:** Four approaches to bridge vision→mass have failed. Frozen DINOv2 slots don't encode dynamics (29g-i). End-to-end training on tiny datasets doesn't converge (29j).
 
 **Emergent communication (Phase 30 series):**
-- Phase 30: mode collapse (33%). Phase 30b: overfitting (41%). Both failed trying to learn perception + communication jointly.
-- Phase 30c: **98.5%** — separated perception (frozen physics features) from communication (learned Gumbel-softmax). 3-token emergent language with near-perfect purity. Solved in 20 epochs with 1259 params.
-- Key insight: communication is easy once perception is solved.
+- Phase 30: mode collapse (33%). Phase 30b: overfitting (41%).
+- Phase 30c: **98.5%** — separated perception from communication. 3-token emergent language.
 
-**The vision→physics gap (definitive):** Three approaches to extract mass from frozen slot representations have failed:
-- 29g: centroid features → 1.01× separation → 54.9%
-- 29h: JEPA prediction error → 1.03× separation → 50.6%
-- 29i: LSTM on 64-dim slot deltas → 1.03× separation → 52.3%
-**Root cause:** DINOv2 slot vectors encode visual appearance, not physical dynamics. Mass-dependent velocity changes during collisions produce indistinguishable slot vector changes from ordinary frame-to-frame motion.
-**The path forward must change the representations:** (1) end-to-end training with mass loss, (2) much larger visual scale (128×128, mass 1:10), or (3) accept GT positions as perception and focus on the communication/prediction pipeline.
-
-**Next steps:** (1) End-to-end: unfreeze slot attention + train with mass classification loss to shape representations, (2) accept GT-position perception module and build full multi-agent communication pipeline (GT positions → collision features → emergent comm → receiver), (3) transformer slot predictor for dynamics.
+**Next steps:** (1) Scale up data for 29j (5000+ sequences, all 3-object), (2) try 29k: insert SlotAttention between PhysicsCNN and LSTM (structured perception), (3) accept GT positions and build full multi-agent pipeline, (4) transformer slot predictor.
