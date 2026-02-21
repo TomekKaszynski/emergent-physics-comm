@@ -774,6 +774,22 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Key finding:** Even with 17× GT separation (10:1 mass ratio), slot centroid dv_ratio separation is only 1.08×. The 224×224 canvas gives exactly the same 1.01× as 64×64. The problem is NOT insufficient physics signal or canvas resolution — it's that **slot attention centroids are fundamentally too noisy to track velocity changes**. The centroid extraction process (attention-weighted average over 16×16 patches) introduces ~8.7% normalized noise, completely drowning the 2-5% collision Δv signal.
 - **Verdict:** FAIL — 51.9% (A) and 53.1% (B). Neither amplified mass nor higher resolution helps. The centroid noise floor is structural.
 
+### Phase 29l — Motion energy via slot masks (Feb 21)
+- **Goal:** Use slot masks to identify which pixels belong to each object, then frame differencing at full 64×64 to measure motion. Avoids centroid quantization.
+- **Features (5):** avg_motion, max_motion, motion_var, n_spikes, avg_spike_ratio.
+- **Results:**
+  ```
+  Feature              Light      Heavy   Separation
+  avg_motion           0.1199     0.1131       1.06x
+  max_motion           0.2360     0.2244       1.05x
+  motion_var           0.0028     0.0026       1.09x
+  n_spikes             0.0487     0.0484       1.01x
+  avg_spike_ratio      5.4588     4.6157       1.18x
+  ```
+  Val accuracy: **52.7%** (epoch 120). Classifier: 225 params.
+- **Diagnosis:** avg_spike_ratio shows the most separation (1.18×) — light objects do show slightly more motion at collision frames. But the slot masks are too soft/overlapping — motion energy leaks between objects. A heavy object moving fast looks the same as a light object moving fast when measured through soft masks. The masks identify object regions but don't cleanly separate overlapping motion at collision time.
+- **Verdict:** FAIL — 52.7% (target >65%). Motion energy through slot masks is still too noisy.
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**
@@ -782,14 +798,15 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Mass inference from dynamics: 98.6%** with pairwise collision features on GT positions (Phase 29f)
 - **Emergent communication: 98.5%** with physics features → Gumbel-softmax → receiver (Phase 30c)
 
-**Mass inference from vision (Phase 29g-k):**
+**Mass inference from vision (Phase 29g-l):**
 - 29g: slot centroid features → **54.9%** (FAIL). Centroid noise drowns collision signal.
 - 29h: JEPA prediction error → **50.6%** (FAIL). Background noise dominates.
 - 29i: slot delta LSTM → **52.3%** (FAIL). Pure overfitting in frozen slots.
 - 29j: end-to-end CNN+Gumbel → **37.5%** (FAIL). Mode collapse + data scarcity.
 - 29j-v2: staged see→talk→refine → **29.0%** (FAIL). Zero learning across all 3 stages.
-- 29k: amplified physics (10:1 mass + 224px) → **51.9%/53.1%** (FAIL). Centroid noise is structural, not a signal strength issue.
-- **Conclusion:** Six approaches to bridge vision→mass have failed. Slot attention centroids have a noise floor (~8.7%) that structurally prevents measuring velocity changes (~2-5%). The problem is centroid extraction precision, not physics signal strength, canvas resolution, or model capacity.
+- 29k: amplified physics (10:1 mass + 224px) → **51.9%/53.1%** (FAIL). Centroid noise is structural.
+- 29l: motion energy via slot masks → **52.7%** (FAIL). Soft masks leak motion between objects.
+- **Conclusion:** Seven approaches to bridge vision→mass have failed. Both centroid-based (29g, 29k) and mask-based (29l) approaches show ~1.0-1.2× feature separation vs GT's 3.9×. The slot attention representations are good for object identity but fundamentally imprecise for measuring dynamics.
 
 **Emergent communication (Phase 30 series):**
 - Phase 30: mode collapse (33%). Phase 30b: overfitting (41%).

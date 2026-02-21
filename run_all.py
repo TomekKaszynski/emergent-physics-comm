@@ -13594,6 +13594,487 @@ def run_phase30_emergent_comm():
     }
 
 
+def run_phase29l_motion_energy():
+    """Phase 29l: Pixel-space motion energy via slot masks.
+
+    Key idea: use slot masks to identify WHICH pixels belong to each object,
+    then use frame differencing at full 64x64 resolution to measure HOW MUCH
+    those pixels moved. Avoids centroid quantization noise.
+
+    Features: avg_motion, max_motion, motion_var, n_spikes, avg_spike_ratio.
+    The spike_ratio is the Newton's 3rd law signal — at collision frames,
+    light objects move more than heavy ones.
+    """
+    import random
+    import math
+
+    print("=" * 60, flush=True)
+    print("PHASE 29l: Motion Energy via Slot Masks", flush=True)
+    print("=" * 60, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Load frozen SlotAttentionDINO ─────────────────────────
+    print("\n┌─ Loading frozen SlotAttentionDINO", flush=True)
+    ae = SlotAttentionDINO(n_slots=7, slot_dim=64, img_size=64).to(device)
+    state = torch.load(OUTPUT_DIR / "phase27_model.pt", map_location=device)
+    ae.load_state_dict(state)
+    ae.eval()
+    for p in ae.parameters():
+        p.requires_grad = False
+    print("│  Model loaded and frozen", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Generate sequences (same as 29f/29g) ──────────────────
+    n_sequences = 1000
+    n_frames = 40
+    S = 64
+
+    palette = [
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0],
+    ]
+
+    print(f"\n┌─ Generating {n_sequences} sequences with dense mass physics", flush=True)
+    all_frames = []
+    all_obj_info = []
+    all_collision_events = []
+    collision_counts = []
+
+    random.seed(42)
+    for seq_i in range(n_sequences):
+        n_obj = random.randint(3, 4)
+        masses = [1.0, 3.0]
+        for _ in range(n_obj - 2):
+            masses.append(random.choice([1.0, 3.0]))
+        random.shuffle(masses)
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(7, 10)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-7.0, 7.0)
+            vy = random.uniform(-7.0, 7.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi], 'color': palette[oi % len(palette)]
+            })
+
+        all_obj_info.append([{
+            'cx0': obj['cx'] / S, 'cy0': obj['cy'] / S,
+            'r': obj['r'], 'mass': obj['mass']
+        } for obj in objects])
+
+        seq_collision_events = []
+        seq_collisions = 0
+
+        frames = []
+        for fi in range(n_frames):
+            # Render frame
+            img = np.ones((S, S, 3), dtype=np.float32) * 0.5
+            for obj in objects:
+                r = obj['r']
+                cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+                color = np.array(obj['color'])
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if dx*dx + dy*dy <= r*r:
+                            px, py = cx_i + dx, cy_i + dy
+                            if 0 <= px < S and 0 <= py < S:
+                                img[py, px] = color
+            frames.append(img.transpose(2, 0, 1))
+
+            # Elastic collisions
+            for i in range(n_obj):
+                for j in range(i + 1, n_obj):
+                    oi_o, oj_o = objects[i], objects[j]
+                    dx_c = oj_o['cx'] - oi_o['cx']
+                    dy_c = oj_o['cy'] - oi_o['cy']
+                    dist = math.hypot(dx_c, dy_c)
+                    min_dist = oi_o['r'] + oj_o['r']
+                    if dist < min_dist and dist > 0.1:
+                        nx, ny = dx_c / dist, dy_c / dist
+                        dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                              (oi_o['vy'] - oj_o['vy']) * ny
+                        if dvn > 0:
+                            seq_collisions += 1
+                            m1, m2 = oi_o['mass'], oj_o['mass']
+                            imp = 2 * dvn / (m1 + m2)
+                            dv_i = imp * m2
+                            dv_j = imp * m1
+                            seq_collision_events.append((fi, i, j, dv_i, dv_j))
+                            oi_o['vx'] -= imp * m2 * nx
+                            oi_o['vy'] -= imp * m2 * ny
+                            oj_o['vx'] += imp * m1 * nx
+                            oj_o['vy'] += imp * m1 * ny
+                            overlap = min_dist - dist
+                            oi_o['cx'] -= overlap * nx * 0.5
+                            oi_o['cy'] -= overlap * ny * 0.5
+                            oj_o['cx'] += overlap * nx * 0.5
+                            oj_o['cy'] += overlap * ny * 0.5
+
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        all_frames.append(np.array(frames))
+        all_collision_events.append(seq_collision_events)
+        collision_counts.append(seq_collisions)
+
+        if (seq_i + 1) % 200 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    all_frames = torch.tensor(np.array(all_frames), dtype=torch.float32)
+    avg_coll = np.mean(collision_counts)
+    n_with_coll = sum(1 for c in collision_counts if c > 0)
+    n_total_obj = sum(len(info) for info in all_obj_info)
+    n_light = sum(1 for info in all_obj_info for o in info if o['mass'] == 1.0)
+    n_heavy = n_total_obj - n_light
+    print(f"│  Frames: {list(all_frames.shape)}", flush=True)
+    print(f"│  Objects: {n_total_obj} (light={n_light}, heavy={n_heavy})", flush=True)
+    print(f"│  Avg collisions/seq: {avg_coll:.1f}, with ≥1: {n_with_coll}/{n_sequences}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Encode all frames → slot masks (16x16) ───────────────
+    print(f"\n┌─ Encoding {n_sequences * n_frames} frames → slot masks", flush=True)
+
+    P = 16
+    # For centroid matching (frame-0 only)
+    xs_grid = torch.linspace(0, 1, P)
+    ys_grid = torch.linspace(0, 1, P)
+    grid_y, grid_x = torch.meshgrid(ys_grid, xs_grid, indexing='ij')
+    gx_flat = grid_x.reshape(-1).to(device)
+    gy_flat = grid_y.reshape(-1).to(device)
+
+    all_masks = []       # [1000, 40, 7, 16, 16]
+    all_centroids_f0 = []  # [1000, 7, 2] — frame-0 only, for matching
+
+    with torch.no_grad():
+        for seq_i in range(n_sequences):
+            seq_masks = []
+            for fi in range(0, n_frames, 8):
+                batch = all_frames[seq_i, fi:fi+8].to(device)
+                slots, _ = ae.encode(batch)
+                _, alpha = ae.decode(slots)  # [B, 7, 256]
+                masks = alpha.reshape(-1, 7, P, P).cpu()  # [B, 7, 16, 16]
+                seq_masks.append(masks)
+
+                # Save frame-0 centroids for matching
+                if fi == 0:
+                    ws = alpha[:1].sum(dim=-1, keepdim=True) + 1e-8
+                    cx = (alpha[:1] * gx_flat).sum(dim=-1) / ws.squeeze(-1)
+                    cy = (alpha[:1] * gy_flat).sum(dim=-1) / ws.squeeze(-1)
+                    all_centroids_f0.append(torch.stack([cx, cy], dim=-1).cpu().squeeze(0))  # [7, 2]
+
+            all_masks.append(torch.cat(seq_masks, dim=0))  # [40, 7, 16, 16]
+
+            if (seq_i + 1) % 200 == 0:
+                print(f"│  Encoded {seq_i+1}/{n_sequences}", flush=True)
+                if device.type == 'mps':
+                    torch.mps.empty_cache()
+
+    all_masks = torch.stack(all_masks)  # [1000, 40, 7, 16, 16]
+    print(f"│  Mask cache: {list(all_masks.shape)}", flush=True)
+    print("└─ Done", flush=True)
+
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    # ── Match slots to objects (frame-0 centroids) ────────────
+    print(f"\n┌─ Matching slots to objects", flush=True)
+
+    slot_assignments = []
+    match_dists = []
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        frame0_centroids = all_centroids_f0[seq_i]  # [7, 2]
+        n_obj = len(obj_info)
+
+        used_slots = set()
+        seq_slots = []
+        for obj in obj_info:
+            best_slot, best_d = -1, float('inf')
+            for si in range(7):
+                if si in used_slots:
+                    continue
+                d = math.hypot(
+                    frame0_centroids[si, 0].item() - obj['cx0'],
+                    frame0_centroids[si, 1].item() - obj['cy0'])
+                if d < best_d:
+                    best_d = d
+                    best_slot = si
+            used_slots.add(best_slot)
+            seq_slots.append(best_slot)
+            match_dists.append(best_d)
+
+        slot_assignments.append(seq_slots)
+
+    avg_match_dist = np.mean(match_dists)
+    print(f"│  Avg match distance: {avg_match_dist:.4f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Compute motion energy per object ──────────────────────
+    print(f"\n┌─ Computing motion energy features", flush=True)
+
+    # Upsample all masks from 16x16 → 64x64 once
+    # all_masks: [1000, 40, 7, 16, 16]
+    masks_flat = all_masks.reshape(-1, 1, P, P)  # [1000*40*7, 1, 16, 16]
+    masks_up = F.interpolate(masks_flat, size=(S, S), mode='bilinear', align_corners=False)
+    masks_up = masks_up.reshape(n_sequences, n_frames, 7, S, S)  # [1000, 40, 7, 64, 64]
+    print(f"│  Upsampled masks: {list(masks_up.shape)}", flush=True)
+
+    del all_masks, masks_flat
+
+    # Frame diffs: (frame[t+1] - frame[t])^2 summed over RGB → [1000, 39, 64, 64]
+    frame_diffs = ((all_frames[:, 1:] - all_frames[:, :-1]) ** 2).sum(dim=2)  # [1000, 39, 64, 64]
+    print(f"│  Frame diffs: {list(frame_diffs.shape)}", flush=True)
+
+    del all_frames
+
+    # Compute per-object motion energy time series
+    # motion_energy[seq, t, slot] = sum(frame_diff[t] * mask[t, slot]) / sum(mask[t, slot])
+    # Use masks from frame t (the object's position at the start of the transition)
+    masks_t = masks_up[:, :-1]  # [1000, 39, 7, 64, 64]
+    # frame_diffs: [1000, 39, 64, 64] → [1000, 39, 1, 64, 64]
+    fd_expanded = frame_diffs.unsqueeze(2)  # [1000, 39, 1, 64, 64]
+
+    # Weighted motion energy per slot
+    weighted = fd_expanded * masks_t  # [1000, 39, 7, 64, 64]
+    mask_sums = masks_t.sum(dim=(-2, -1)) + 1e-8  # [1000, 39, 7]
+    motion_energy = weighted.sum(dim=(-2, -1)) / mask_sums  # [1000, 39, 7]
+    print(f"│  Motion energy: {list(motion_energy.shape)}", flush=True)
+
+    del masks_up, masks_t, fd_expanded, weighted, frame_diffs
+
+    # ── Extract features per object ───────────────────────────
+    feat_names = ['avg_motion', 'max_motion', 'motion_var', 'n_spikes', 'avg_spike_ratio']
+    features = []
+    labels = []
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        n_obj = len(obj_info)
+        seq_slots = slot_assignments[seq_i]
+        collision_events = all_collision_events[seq_i]
+
+        # Get motion energy for each object's matched slot
+        obj_motion = []  # [n_obj, 39]
+        for oi in range(n_obj):
+            me = motion_energy[seq_i, :, seq_slots[oi]]  # [39]
+            obj_motion.append(me)
+
+        for oi in range(n_obj):
+            me = obj_motion[oi]  # [39]
+
+            avg_motion = me.mean().item()
+            max_motion = me.max().item()
+            motion_var = me.var().item()
+
+            # Spike detection
+            median = me.median().item()
+            std = me.std().item()
+            spike_threshold = median + 2 * std
+            spike_mask = me > spike_threshold
+            n_spikes = spike_mask.float().sum().item()
+
+            # Spike ratio: at collision frames, compare my motion to partner's
+            spike_ratios = []
+            for (frame, ci, cj, dv_i, dv_j) in collision_events:
+                if frame >= n_frames - 1:
+                    continue
+                if ci == oi:
+                    partner = cj
+                elif cj == oi:
+                    partner = ci
+                else:
+                    continue
+                my_me = obj_motion[oi][frame].item()
+                partner_me = obj_motion[partner][frame].item()
+                if partner_me > 1e-8:
+                    spike_ratios.append(my_me / partner_me)
+
+            avg_spike_ratio = np.mean(spike_ratios) if spike_ratios else 1.0
+
+            features.append([avg_motion, max_motion, motion_var,
+                             n_spikes / 39.0, avg_spike_ratio])
+            labels.append(1.0 if obj_info[oi]['mass'] == 3.0 else 0.0)
+
+    features = torch.tensor(features, dtype=torch.float32)
+    labels = torch.tensor(labels, dtype=torch.float32)
+
+    # Feature comparison
+    print(f"│", flush=True)
+    print(f"│  Feature comparison:", flush=True)
+    print(f"│  {'Feature':18s}  {'Light':>10s} {'Heavy':>10s} {'Separation':>12s}", flush=True)
+    print(f"│  {'-'*55}", flush=True)
+    seps = {}
+    for fi, name in enumerate(feat_names):
+        lm = features[labels == 0, fi].mean().item()
+        hm = features[labels == 1, fi].mean().item()
+        sep = lm / hm if abs(hm) > 1e-8 else float('inf')
+        seps[name] = sep
+        print(f"│  {name:18s}  {lm:10.4f} {hm:10.4f} {sep:12.2f}x", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Train/val split ────────────────────────────────────────
+    n_train = int(0.8 * len(labels))
+    perm = torch.randperm(len(labels))
+
+    train_feats = features[perm[:n_train]]
+    train_labels = labels[perm[:n_train]]
+    val_feats = features[perm[n_train:]]
+    val_labels = labels[perm[n_train:]]
+
+    print(f"\n│  Train: {n_train} | Val: {len(labels) - n_train}", flush=True)
+    print(f"│  Light: {int((labels==0).sum())} | Heavy: {int((labels==1).sum())}", flush=True)
+
+    # ── Train classifier ───────────────────────────────────────
+    print(f"\n{'=' * 50}", flush=True)
+    print(f"Training classifier (200 epochs)", flush=True)
+    print("=" * 50, flush=True)
+
+    clf = nn.Sequential(
+        nn.Linear(5, 32),
+        nn.ReLU(),
+        nn.Linear(32, 1),
+    ).to(device)
+    clf_opt = torch.optim.Adam(clf.parameters(), lr=1e-3)
+    clf_sched = torch.optim.lr_scheduler.CosineAnnealingLR(clf_opt, T_max=200, eta_min=1e-5)
+
+    best_val_acc = 0.0
+    best_epoch = 0
+    batch_size = 64
+
+    for epoch in range(200):
+        clf.train()
+        perm_t = torch.randperm(len(train_feats))
+        ep_correct, ep_total = 0, 0
+
+        for i in range(0, len(train_feats), batch_size):
+            idx = perm_t[i:i+batch_size]
+            feat_b = train_feats[idx].to(device)
+            lbl_b = train_labels[idx].to(device)
+            logits = clf(feat_b).squeeze(-1)
+            loss = F.binary_cross_entropy_with_logits(logits, lbl_b)
+            clf_opt.zero_grad()
+            loss.backward()
+            clf_opt.step()
+            ep_correct += ((logits > 0).float() == lbl_b).sum().item()
+            ep_total += len(lbl_b)
+
+        clf_sched.step()
+        train_acc = ep_correct / ep_total
+
+        if (epoch + 1) % 10 == 0 or epoch == 0:
+            clf.eval()
+            with torch.no_grad():
+                v_logits = clf(val_feats.to(device)).squeeze(-1)
+                v_preds = (v_logits > 0).float()
+                val_acc = (v_preds == val_labels.to(device)).float().mean().item()
+
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_epoch = epoch + 1
+
+            elapsed = time.time() - t0
+            if (epoch + 1) % 50 == 0 or epoch == 0:
+                print(f"│  Epoch {epoch+1:3d}: train={train_acc*100:.1f}% "
+                      f"val={val_acc*100:.1f}% [{elapsed:.0f}s]", flush=True)
+
+    # ── Results ────────────────────────────────────────────────
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"RESULTS", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    print(f"  Val accuracy: {best_val_acc*100:.1f}% (epoch {best_epoch})", flush=True)
+    print(f"  Classifier: Linear(5,32)+ReLU+Linear(32,1) = 225 params", flush=True)
+
+    # ── Visualization ──────────────────────────────────────────
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    fig.suptitle('Phase 29l: Motion Energy via Slot Masks', fontsize=14, fontweight='bold')
+
+    # 1. Feature comparison bar chart
+    ax = axes[0]
+    x = np.arange(len(feat_names))
+    width = 0.35
+    light_means = [features[labels == 0, fi].mean().item() for fi in range(5)]
+    heavy_means = [features[labels == 1, fi].mean().item() for fi in range(5)]
+    ax.bar(x - width/2, light_means, width, label='Light (m=1)', color='skyblue')
+    ax.bar(x + width/2, heavy_means, width, label='Heavy (m=3)', color='firebrick')
+    ax.set_xticks(x)
+    ax.set_xticklabels([n[:10] for n in feat_names], rotation=45, ha='right')
+    ax.legend(fontsize=9)
+    ax.set_title('Feature Means')
+    ax.set_ylabel('Mean value')
+
+    # 2. avg_spike_ratio distribution
+    ax = axes[1]
+    sr_light = features[labels == 0, 4].numpy()
+    sr_heavy = features[labels == 1, 4].numpy()
+    bins = np.linspace(0, 4, 30)
+    ax.hist(sr_light, bins=bins, alpha=0.6, label='Light', color='skyblue')
+    ax.hist(sr_heavy, bins=bins, alpha=0.6, label='Heavy', color='firebrick')
+    ax.legend(fontsize=9)
+    ax.set_title('avg_spike_ratio Distribution')
+    ax.set_xlabel('avg_spike_ratio')
+    ax.axvline(x=1.0, color='gray', linestyle='--', alpha=0.5)
+
+    # 3. Summary
+    ax = axes[2]
+    ax.axis('off')
+    summary = (
+        f"Phase 29l: Motion Energy\n"
+        f"{'='*35}\n"
+        f"Val acc: {best_val_acc*100:.1f}% (ep {best_epoch})\n"
+        f"Classifier: 225 params\n\n"
+        f"Feature separations:\n"
+    )
+    for name in feat_names:
+        summary += f"  {name:18s} {seps[name]:.2f}x\n"
+    summary += (
+        f"\nMatch dist: {avg_match_dist:.4f}\n"
+        f"Avg coll/seq: {avg_coll:.1f}\n"
+        f"Objects: {n_total_obj}"
+    )
+    ax.text(0.1, 0.5, summary, transform=ax.transAxes, fontsize=10,
+            verticalalignment='center', fontfamily='monospace')
+
+    plt.tight_layout()
+    plt.savefig('results/phase29l_motion_energy.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\nSaved: results/phase29l_motion_energy.png", flush=True)
+
+    verdict = "SUCCESS" if best_val_acc > 0.65 else "PARTIAL" if best_val_acc > 0.55 else "FAIL"
+    elapsed = time.time() - t0
+    print(f"\nVerdict: {verdict} (val_acc={best_val_acc*100:.1f}%, target>65%)", flush=True)
+    print(f"Total time: {elapsed:.0f}s", flush=True)
+
+    return {
+        'val_acc': best_val_acc,
+        'best_epoch': best_epoch,
+        'feature_seps': seps,
+        'avg_match_dist': avg_match_dist,
+        'verdict': verdict,
+    }
+
+
 def run_phase29k_amplified_physics():
     """Phase 29k: Amplified physics signal — two experiments.
 
