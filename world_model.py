@@ -7,6 +7,8 @@ Phase 4: VisionWorldModel = JEPA with CNN encoders — learns physics from pixel
 Phase 5: MultiAgentWorldModel = Multi-modal JEPA — two views, latent fusion
 """
 
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -2286,6 +2288,110 @@ class MassClassifier(nn.Module):
             accelerations.flatten(1),   # [B, (T-2)*2]
         ], dim=-1)  # [B, 114]
         return self.net(features)
+
+
+class MassSender(nn.Module):
+    """Phase 30: Sender agent for emergent mass communication.
+
+    Takes raw GT position trajectories for all objects in a scene.
+    Must discover which object is heavy and encode it into a discrete message.
+
+    Architecture:
+    1. Shared per-object temporal encoder (transformer over time steps)
+    2. Cross-object attention (compare dynamics across objects)
+    3. Gumbel-softmax message head (discrete bottleneck)
+
+    Input: [B, n_obj, T, 2] — position trajectories
+    Output: message_onehot [B, vocab_size] (soft during training, hard at eval)
+    """
+
+    def __init__(self, n_frames=40, d_model=32, nhead=2, n_layers=2,
+                 vocab_size=8, n_obj=3):
+        super().__init__()
+        self.d_model = d_model
+        self.vocab_size = vocab_size
+        self.n_obj = n_obj
+
+        # Per-object temporal encoder (shared across objects)
+        self.input_proj = nn.Linear(2, d_model)
+
+        # Sinusoidal positional encoding (fixed)
+        pe = torch.zeros(n_frames, d_model)
+        pos = torch.arange(0, n_frames, dtype=torch.float).unsqueeze(1)
+        div = torch.exp(torch.arange(0, d_model, 2).float()
+                        * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(pos * div)
+        pe[:, 1::2] = torch.cos(pos * div)
+        self.register_buffer('pe', pe.unsqueeze(0))  # [1, T, d]
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=nhead, dim_feedforward=64,
+            dropout=0.0, batch_first=True)
+        self.temporal_encoder = nn.TransformerEncoder(
+            encoder_layer, num_layers=n_layers)
+
+        # Cross-object attention
+        cross_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=nhead, dim_feedforward=64,
+            dropout=0.0, batch_first=True)
+        self.cross_obj_attn = nn.TransformerEncoder(
+            cross_layer, num_layers=1)
+
+        # Message head
+        self.message_head = nn.Linear(d_model, vocab_size)
+
+    def forward(self, trajectories, tau=1.0, hard=False):
+        """
+        Args:
+            trajectories: [B, n_obj, T, 2]
+            tau: Gumbel-softmax temperature
+            hard: if True, use argmax (eval mode)
+        Returns:
+            message: [B, vocab_size] one-hot (soft or hard)
+        """
+        B, K, T, _ = trajectories.shape
+
+        # 1. Per-object temporal encoding (shared weights)
+        x = trajectories.reshape(B * K, T, 2)       # [B*K, T, 2]
+        x = self.input_proj(x)                       # [B*K, T, d]
+        x = x + self.pe[:, :T, :]                    # add positional encoding
+        x = self.temporal_encoder(x)                  # [B*K, T, d]
+        x = x.mean(dim=1)                            # [B*K, d] mean pool over time
+        x = x.reshape(B, K, self.d_model)            # [B, K, d]
+
+        # 2. Cross-object attention
+        x = self.cross_obj_attn(x)                   # [B, K, d]
+        x = x.mean(dim=1)                            # [B, d] pool over objects
+
+        # 3. Gumbel-softmax message
+        logits = self.message_head(x)                # [B, vocab_size]
+        if hard:
+            idx = logits.argmax(dim=-1)
+            message = F.one_hot(idx, self.vocab_size).float()
+        else:
+            message = F.gumbel_softmax(logits, tau=tau, hard=True)
+        return message
+
+
+class MassReceiver(nn.Module):
+    """Phase 30: Receiver agent for emergent mass communication.
+
+    Takes a discrete message and predicts which object index is heavy.
+
+    Input: message [B, vocab_size] one-hot
+    Output: logits [B, n_obj] — which object is heavy
+    """
+
+    def __init__(self, vocab_size=8, d_model=32, n_obj=3):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(vocab_size, d_model),
+            nn.ReLU(),
+            nn.Linear(d_model, n_obj),
+        )
+
+    def forward(self, message):
+        return self.net(message)
 
 
 def count_params(model):

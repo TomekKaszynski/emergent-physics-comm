@@ -610,6 +610,24 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Diagnosis:** The `dv_ratio` feature achieves 3.9× separation between light (2.22) and heavy (0.57) — near-perfect discrimination. This is Newton's third law directly encoded: momentum conservation means |Δv| is inversely proportional to mass. With 257 params and 6 physics features, no overfitting possible. The remaining 1.4% errors are likely objects with very few collisions where the ratio estimate is noisy.
 - **Verdict:** SUCCESS — 98.6% val accuracy with 257 params. Mass inference from dynamics is solved with the right features. Next: bridge to slot centroids (can we extract dv_ratio from visual observations?).
 
+### Phase 30: Emergent Communication about Mass
+**Date:** Feb 21
+
+- **Goal:** Two agents discover mass from raw trajectories and communicate via discrete messages. No hand-coded features. Sender: transformer on raw [3, 40, 2] GT positions → Gumbel-softmax message (vocab=8). Receiver: message → predict which object is heavy (3-way). Target: >80%.
+- **Architecture:** MassSender (26K params): Linear(2,32) + sinusoidal PE + 2-layer TransformerEncoder(d=32, nhead=2, ff=64) per object → cross-object attention (1-layer) → Linear(32,8) → Gumbel-softmax. MassReceiver (387 params): Linear(8,32)+ReLU+Linear(32,3).
+- **Data:** 2000 sequences, 3 objects (exactly 1 heavy), 40 frames, dense physics (v=±7, r=7-10). 10.5 avg collisions/seq. Train: 1600, Val: 400.
+- **Training:** Adam lr=1e-3, cosine to 1e-5, 300 epochs. Gumbel τ: 2.0→0.5.
+- **Result:**
+  ```
+  Ep   1: train=34.9% val=33.2% msgs=1/8
+  Ep 100: train=33.8% val=33.0% msgs=1/8
+  Ep 200: train=33.0% val=33.0% msgs=1/8
+  Ep 300: train=34.3% val=33.0% msgs=1/8
+  ```
+  Best val: 33.2% (= random chance). Sender collapsed to single message (token 6) for ALL inputs.
+- **Diagnosis:** Classic mode collapse in emergent communication. The sender never learned to differentiate inputs — Gumbel-softmax `hard=True` through a 26K-param transformer provides too noisy a gradient signal. The loss stayed at log(3)≈1.099 throughout, indicating zero learning. The receiver learned to always predict the majority class for the single message.
+- **Verdict:** FAIL — mode collapse. Possible fixes: (1) add message entropy bonus to loss to prevent single-message collapse, (2) start with continuous communication then discretize, (3) simpler sender (MLP) to verify learnability, (4) warm up sender with supervised pre-training on mass labels before adding discrete bottleneck.
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**
@@ -618,9 +636,10 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Mass inference from dynamics: 98.6%** with pairwise collision features on GT positions (Phase 29f)
 
 **Mass inference (Phase 29 series):**
-- Phase 29: Slot vectors → 53.2% | 29b: Slot centroids → 51.2%
-- Phase 29c: GT sparse → 67.7% | 29d: GT dense raw → 76.4%
-- Phase 29e: GT collision features → 81.9% | **29f: GT pairwise features → 98.6%**
-- Key insight: mass lives in pairwise collision ratios (Newton's 3rd law), not raw trajectories
+- Phase 29–29f: progressed from 53% to **98.6%** by isolating bottlenecks (slot features → GT positions → dense collisions → physics features → pairwise ratios)
+- Key insight: mass lives in pairwise collision ratios (Newton's 3rd law)
 
-**Next steps:** (1) Bridge to perception: extract dv_ratio from slot centroid trajectories, (2) multi-agent communication, (3) transformer slot predictor.
+**Emergent communication:**
+- Phase 30: mode collapse (33% = chance). Gumbel-softmax through transformer too noisy. Needs entropy bonus or continuous warmup.
+
+**Next steps:** (1) Fix mode collapse: entropy bonus + continuous warmup, or simpler MLP sender, (2) bridge mass inference to slot centroids, (3) transformer slot predictor.

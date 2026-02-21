@@ -36,7 +36,8 @@ from world_model import (
     SlotAttentionAutoencoder, SlotJEPAPredictor, SlotAttentionAEv2,
     SlotAttentionAEv3,
     SoftPositionEmbed, SlotAttentionModuleV2, SlotAttentionAEv5,
-    SlotAttentionDINO, SlotPredictor, MassClassifier
+    SlotAttentionDINO, SlotPredictor, MassClassifier,
+    MassSender, MassReceiver
 )
 
 OUTPUT_DIR = Path("results")
@@ -12407,6 +12408,368 @@ def run_phase29c_gt_diagnostic():
             'with_collision': n_with_coll,
             'avg_collisions': avg_coll,
         },
+    }
+
+
+def run_phase30_emergent_comm():
+    """Phase 30: Emergent communication about mass — no hand-coded features.
+
+    Two agents (sender + receiver) learn end-to-end:
+    - Sender: raw GT trajectories [3, 40, 2] → transformer → discrete message (vocab=8)
+    - Receiver: message → predict which object is heavy (3-way)
+    No hand-coded features. Raw (x,y) positions go in.
+    """
+    import random
+    import math
+
+    print("=" * 60, flush=True)
+    print("PHASE 30: Emergent Communication about Mass", flush=True)
+    print("=" * 60, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Generate sequences ────────────────────────────────────
+    n_sequences = 2000
+    n_frames = 40
+    n_obj = 3  # fixed: exactly 3 objects, 1 heavy
+    S = 64
+
+    palette = [
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+    ]
+
+    print(f"\n┌─ Generating {n_sequences} sequences (3 objects, 1 heavy)", flush=True)
+    all_trajectories = []  # [N, 3, 40, 2]
+    all_heavy_idx = []     # [N] which object is heavy (0, 1, or 2)
+    collision_counts = []
+
+    random.seed(42)
+    for seq_i in range(n_sequences):
+        heavy_idx = random.randint(0, n_obj - 1)
+        masses = [1.0] * n_obj
+        masses[heavy_idx] = 3.0
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(7, 10)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-7.0, 7.0)
+            vy = random.uniform(-7.0, 7.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi], 'color': palette[oi]
+            })
+
+        obj_positions = [[None] * n_frames for _ in range(n_obj)]
+        seq_collisions = 0
+
+        for fi in range(n_frames):
+            for oi in range(n_obj):
+                obj_positions[oi][fi] = [objects[oi]['cx'] / S, objects[oi]['cy'] / S]
+
+            for i in range(len(objects)):
+                for j in range(i + 1, len(objects)):
+                    oi_o, oj_o = objects[i], objects[j]
+                    dx = oj_o['cx'] - oi_o['cx']
+                    dy = oj_o['cy'] - oi_o['cy']
+                    dist = math.hypot(dx, dy)
+                    min_dist = oi_o['r'] + oj_o['r']
+                    if dist < min_dist and dist > 0.1:
+                        nx, ny = dx / dist, dy / dist
+                        dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                              (oi_o['vy'] - oj_o['vy']) * ny
+                        if dvn > 0:
+                            seq_collisions += 1
+                            m1, m2 = oi_o['mass'], oj_o['mass']
+                            imp = 2 * dvn / (m1 + m2)
+                            oi_o['vx'] -= imp * m2 * nx
+                            oi_o['vy'] -= imp * m2 * ny
+                            oj_o['vx'] += imp * m1 * nx
+                            oj_o['vy'] += imp * m1 * ny
+                            overlap = min_dist - dist
+                            oi_o['cx'] -= overlap * nx * 0.5
+                            oi_o['cy'] -= overlap * ny * 0.5
+                            oj_o['cx'] += overlap * nx * 0.5
+                            oj_o['cy'] += overlap * ny * 0.5
+
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        collision_counts.append(seq_collisions)
+        # [3, 40, 2] per sequence
+        seq_traj = [obj_positions[oi] for oi in range(n_obj)]
+        all_trajectories.append(seq_traj)
+        all_heavy_idx.append(heavy_idx)
+
+        if (seq_i + 1) % 500 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    all_trajectories = torch.tensor(all_trajectories, dtype=torch.float32)  # [2000, 3, 40, 2]
+    all_heavy_idx = torch.tensor(all_heavy_idx, dtype=torch.long)           # [2000]
+
+    avg_coll = np.mean(collision_counts)
+    print(f"│  Trajectories: {list(all_trajectories.shape)}", flush=True)
+    print(f"│  Heavy index distribution: "
+          f"0={int((all_heavy_idx==0).sum())}, "
+          f"1={int((all_heavy_idx==1).sum())}, "
+          f"2={int((all_heavy_idx==2).sum())}", flush=True)
+    print(f"│  Avg collisions/seq: {avg_coll:.1f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Train/val split ────────────────────────────────────────
+    n_train = int(0.8 * n_sequences)
+    perm = torch.randperm(n_sequences)
+    train_traj = all_trajectories[perm[:n_train]]
+    train_labels = all_heavy_idx[perm[:n_train]]
+    val_traj = all_trajectories[perm[n_train:]]
+    val_labels = all_heavy_idx[perm[n_train:]]
+    print(f"\n│  Train: {n_train} | Val: {n_sequences - n_train}", flush=True)
+
+    # ── Build models ──────────────────────────────────────────
+    sender = MassSender(n_frames=n_frames, d_model=32, nhead=2,
+                        n_layers=2, vocab_size=8, n_obj=n_obj).to(device)
+    receiver = MassReceiver(vocab_size=8, d_model=32, n_obj=n_obj).to(device)
+
+    s_params = sum(p.numel() for p in sender.parameters())
+    r_params = sum(p.numel() for p in receiver.parameters())
+    print(f"│  Sender params: {s_params:,}", flush=True)
+    print(f"│  Receiver params: {r_params:,}", flush=True)
+    print(f"│  Total params: {s_params + r_params:,}", flush=True)
+
+    # ── Training ──────────────────────────────────────────────
+    n_epochs = 300
+    batch_size = 64
+    lr = 1e-3
+    tau_start = 2.0
+    tau_end = 0.5
+
+    print(f"\n{'=' * 50}", flush=True)
+    print(f"Training sender + receiver ({n_epochs} epochs)", flush=True)
+    print("=" * 50, flush=True)
+
+    all_params = list(sender.parameters()) + list(receiver.parameters())
+    opt = torch.optim.Adam(all_params, lr=lr)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+        opt, T_max=n_epochs, eta_min=1e-5)
+
+    best_val_acc = 0.0
+    best_epoch = 0
+    best_sender_state = None
+    best_receiver_state = None
+
+    for epoch in range(n_epochs):
+        tau = tau_start + (tau_end - tau_start) * epoch / n_epochs
+
+        # Train
+        sender.train()
+        receiver.train()
+        perm_t = torch.randperm(n_train)
+        ep_loss, ep_correct, ep_total = 0, 0, 0
+
+        for i in range(0, n_train, batch_size):
+            idx = perm_t[i:i+batch_size]
+            traj_b = train_traj[idx].to(device)     # [B, 3, 40, 2]
+            lbl_b = train_labels[idx].to(device)     # [B]
+
+            message = sender(traj_b, tau=tau, hard=False)
+            logits = receiver(message)               # [B, 3]
+            loss = F.cross_entropy(logits, lbl_b)
+
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+
+            ep_loss += loss.item() * len(lbl_b)
+            preds = logits.argmax(dim=-1)
+            ep_correct += (preds == lbl_b).sum().item()
+            ep_total += len(lbl_b)
+
+        sched.step()
+        train_acc = ep_correct / ep_total
+
+        should_print = (epoch + 1) == 1 or (epoch + 1) % 10 == 0
+        if should_print:
+            sender.eval()
+            receiver.eval()
+            with torch.no_grad():
+                # Val accuracy
+                val_correct = 0
+                msg_counts = torch.zeros(8)
+                for i in range(0, len(val_traj), batch_size):
+                    vt = val_traj[i:i+batch_size].to(device)
+                    vl = val_labels[i:i+batch_size].to(device)
+                    msg = sender(vt, hard=True)
+                    pred = receiver(msg).argmax(dim=-1)
+                    val_correct += (pred == vl).sum().item()
+                    msg_counts += msg.cpu().sum(dim=0)
+
+                val_acc = val_correct / len(val_labels)
+                n_msgs_used = (msg_counts > 0).sum().item()
+
+            elapsed = time.time() - t0
+            print(f"│  Epoch {epoch+1:3d}/{n_epochs}: "
+                  f"loss={ep_loss/ep_total:.4f} "
+                  f"train_acc={train_acc*100:.1f}% "
+                  f"val_acc={val_acc*100:.1f}% "
+                  f"msgs={n_msgs_used}/8 "
+                  f"τ={tau:.2f} "
+                  f"[{elapsed:.0f}s]", flush=True)
+
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_epoch = epoch + 1
+                best_sender_state = {k: v.cpu().clone()
+                                     for k, v in sender.state_dict().items()}
+                best_receiver_state = {k: v.cpu().clone()
+                                       for k, v in receiver.state_dict().items()}
+
+            # Early exit
+            if val_acc > 0.95:
+                print(f"│  Early exit — val_acc > 95%", flush=True)
+                break
+
+        if device.type == 'mps' and (epoch + 1) % 100 == 0:
+            torch.mps.empty_cache()
+
+    print(f"│  Best val accuracy: {best_val_acc*100:.1f}% at epoch {best_epoch}",
+          flush=True)
+
+    # Load best
+    sender.load_state_dict(best_sender_state)
+    receiver.load_state_dict(best_receiver_state)
+    sender.to(device).eval()
+    receiver.to(device).eval()
+
+    # ── Detailed evaluation ───────────────────────────────────
+    print(f"\n┌─ Evaluation", flush=True)
+    with torch.no_grad():
+        all_val_preds = []
+        all_val_msgs = []
+        for i in range(0, len(val_traj), batch_size):
+            vt = val_traj[i:i+batch_size].to(device)
+            msg = sender(vt, hard=True)
+            pred = receiver(msg).argmax(dim=-1)
+            all_val_preds.append(pred.cpu())
+            all_val_msgs.append(msg.argmax(dim=-1).cpu())
+
+        all_val_preds = torch.cat(all_val_preds)
+        all_val_msgs = torch.cat(all_val_msgs)
+        val_acc = (all_val_preds == val_labels).float().mean().item()
+
+        # Per-class accuracy
+        for cls in range(3):
+            mask = val_labels == cls
+            if mask.any():
+                cls_acc = (all_val_preds[mask] == cls).float().mean().item()
+                print(f"│  Object {cls} heavy: {cls_acc*100:.1f}% "
+                      f"({int(mask.sum())} samples)", flush=True)
+
+    print(f"│  Overall accuracy: {val_acc*100:.1f}%", flush=True)
+    print(f"│  Baseline (random): 33.3%", flush=True)
+    print(f"│  Target: >80%", flush=True)
+    success = val_acc > 0.8
+    print(f"│  {'SUCCESS' if success else 'BELOW TARGET'}", flush=True)
+
+    # Message usage analysis
+    msg_counts = torch.zeros(8)
+    msg_by_label = {0: torch.zeros(8), 1: torch.zeros(8), 2: torch.zeros(8)}
+    for i in range(len(all_val_msgs)):
+        m = all_val_msgs[i].item()
+        l = val_labels[i].item()
+        msg_counts[m] += 1
+        msg_by_label[l][m] += 1
+
+    print(f"│  Message usage: {[int(c.item()) for c in msg_counts]}", flush=True)
+    print(f"│  Messages used: {int((msg_counts > 0).sum())}/8", flush=True)
+    for cls in range(3):
+        dist = msg_by_label[cls]
+        top_msg = dist.argmax().item()
+        print(f"│  Heavy={cls} → top message: {top_msg} "
+              f"({int(dist[top_msg].item())}/{int(dist.sum().item())})",
+              flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Visualization ─────────────────────────────────────────
+    print(f"\n┌─ Generating visualizations", flush=True)
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+
+    # Panel 1: message distribution by heavy object
+    x = np.arange(8)
+    w = 0.25
+    for cls in range(3):
+        dist = msg_by_label[cls].numpy()
+        axes[0].bar(x + cls * w, dist, w, label=f'Heavy={cls}',
+                    alpha=0.8)
+    axes[0].set_xlabel('Message token')
+    axes[0].set_ylabel('Count')
+    axes[0].set_title('Message Distribution by Heavy Object')
+    axes[0].legend()
+    axes[0].set_xticks(x + w)
+    axes[0].grid(True, alpha=0.3)
+
+    # Panel 2: confusion matrix
+    conf = torch.zeros(3, 3)
+    for i in range(len(all_val_preds)):
+        conf[val_labels[i], all_val_preds[i]] += 1
+    conf_np = conf.numpy()
+    im = axes[1].imshow(conf_np, cmap='Blues')
+    axes[1].set_xlabel('Predicted')
+    axes[1].set_ylabel('True')
+    axes[1].set_title('Confusion Matrix')
+    for yi in range(3):
+        for xi in range(3):
+            axes[1].text(xi, yi, f'{int(conf_np[yi, xi])}',
+                        ha='center', va='center', fontsize=12)
+    axes[1].set_xticks([0, 1, 2])
+    axes[1].set_yticks([0, 1, 2])
+
+    # Panel 3: training curve (rerun quick eval on train)
+    axes[2].text(0.5, 0.5,
+                 f'Best val acc: {best_val_acc*100:.1f}%\n'
+                 f'at epoch {best_epoch}\n'
+                 f'Messages used: {int((msg_counts > 0).sum())}/8\n'
+                 f'Sender: {s_params:,} params\n'
+                 f'Receiver: {r_params:,} params',
+                 transform=axes[2].transAxes, fontsize=14,
+                 va='center', ha='center')
+    axes[2].set_title('Summary')
+    axes[2].axis('off')
+
+    plt.suptitle(f'Phase 30: Emergent Communication — {val_acc*100:.1f}% accuracy',
+                 fontsize=12, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / "phase30_emergent_comm.png", dpi=150,
+                bbox_inches='tight')
+    plt.close()
+    print(f"│  → results/phase30_emergent_comm.png", flush=True)
+    print("└─ Done", flush=True)
+
+    elapsed = time.time() - t0
+    print(f"\n│  Total time: {elapsed:.0f}s ({elapsed/60:.1f}min)", flush=True)
+
+    return {
+        'val_acc': val_acc,
+        'best_epoch': best_epoch,
+        'msgs_used': int((msg_counts > 0).sum()),
+        'success': success,
     }
 
 
