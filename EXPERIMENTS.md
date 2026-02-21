@@ -760,6 +760,20 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Diagnosis:** The autoencoder CNN learns to reconstruct appearance (recon=0.012) but these features carry zero information about mass. The LSTM+receiver cannot extract mass signal from appearance-only features, and the Gumbel-softmax gradient pathway is too noisy to reshape CNN features toward physics-relevant representations. The fundamental issue: mass is invisible in individual frames — it only manifests through temporal dynamics (how objects move differently during collisions). A reconstruction loss doesn't incentivize learning dynamic features.
 - **Verdict:** FAIL — 29.0% val (below chance). Staged training doesn't help when the base features are physics-blind.
 
+### Phase 29k — Amplified physics signal (Feb 21)
+- **Goal:** Test if stronger physics signal (extreme mass ratio) or higher resolution (224×224) helps slot centroid features. Same 29g pipeline: DINOv2+SA → centroids → pairwise collision features → 257-param classifier.
+- **Config A (10:1 mass, 64×64):** mass_light=1.0, mass_heavy=10.0, canvas=64, v=±7, r=7-10. 1000 sequences.
+- **Config B (3:1 mass, 224×224):** mass_light=1.0, mass_heavy=3.0, canvas=224, v=±24, r=24-35. 1000 sequences.
+- **Results:**
+  ```
+  Experiment                       GT val%  Slot val%  dv_ratio GT sep  dv_ratio Slot sep
+  29g baseline (3:1, 64x64)         96.0%    54.9%         3.90            1.01
+  29k-A (10:1, 64x64)               99.7%    51.9%        17.13            1.08
+  29k-B (3:1, 224x224)              99.3%    53.1%         3.85            1.01
+  ```
+- **Key finding:** Even with 17× GT separation (10:1 mass ratio), slot centroid dv_ratio separation is only 1.08×. The 224×224 canvas gives exactly the same 1.01× as 64×64. The problem is NOT insufficient physics signal or canvas resolution — it's that **slot attention centroids are fundamentally too noisy to track velocity changes**. The centroid extraction process (attention-weighted average over 16×16 patches) introduces ~8.7% normalized noise, completely drowning the 2-5% collision Δv signal.
+- **Verdict:** FAIL — 51.9% (A) and 53.1% (B). Neither amplified mass nor higher resolution helps. The centroid noise floor is structural.
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**
@@ -768,16 +782,17 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Mass inference from dynamics: 98.6%** with pairwise collision features on GT positions (Phase 29f)
 - **Emergent communication: 98.5%** with physics features → Gumbel-softmax → receiver (Phase 30c)
 
-**Mass inference from vision (Phase 29g-j):**
+**Mass inference from vision (Phase 29g-k):**
 - 29g: slot centroid features → **54.9%** (FAIL). Centroid noise drowns collision signal.
 - 29h: JEPA prediction error → **50.6%** (FAIL). Background noise dominates.
 - 29i: slot delta LSTM → **52.3%** (FAIL). Pure overfitting in frozen slots.
 - 29j: end-to-end CNN+Gumbel → **37.5%** (FAIL). Mode collapse + data scarcity.
-- 29j-v2: staged see→talk→refine → **29.0%** (FAIL). Zero learning across all 3 stages. AE features physics-blind.
-- **Conclusion:** Five approaches to bridge vision→mass have failed. The core issue: mass is invisible in individual frames. It only manifests through collision dynamics over time. Reconstruction-based features (DINOv2, autoencoders) don't encode physics.
+- 29j-v2: staged see→talk→refine → **29.0%** (FAIL). Zero learning across all 3 stages.
+- 29k: amplified physics (10:1 mass + 224px) → **51.9%/53.1%** (FAIL). Centroid noise is structural, not a signal strength issue.
+- **Conclusion:** Six approaches to bridge vision→mass have failed. Slot attention centroids have a noise floor (~8.7%) that structurally prevents measuring velocity changes (~2-5%). The problem is centroid extraction precision, not physics signal strength, canvas resolution, or model capacity.
 
 **Emergent communication (Phase 30 series):**
 - Phase 30: mode collapse (33%). Phase 30b: overfitting (41%).
 - Phase 30c: **98.5%** — separated perception from communication. 3-token emergent language.
 
-**Next steps:** (1) Direct supervised approach: train CNN on frame-pairs bracketing collisions with mass label (bypass communication bottleneck to test if CNN can learn physics at all), (2) try 29k: SlotAttention between CNN and LSTM, (3) accept GT positions and build full multi-agent pipeline.
+**Next steps:** (1) Accept GT positions and build full multi-agent pipeline (perception→physics gap is structural), (2) Direct supervised CNN on collision frame-pairs (bypass slot attention entirely), (3) Alternative position extraction (e.g., argmax of slot attention instead of soft centroid).

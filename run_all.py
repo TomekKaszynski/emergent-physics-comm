@@ -13594,6 +13594,572 @@ def run_phase30_emergent_comm():
     }
 
 
+def run_phase29k_amplified_physics():
+    """Phase 29k: Amplified physics signal — two experiments.
+
+    29k-A: Extreme mass ratio (10:1) on 64x64 canvas.
+    29k-B: Higher resolution (224x224 canvas) with 3:1 mass ratio.
+    Both use the exact Phase 29g pipeline:
+      Frozen DINOv2 + SlotAttention → slot centroids → pairwise collision features → 257-param classifier.
+    Compared side-by-side with 29g baseline (3:1, 64x64).
+    """
+    import random
+    import math
+
+    print("=" * 60, flush=True)
+    print("PHASE 29k: Amplified Physics Signal", flush=True)
+    print("=" * 60, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Load frozen SlotAttentionDINO ─────────────────────────
+    print("\n┌─ Loading frozen SlotAttentionDINO", flush=True)
+    ae = SlotAttentionDINO(n_slots=7, slot_dim=64, img_size=64).to(device)
+    state = torch.load(OUTPUT_DIR / "phase27_model.pt", map_location=device)
+    ae.load_state_dict(state)
+    ae.eval()
+    for p in ae.parameters():
+        p.requires_grad = False
+    print("│  Model loaded and frozen", flush=True)
+    print("└─ Done", flush=True)
+
+    palette = [
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0],
+    ]
+
+    feat_names = ['avg_dv_ratio', 'avg_dv_coll', 'max_dv',
+                  'avg_speed', 'speed_var', 'n_coll_norm']
+
+    P = 16
+    xs_grid = torch.linspace(0, 1, P)
+    ys_grid = torch.linspace(0, 1, P)
+    grid_y, grid_x = torch.meshgrid(ys_grid, xs_grid, indexing='ij')
+    gx_flat = grid_x.reshape(-1).to(device)  # [256]
+    gy_flat = grid_y.reshape(-1).to(device)  # [256]
+
+    # ── Helper: generate sequences, encode, compute features, train ──
+    def run_sub_experiment(exp_name, canvas_size, mass_light, mass_heavy,
+                           v_range, r_range, n_sequences=1000, n_frames=40):
+        """Run a full 29g-style experiment with given physics params."""
+        print(f"\n{'=' * 60}", flush=True)
+        print(f"  SUB-EXPERIMENT: {exp_name}", flush=True)
+        print(f"  Canvas={canvas_size}, masses={mass_light}/{mass_heavy}, "
+              f"v=±{v_range}, r={r_range}", flush=True)
+        print(f"{'=' * 60}", flush=True)
+        t_sub = time.time()
+
+        S = canvas_size
+
+        # ── Generate sequences ──────────────────────────────────
+        print(f"\n┌─ Generating {n_sequences} sequences", flush=True)
+        all_frames = []
+        all_obj_info = []
+        all_gt_positions = []
+        all_collision_events = []
+        collision_counts = []
+
+        random.seed(42)
+        for seq_i in range(n_sequences):
+            n_obj = random.randint(3, 4)
+            masses = [mass_light, mass_heavy]
+            for _ in range(n_obj - 2):
+                masses.append(random.choice([mass_light, mass_heavy]))
+            random.shuffle(masses)
+
+            objects = []
+            for oi in range(n_obj):
+                r = random.randint(r_range[0], r_range[1])
+                for _attempt in range(100):
+                    cx = random.uniform(r + 3, S - r - 4)
+                    cy = random.uniform(r + 3, S - r - 4)
+                    ok = True
+                    for prev in objects:
+                        if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                            ok = False; break
+                    if ok: break
+                vx = random.uniform(-v_range, v_range)
+                vy = random.uniform(-v_range, v_range)
+                objects.append({
+                    'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                    'r': r, 'mass': masses[oi], 'color': palette[oi % len(palette)]
+                })
+
+            all_obj_info.append([{
+                'cx0': obj['cx'] / S, 'cy0': obj['cy'] / S,
+                'r': obj['r'], 'mass': obj['mass']
+            } for obj in objects])
+
+            obj_positions = [[None] * n_frames for _ in range(n_obj)]
+            seq_collision_events = []
+            seq_collisions = 0
+
+            frames = []
+            for fi in range(n_frames):
+                for oi in range(n_obj):
+                    obj_positions[oi][fi] = [objects[oi]['cx'] / S, objects[oi]['cy'] / S]
+
+                # Render frame
+                img = np.ones((S, S, 3), dtype=np.float32) * 0.5
+                for obj in objects:
+                    r = obj['r']
+                    cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+                    color = np.array(obj['color'])
+                    for dy in range(-r, r + 1):
+                        for dx in range(-r, r + 1):
+                            if dx*dx + dy*dy <= r*r:
+                                px, py = cx_i + dx, cy_i + dy
+                                if 0 <= px < S and 0 <= py < S:
+                                    img[py, px] = color
+                frames.append(img.transpose(2, 0, 1))
+
+                # Elastic collisions
+                for i in range(n_obj):
+                    for j in range(i + 1, n_obj):
+                        oi_o, oj_o = objects[i], objects[j]
+                        dx_c = oj_o['cx'] - oi_o['cx']
+                        dy_c = oj_o['cy'] - oi_o['cy']
+                        dist = math.hypot(dx_c, dy_c)
+                        min_dist = oi_o['r'] + oj_o['r']
+                        if dist < min_dist and dist > 0.1:
+                            nx, ny = dx_c / dist, dy_c / dist
+                            dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                                  (oi_o['vy'] - oj_o['vy']) * ny
+                            if dvn > 0:
+                                seq_collisions += 1
+                                m1, m2 = oi_o['mass'], oj_o['mass']
+                                imp = 2 * dvn / (m1 + m2)
+                                dv_i = imp * m2
+                                dv_j = imp * m1
+                                seq_collision_events.append((fi, i, j, dv_i, dv_j))
+                                oi_o['vx'] -= imp * m2 * nx
+                                oi_o['vy'] -= imp * m2 * ny
+                                oj_o['vx'] += imp * m1 * nx
+                                oj_o['vy'] += imp * m1 * ny
+                                overlap = min_dist - dist
+                                oi_o['cx'] -= overlap * nx * 0.5
+                                oi_o['cy'] -= overlap * ny * 0.5
+                                oj_o['cx'] += overlap * nx * 0.5
+                                oj_o['cy'] += overlap * ny * 0.5
+
+                for obj in objects:
+                    obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                    r = obj['r']
+                    if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                    if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                    if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                    if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+            all_frames.append(np.array(frames))
+            all_gt_positions.append(obj_positions)
+            all_collision_events.append(seq_collision_events)
+            collision_counts.append(seq_collisions)
+
+            if (seq_i + 1) % 200 == 0:
+                print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+        all_frames_t = torch.tensor(np.array(all_frames), dtype=torch.float32)
+        avg_coll = np.mean(collision_counts)
+        n_with_coll = sum(1 for c in collision_counts if c > 0)
+        n_total_obj = sum(len(info) for info in all_obj_info)
+        n_light = sum(1 for info in all_obj_info for o in info if o['mass'] == mass_light)
+        n_heavy = n_total_obj - n_light
+        print(f"│  Frames: {list(all_frames_t.shape)}", flush=True)
+        print(f"│  Objects: {n_total_obj} (light={n_light}, heavy={n_heavy})", flush=True)
+        print(f"│  Avg collisions/seq: {avg_coll:.1f}, with ≥1: {n_with_coll}/{n_sequences}", flush=True)
+        print("└─ Done", flush=True)
+
+        # ── Encode all frames → slot centroids ──────────────────
+        print(f"\n┌─ Encoding {n_sequences * n_frames} frames → slot centroids", flush=True)
+
+        all_centroids = []
+
+        with torch.no_grad():
+            for seq_i in range(n_sequences):
+                seq_centroids = []
+                for fi in range(0, n_frames, 8):
+                    batch = all_frames_t[seq_i, fi:fi+8].to(device)
+                    slots, _ = ae.encode(batch)
+                    _, alpha = ae.decode(slots)  # [B, 7, 256]
+                    ws = alpha.sum(dim=-1, keepdim=True) + 1e-8
+                    cx = (alpha * gx_flat).sum(dim=-1) / ws.squeeze(-1)
+                    cy = (alpha * gy_flat).sum(dim=-1) / ws.squeeze(-1)
+                    centroids = torch.stack([cx, cy], dim=-1)  # [B, 7, 2]
+                    seq_centroids.append(centroids.cpu())
+                all_centroids.append(torch.cat(seq_centroids, dim=0))
+
+                if (seq_i + 1) % 200 == 0:
+                    print(f"│  Encoded {seq_i+1}/{n_sequences}", flush=True)
+                    if device.type == 'mps':
+                        torch.mps.empty_cache()
+
+        all_centroids = torch.stack(all_centroids)  # [1000, 40, 7, 2]
+        print(f"│  Centroid cache: {list(all_centroids.shape)}", flush=True)
+        print("└─ Done", flush=True)
+
+        del all_frames_t
+        if device.type == 'mps':
+            torch.mps.empty_cache()
+
+        # ── Match slots to objects ──────────────────────────────
+        print(f"\n┌─ Matching slots to objects", flush=True)
+
+        slot_assignments = []
+        match_dists = []
+
+        for seq_i in range(n_sequences):
+            obj_info = all_obj_info[seq_i]
+            frame0_centroids = all_centroids[seq_i, 0]  # [7, 2]
+            n_obj = len(obj_info)
+
+            used_slots = set()
+            seq_slots = []
+            for obj in obj_info:
+                best_slot, best_d = -1, float('inf')
+                for si in range(7):
+                    if si in used_slots:
+                        continue
+                    d = math.hypot(
+                        frame0_centroids[si, 0].item() - obj['cx0'],
+                        frame0_centroids[si, 1].item() - obj['cy0'])
+                    if d < best_d:
+                        best_d = d
+                        best_slot = si
+                used_slots.add(best_slot)
+                seq_slots.append(best_slot)
+                match_dists.append(best_d)
+
+            slot_assignments.append(seq_slots)
+
+        avg_match_dist = np.mean(match_dists)
+        print(f"│  Avg match distance: {avg_match_dist:.4f}", flush=True)
+        print("└─ Done", flush=True)
+
+        # ── Compute features: GT-based and slot-centroid-based ──
+        print(f"\n┌─ Computing pairwise collision features", flush=True)
+
+        gt_features = []
+        slot_features = []
+        labels = []
+
+        for seq_i in range(n_sequences):
+            obj_info = all_obj_info[seq_i]
+            n_obj = len(obj_info)
+            seq_slots = slot_assignments[seq_i]
+            collision_events = all_collision_events[seq_i]
+
+            for oi in range(n_obj):
+                gt_pos = torch.tensor(all_gt_positions[seq_i][oi], dtype=torch.float32)
+                gt_v = gt_pos[1:] - gt_pos[:-1]
+                gt_speed = gt_v.norm(dim=-1)
+                gt_dv = gt_v[1:] - gt_v[:-1]
+                gt_dv_mag = gt_dv.norm(dim=-1)
+
+                slot_pos = all_centroids[seq_i, :, seq_slots[oi], :]
+                slot_v = slot_pos[1:] - slot_pos[:-1]
+                slot_speed = slot_v.norm(dim=-1)
+                slot_dv = slot_v[1:] - slot_v[:-1]
+                slot_dv_mag = slot_dv.norm(dim=-1)
+
+                dv_threshold = 0.02
+
+                # GT features
+                gt_coll_mask = gt_dv_mag > dv_threshold
+                gt_n_coll = gt_coll_mask.float().sum().item()
+                gt_avg_dv_coll = gt_dv_mag[gt_coll_mask].mean().item() if gt_n_coll > 0 else 0.0
+                gt_max_dv = gt_dv_mag.max().item()
+                gt_avg_speed = gt_speed.mean().item()
+                gt_speed_var = gt_speed.var().item()
+
+                # Slot features
+                slot_coll_mask = slot_dv_mag > dv_threshold
+                slot_n_coll = slot_coll_mask.float().sum().item()
+                slot_avg_dv_coll = slot_dv_mag[slot_coll_mask].mean().item() if slot_n_coll > 0 else 0.0
+                slot_max_dv = slot_dv_mag.max().item()
+                slot_avg_speed = slot_speed.mean().item()
+                slot_speed_var = slot_speed.var().item()
+
+                # Pairwise dv_ratio from GT collision timestamps
+                gt_dv_ratios = []
+                slot_dv_ratios = []
+
+                for (frame, ci, cj, gt_dv_i, gt_dv_j) in collision_events:
+                    if ci == oi:
+                        partner = cj
+                        my_gt_dv, partner_gt_dv = gt_dv_i, gt_dv_j
+                    elif cj == oi:
+                        partner = ci
+                        my_gt_dv, partner_gt_dv = gt_dv_j, gt_dv_i
+                    else:
+                        continue
+
+                    if partner_gt_dv > 1e-8:
+                        gt_dv_ratios.append(my_gt_dv / partner_gt_dv)
+
+                    if frame >= 1 and frame < n_frames - 1:
+                        my_slot = seq_slots[oi]
+                        partner_slot = seq_slots[partner]
+
+                        my_v_before = all_centroids[seq_i, frame, my_slot] - all_centroids[seq_i, frame-1, my_slot]
+                        my_v_after = all_centroids[seq_i, frame+1, my_slot] - all_centroids[seq_i, frame, my_slot]
+                        my_slot_dv = (my_v_after - my_v_before).norm().item()
+
+                        p_v_before = all_centroids[seq_i, frame, partner_slot] - all_centroids[seq_i, frame-1, partner_slot]
+                        p_v_after = all_centroids[seq_i, frame+1, partner_slot] - all_centroids[seq_i, frame, partner_slot]
+                        p_slot_dv = (p_v_after - p_v_before).norm().item()
+
+                        if p_slot_dv > 1e-8:
+                            slot_dv_ratios.append(my_slot_dv / p_slot_dv)
+
+                gt_avg_dv_ratio = np.mean(gt_dv_ratios) if gt_dv_ratios else 1.0
+                slot_avg_dv_ratio = np.mean(slot_dv_ratios) if slot_dv_ratios else 1.0
+
+                gt_features.append([gt_avg_dv_ratio, gt_avg_dv_coll, gt_max_dv,
+                                    gt_avg_speed, gt_speed_var, gt_n_coll / 38.0])
+                slot_features.append([slot_avg_dv_ratio, slot_avg_dv_coll, slot_max_dv,
+                                      slot_avg_speed, slot_speed_var, slot_n_coll / 38.0])
+                labels.append(1.0 if obj_info[oi]['mass'] == mass_heavy else 0.0)
+
+        gt_features = torch.tensor(gt_features, dtype=torch.float32)
+        slot_features = torch.tensor(slot_features, dtype=torch.float32)
+        labels = torch.tensor(labels, dtype=torch.float32)
+
+        # Feature comparison
+        print(f"│", flush=True)
+        print(f"│  Feature comparison — GT vs Slot Centroids:", flush=True)
+        print(f"│  {'Feature':15s}  {'GT light':>10s} {'GT heavy':>10s} {'GT sep':>8s}  "
+              f"{'Slot light':>10s} {'Slot heavy':>10s} {'Slot sep':>8s}", flush=True)
+        print(f"│  {'-'*80}", flush=True)
+        seps = {}
+        for fi_idx, name in enumerate(feat_names):
+            gt_l = gt_features[labels == 0, fi_idx].mean().item()
+            gt_h = gt_features[labels == 1, fi_idx].mean().item()
+            gt_sep = gt_l / gt_h if abs(gt_h) > 1e-8 else float('inf')
+            sl_l = slot_features[labels == 0, fi_idx].mean().item()
+            sl_h = slot_features[labels == 1, fi_idx].mean().item()
+            sl_sep = sl_l / sl_h if abs(sl_h) > 1e-8 else float('inf')
+            seps[name] = {'gt': gt_sep, 'slot': sl_sep}
+            print(f"│  {name:15s}  {gt_l:10.4f} {gt_h:10.4f} {gt_sep:8.2f}  "
+                  f"{sl_l:10.4f} {sl_h:10.4f} {sl_sep:8.2f}", flush=True)
+        print("└─ Done", flush=True)
+
+        # ── Train/val split ─────────────────────────────────────
+        n_train = int(0.8 * len(labels))
+        perm = torch.randperm(len(labels))
+
+        train_gt = gt_features[perm[:n_train]]
+        train_slot = slot_features[perm[:n_train]]
+        train_labels = labels[perm[:n_train]]
+        val_gt = gt_features[perm[n_train:]]
+        val_slot = slot_features[perm[n_train:]]
+        val_labels = labels[perm[n_train:]]
+
+        print(f"\n│  Train: {n_train} | Val: {len(labels) - n_train}", flush=True)
+        print(f"│  Light: {int((labels==0).sum())} | Heavy: {int((labels==1).sum())}", flush=True)
+
+        # ── Train classifiers ───────────────────────────────────
+        def train_classifier(train_feats, val_feats, train_lbl, val_lbl, name):
+            clf = nn.Sequential(
+                nn.Linear(6, 32),
+                nn.ReLU(),
+                nn.Linear(32, 1),
+            ).to(device)
+            clf_opt = torch.optim.Adam(clf.parameters(), lr=1e-3)
+            clf_sched = torch.optim.lr_scheduler.CosineAnnealingLR(clf_opt, T_max=200, eta_min=1e-5)
+
+            best_val_acc = 0.0
+            best_epoch = 0
+            batch_size = 64
+
+            for epoch in range(200):
+                clf.train()
+                perm_t = torch.randperm(len(train_feats))
+                ep_loss, ep_correct, ep_total = 0, 0, 0
+
+                for i in range(0, len(train_feats), batch_size):
+                    idx = perm_t[i:i+batch_size]
+                    feat_b = train_feats[idx].to(device)
+                    lbl_b = train_lbl[idx].to(device)
+                    logits = clf(feat_b).squeeze(-1)
+                    loss = F.binary_cross_entropy_with_logits(logits, lbl_b)
+                    clf_opt.zero_grad()
+                    loss.backward()
+                    clf_opt.step()
+                    ep_loss += loss.item() * len(lbl_b)
+                    ep_correct += ((logits > 0).float() == lbl_b).sum().item()
+                    ep_total += len(lbl_b)
+
+                clf_sched.step()
+                train_acc = ep_correct / ep_total
+
+                if (epoch + 1) % 10 == 0 or epoch == 0:
+                    clf.eval()
+                    with torch.no_grad():
+                        v_logits = clf(val_feats.to(device)).squeeze(-1)
+                        v_preds = (v_logits > 0).float()
+                        val_acc = (v_preds == val_lbl.to(device)).float().mean().item()
+
+                    if val_acc > best_val_acc:
+                        best_val_acc = val_acc
+                        best_epoch = epoch + 1
+
+                    elapsed = time.time() - t_sub
+                    if (epoch + 1) % 50 == 0 or epoch == 0:
+                        print(f"│  [{name:4s}] Epoch {epoch+1:3d}: "
+                              f"train={train_acc*100:.1f}% val={val_acc*100:.1f}% "
+                              f"[{elapsed:.0f}s]", flush=True)
+
+            return best_val_acc, best_epoch
+
+        print(f"\n{'=' * 50}", flush=True)
+        print(f"Training classifiers — {exp_name}", flush=True)
+        print("=" * 50, flush=True)
+
+        print(f"\n--- GT features classifier ---", flush=True)
+        gt_val_acc, gt_best_epoch = train_classifier(
+            train_gt, val_gt, train_labels, val_labels, "GT")
+
+        print(f"\n--- Slot centroid features classifier ---", flush=True)
+        slot_val_acc, slot_best_epoch = train_classifier(
+            train_slot, val_slot, train_labels, val_labels, "Slot")
+
+        elapsed = time.time() - t_sub
+        print(f"\n│  {exp_name} results:", flush=True)
+        print(f"│  GT features:    {gt_val_acc*100:.1f}% (ep {gt_best_epoch})", flush=True)
+        print(f"│  Slot centroids: {slot_val_acc*100:.1f}% (ep {slot_best_epoch})", flush=True)
+        print(f"│  Time: {elapsed:.0f}s", flush=True)
+
+        return {
+            'name': exp_name,
+            'gt_val_acc': gt_val_acc,
+            'slot_val_acc': slot_val_acc,
+            'gt_best_epoch': gt_best_epoch,
+            'slot_best_epoch': slot_best_epoch,
+            'avg_match_dist': avg_match_dist,
+            'avg_coll': avg_coll,
+            'n_total_obj': n_total_obj,
+            'seps': seps,
+            'gt_features': gt_features,
+            'slot_features': slot_features,
+            'labels': labels,
+        }
+
+    # ══════════════════════════════════════════════════════════
+    # Run 29k-A: Extreme mass ratio (10:1) on 64×64
+    # ══════════════════════════════════════════════════════════
+    result_a = run_sub_experiment(
+        exp_name="29k-A: 10:1 mass, 64x64",
+        canvas_size=64,
+        mass_light=1.0, mass_heavy=10.0,
+        v_range=7.0, r_range=(7, 10),
+    )
+
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    # ══════════════════════════════════════════════════════════
+    # Run 29k-B: Higher resolution (224×224) with 3:1 mass
+    # ══════════════════════════════════════════════════════════
+    result_b = run_sub_experiment(
+        exp_name="29k-B: 3:1 mass, 224x224",
+        canvas_size=224,
+        mass_light=1.0, mass_heavy=3.0,
+        v_range=24.0, r_range=(24, 35),
+    )
+
+    # ── Side-by-side comparison ─────────────────────────────
+    print(f"\n{'=' * 70}", flush=True)
+    print(f"FINAL COMPARISON", flush=True)
+    print(f"{'=' * 70}", flush=True)
+    print(f"{'Experiment':30s}  {'GT val%':>8s}  {'Slot val%':>8s}  {'dv_ratio GT sep':>16s}  {'dv_ratio Slot sep':>18s}", flush=True)
+    print(f"{'-'*90}", flush=True)
+    # 29g baseline
+    print(f"{'29g baseline (3:1, 64x64)':30s}  {'96.0':>8s}  {'54.9':>8s}  {'3.90':>16s}  {'1.01':>18s}", flush=True)
+    for r in [result_a, result_b]:
+        gt_dv_sep = r['seps']['avg_dv_ratio']['gt']
+        sl_dv_sep = r['seps']['avg_dv_ratio']['slot']
+        print(f"{r['name']:30s}  {r['gt_val_acc']*100:>7.1f}%  {r['slot_val_acc']*100:>7.1f}%  "
+              f"{gt_dv_sep:>16.2f}  {sl_dv_sep:>18.2f}", flush=True)
+
+    # ── Visualization ──────────────────────────────────────
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle('Phase 29k: Amplified Physics Signal', fontsize=14, fontweight='bold')
+
+    for row, (r, title_short) in enumerate([(result_a, '29k-A: 10:1, 64px'),
+                                             (result_b, '29k-B: 3:1, 224px')]):
+        gt_f = r['gt_features']
+        sl_f = r['slot_features']
+        lbl = r['labels']
+
+        # Feature comparison bar chart
+        ax = axes[row, 0]
+        x = np.arange(len(feat_names))
+        width = 0.2
+        gt_l_m = [gt_f[lbl == 0, fi].mean().item() for fi in range(6)]
+        gt_h_m = [gt_f[lbl == 1, fi].mean().item() for fi in range(6)]
+        sl_l_m = [sl_f[lbl == 0, fi].mean().item() for fi in range(6)]
+        sl_h_m = [sl_f[lbl == 1, fi].mean().item() for fi in range(6)]
+        ax.bar(x - 1.5*width, gt_l_m, width, label='GT light', color='skyblue')
+        ax.bar(x - 0.5*width, gt_h_m, width, label='GT heavy', color='steelblue')
+        ax.bar(x + 0.5*width, sl_l_m, width, label='Slot light', color='lightsalmon')
+        ax.bar(x + 1.5*width, sl_h_m, width, label='Slot heavy', color='firebrick')
+        ax.set_xticks(x)
+        ax.set_xticklabels([n[:8] for n in feat_names], rotation=45, ha='right')
+        ax.legend(fontsize=7)
+        ax.set_title(f'{title_short}: Feature Means')
+
+        # dv_ratio distributions
+        ax = axes[row, 1]
+        bins = np.linspace(0, max(6, 12 if row == 0 else 6), 30)
+        ax.hist(gt_f[lbl == 0, 0].numpy(), bins=bins, alpha=0.5, label='GT light', color='skyblue')
+        ax.hist(gt_f[lbl == 1, 0].numpy(), bins=bins, alpha=0.5, label='GT heavy', color='steelblue')
+        ax.hist(sl_f[lbl == 0, 0].numpy(), bins=bins, alpha=0.3, label='Slot light', color='lightsalmon')
+        ax.hist(sl_f[lbl == 1, 0].numpy(), bins=bins, alpha=0.3, label='Slot heavy', color='firebrick')
+        ax.legend(fontsize=7)
+        ax.set_title(f'{title_short}: avg_dv_ratio')
+
+        # Summary text
+        ax = axes[row, 2]
+        ax.axis('off')
+        summary = (
+            f"{r['name']}\n"
+            f"{'='*35}\n"
+            f"GT features:    {r['gt_val_acc']*100:.1f}% (ep {r['gt_best_epoch']})\n"
+            f"Slot centroids: {r['slot_val_acc']*100:.1f}% (ep {r['slot_best_epoch']})\n\n"
+            f"dv_ratio sep:  GT={r['seps']['avg_dv_ratio']['gt']:.2f}  "
+            f"Slot={r['seps']['avg_dv_ratio']['slot']:.2f}\n"
+            f"Match dist: {r['avg_match_dist']:.4f}\n"
+            f"Avg coll/seq: {r['avg_coll']:.1f}\n"
+            f"Objects: {r['n_total_obj']}"
+        )
+        ax.text(0.1, 0.5, summary, transform=ax.transAxes, fontsize=11,
+                verticalalignment='center', fontfamily='monospace')
+
+    plt.tight_layout()
+    plt.savefig('results/phase29k_amplified_physics.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\nSaved: results/phase29k_amplified_physics.png", flush=True)
+
+    # Verdict
+    best_slot = max(result_a['slot_val_acc'], result_b['slot_val_acc'])
+    verdict = "SUCCESS" if best_slot > 0.75 else "PARTIAL" if best_slot > 0.60 else "FAIL"
+    print(f"\nVerdict: {verdict} (best slot_val_acc={best_slot*100:.1f}%, target>75%)", flush=True)
+    elapsed = time.time() - t0
+    print(f"Total time: {elapsed:.0f}s", flush=True)
+
+    return {
+        'result_a': result_a,
+        'result_b': result_b,
+        'verdict': verdict,
+    }
+
+
 def run_phase29j_v2_staged():
     """Phase 29j-v2: Staged communication-driven physics perception.
 
