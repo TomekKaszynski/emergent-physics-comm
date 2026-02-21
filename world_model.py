@@ -2126,7 +2126,7 @@ class SlotAttentionDINO(nn.Module):
 
         # Slot Attention (feature_dim=384 for DINOv2, slot_dim=64)
         self.slot_attention = SlotAttentionModuleV2(
-            n_slots=n_slots, slot_dim=slot_dim, n_iters=3,
+            n_slots=n_slots, slot_dim=slot_dim, n_iters=5,
             feature_dim=self.dino_dim)
 
         # MLP Spatial Broadcast Decoder (reconstructs DINOv2 features)

@@ -10901,7 +10901,7 @@ def run_phase27_dino_clevr():
 
     # ── Training ───────────────────────────────────────────────
     n_slots = 7
-    ae_epochs = 500
+    ae_epochs = 100
 
     print("\n" + "=" * 50)
     print(f"Training SlotAttentionDINO on CLEVR ({n_slots} slots, {ae_epochs} epochs)")

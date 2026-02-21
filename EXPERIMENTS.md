@@ -247,6 +247,23 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 | 26j | Per-slot learnable | Pixels | 0.562 | 170 | 5-6/7 (90% bg) |
 | **27** | **Per-slot learnable** | **DINOv2 features** | **0.362** | **120** | **7/7 (33% max)** |
 
+### Phase 27b Test 0: SA iterations ablation (5 iters)
+**Date:** Feb 21
+
+- **Change:** SA iterations 3→5 in SlotAttentionDINO. Everything else identical.
+- **Config:** 100 epochs, batch=32, 7 slots, constant LR 4e-4, warmup 30
+- **Result:**
+  ```
+  Ep   1: recon=6.6501 entropy=1.000 active=6/7
+  Ep  15: recon=1.6827 entropy=0.606 active=7/7
+  Ep  25: recon=1.4652 entropy=0.416 active=6/7
+  Ep  50: recon=1.2220 entropy=0.255 active=7/7
+  Ep  70: recon=1.1210 entropy=0.236 active=7/7
+  Ep 100: recon=1.0179 entropy=0.234 active=7/7 max_cov=29.3%
+  ```
+  Eval: entropy=0.232, 7/7 active, max_cov=29.6%
+- **Verdict:** 5 iters significantly better than 3 (0.232 vs 0.362). Improvement of 0.130 — well above 0.03 threshold. Near-perfect even distribution (29% max_cov with 7 slots = 1/7 = 14% ideal). Still dropping at epoch 100, not fully plateaued. Next: try 7 iters.
+
 ## Current State (Feb 21)
 
-DINOv2 feature reconstruction is a clear win. Entropy 0.37 with 7/7 evenly-distributed slots — slots are differentiating reliably. The 0.2 entropy target was not hit, but the qualitative behavior (all slots active, no background domination, even coverage) is what matters for downstream use. Ready to integrate into the full multi-agent pipeline.
+DINOv2 + 5 SA iters: entropy 0.232, 7/7 slots, 29% max_cov. Best result yet. Testing 7 iters next.
