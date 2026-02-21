@@ -2497,6 +2497,114 @@ class CommReceiver(nn.Module):
         return self.head(h)
 
 
+class PhysicsCNNv2(nn.Module):
+    """Phase 29j-v2: Smaller trainable CNN encoder (~25K params).
+
+    RGB [3,64,64] + coord channels [2,64,64] → [64] per frame.
+    3 conv layers (5→16→32→64, k=4, s=2, ReLU), AdaptiveAvgPool.
+    """
+
+    def __init__(self, out_dim=64):
+        super().__init__()
+        self.cnn = nn.Sequential(
+            nn.Conv2d(5, 16, 4, stride=2, padding=1),   # 64→32
+            nn.ReLU(),
+            nn.Conv2d(16, 32, 4, stride=2, padding=1),  # 32→16
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 4, stride=2, padding=1),  # 16→8
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d(1),                      # 8→1
+        )
+        self.out_dim = out_dim
+
+    def forward(self, x):
+        # x: [B, 5, 64, 64]
+        return self.cnn(x).squeeze(-1).squeeze(-1)  # [B, 64]
+
+
+class PhysicsCNNv2Decoder(nn.Module):
+    """Decoder for PhysicsCNNv2 autoencoder pretraining.
+
+    [64] → transpose convs → [3, 64, 64] reconstructed RGB.
+    """
+
+    def __init__(self, in_dim=64):
+        super().__init__()
+        self.fc = nn.Linear(in_dim, 64 * 4 * 4)
+        self.deconv = nn.Sequential(
+            nn.ConvTranspose2d(64, 32, 4, stride=2, padding=1),  # 4→8
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, 16, 4, stride=2, padding=1),  # 8→16
+            nn.ReLU(),
+            nn.ConvTranspose2d(16, 16, 4, stride=2, padding=1),  # 16→32
+            nn.ReLU(),
+            nn.ConvTranspose2d(16, 3, 4, stride=2, padding=1),   # 32→64
+            nn.Sigmoid(),
+        )
+
+    def forward(self, z):
+        # z: [B, 64]
+        h = self.fc(z).reshape(-1, 64, 4, 4)
+        return self.deconv(h)  # [B, 3, 64, 64]
+
+
+class CommSenderv2(nn.Module):
+    """Phase 29j-v2: Smaller communication sender (~8K params).
+
+    PhysicsCNNv2 (shared) → subsample 8 frames → [8, 64]
+    → LSTM(64, 32) → final hidden [32] → Linear(32, 8) → Gumbel-softmax.
+    """
+
+    def __init__(self, encoder, lstm_hidden=32, vocab_size=8,
+                 n_frames=40, subsample=5):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.subsample = subsample
+        self.n_subsampled = n_frames // subsample  # 8
+
+        self.encoder = encoder  # shared PhysicsCNNv2, passed in
+        self.lstm = nn.LSTM(encoder.out_dim, lstm_hidden, num_layers=1,
+                            batch_first=True)
+        self.message_head = nn.Linear(lstm_hidden, vocab_size)
+
+        # Pre-compute coord channels (registered as buffer)
+        coords_x = torch.linspace(-1, 1, 64)
+        coords_y = torch.linspace(-1, 1, 64)
+        gy, gx = torch.meshgrid(coords_y, coords_x, indexing='ij')
+        self.register_buffer('coord_ch', torch.stack([gx, gy], dim=0))  # [2, 64, 64]
+
+    def forward(self, frames, tau=1.0, hard=False):
+        # frames: [B, T, 3, 64, 64]
+        B, T = frames.shape[:2]
+
+        # Subsample frames
+        indices = list(range(0, T, self.subsample))[:self.n_subsampled]
+        subsampled = frames[:, indices]  # [B, 8, 3, 64, 64]
+        n_sub = len(indices)
+
+        # Add coordinate channels
+        coord_exp = self.coord_ch.unsqueeze(0).unsqueeze(0).expand(B, n_sub, -1, -1, -1)
+        subsampled = torch.cat([subsampled, coord_exp], dim=2)  # [B, 8, 5, 64, 64]
+
+        # Encode each frame with shared CNN
+        flat = subsampled.reshape(B * n_sub, 5, 64, 64)
+        encoded = self.encoder(flat)  # [B*8, 64]
+        encoded = encoded.reshape(B, n_sub, -1)  # [B, 8, 64]
+
+        # LSTM over temporal sequence
+        _, (h_n, _) = self.lstm(encoded)  # h_n: [1, B, 32]
+        h = h_n.squeeze(0)  # [B, 32]
+
+        # Message head
+        logits = self.message_head(h)  # [B, 8]
+
+        if hard:
+            idx = logits.argmax(dim=-1)
+            return F.one_hot(idx, self.vocab_size).float(), logits
+        message = F.gumbel_softmax(logits, tau=tau, hard=True)
+        return message, logits
+
+
 def count_params(model):
     return sum(p.numel() for p in model.parameters())
 

@@ -13594,6 +13594,572 @@ def run_phase30_emergent_comm():
     }
 
 
+def run_phase29j_v2_staged():
+    """Phase 29j-v2: Staged communication-driven physics perception.
+
+    Three stages:
+    1. Learn to see (50 ep): PhysicsCNNv2 autoencoder on frames.
+    2. Learn to talk (100 ep): Freeze CNN, train LSTM+Gumbel+receiver.
+    3. Refine vision (100 ep): Unfreeze all, end-to-end fine-tuning.
+
+    Smaller model (~33K params), more data (2000 seq, all 3-object).
+    """
+    import random
+    import math
+
+    print("=" * 60, flush=True)
+    print("PHASE 29j-v2: Staged Communication-Driven Perception", flush=True)
+    print("=" * 60, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Generate sequences (ALL 3-object) ──────────────────────
+    n_sequences = 2000
+    n_frames = 40
+    n_obj = 3
+    S = 64
+
+    palette = [
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+    ]
+
+    print(f"\n┌─ Generating {n_sequences} sequences (3 objects, 40 frames, v=±7)", flush=True)
+    all_frames = []
+    all_labels = []
+    collision_counts = []
+
+    random.seed(42)
+    for seq_i in range(n_sequences):
+        heavy_idx = random.randint(0, n_obj - 1)
+        masses = [1.0] * n_obj
+        masses[heavy_idx] = 3.0
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(7, 10)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-7.0, 7.0)
+            vy = random.uniform(-7.0, 7.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi], 'color': palette[oi]
+            })
+
+        seq_collisions = 0
+        frames = []
+        for fi in range(n_frames):
+            img = np.ones((S, S, 3), dtype=np.float32) * 0.5
+            for obj in objects:
+                r = obj['r']
+                cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+                color = np.array(obj['color'])
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if dx*dx + dy*dy <= r*r:
+                            px, py = cx_i + dx, cy_i + dy
+                            if 0 <= px < S and 0 <= py < S:
+                                img[py, px] = color
+            frames.append(img.transpose(2, 0, 1))
+
+            for i in range(n_obj):
+                for j in range(i + 1, n_obj):
+                    oi_o, oj_o = objects[i], objects[j]
+                    dx = oj_o['cx'] - oi_o['cx']
+                    dy = oj_o['cy'] - oi_o['cy']
+                    dist = math.hypot(dx, dy)
+                    min_dist = oi_o['r'] + oj_o['r']
+                    if dist < min_dist and dist > 0.1:
+                        nx, ny = dx / dist, dy / dist
+                        dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                              (oi_o['vy'] - oj_o['vy']) * ny
+                        if dvn > 0:
+                            seq_collisions += 1
+                            m1, m2 = oi_o['mass'], oj_o['mass']
+                            imp = 2 * dvn / (m1 + m2)
+                            oi_o['vx'] -= imp * m2 * nx
+                            oi_o['vy'] -= imp * m2 * ny
+                            oj_o['vx'] += imp * m1 * nx
+                            oj_o['vy'] += imp * m1 * ny
+                            overlap = min_dist - dist
+                            oi_o['cx'] -= overlap * nx * 0.5
+                            oi_o['cy'] -= overlap * ny * 0.5
+                            oj_o['cx'] += overlap * nx * 0.5
+                            oj_o['cy'] += overlap * ny * 0.5
+
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        all_frames.append(np.array(frames))
+        all_labels.append(heavy_idx)
+        collision_counts.append(seq_collisions)
+
+        if (seq_i + 1) % 500 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    all_frames = torch.tensor(np.array(all_frames), dtype=torch.float32)
+    all_labels = torch.tensor(all_labels, dtype=torch.long)
+    avg_coll = np.mean(collision_counts)
+    print(f"│  Frames: {list(all_frames.shape)}", flush=True)
+    print(f"│  Label dist: {[(all_labels == i).sum().item() for i in range(3)]}", flush=True)
+    print(f"│  Avg collisions/seq: {avg_coll:.1f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Train/val split ────────────────────────────────────────
+    n_train = 1600
+    n_val = n_sequences - n_train
+    perm = torch.randperm(n_sequences)
+    train_frames = all_frames[perm[:n_train]]
+    train_labels = all_labels[perm[:n_train]]
+    val_frames = all_frames[perm[n_train:]]
+    val_labels = all_labels[perm[n_train:]]
+    print(f"\n│  Train: {n_train} | Val: {n_val}", flush=True)
+
+    # ── Build models ───────────────────────────────────────────
+    from world_model import PhysicsCNNv2, PhysicsCNNv2Decoder, CommSenderv2, CommReceiver
+
+    encoder = PhysicsCNNv2(out_dim=64).to(device)
+    decoder = PhysicsCNNv2Decoder(in_dim=64).to(device)
+    sender = CommSenderv2(encoder=encoder, lstm_hidden=32, vocab_size=8,
+                          n_frames=40, subsample=5).to(device)
+    receiver = CommReceiver(vocab_size=8, embed_dim=32, n_classes=3).to(device)
+
+    enc_params = sum(p.numel() for p in encoder.parameters())
+    dec_params = sum(p.numel() for p in decoder.parameters())
+    lstm_params = sum(p.numel() for p in sender.lstm.parameters())
+    head_params = sum(p.numel() for p in sender.message_head.parameters())
+    recv_params = sum(p.numel() for p in receiver.parameters())
+    print(f"\n  PhysicsCNNv2 encoder: {enc_params:,} params", flush=True)
+    print(f"  Decoder (stage 1 only): {dec_params:,} params", flush=True)
+    print(f"  LSTM: {lstm_params:,} params", flush=True)
+    print(f"  Message head: {head_params:,} params", flush=True)
+    print(f"  Receiver: {recv_params:,} params", flush=True)
+    print(f"  Total (excl decoder): {enc_params + lstm_params + head_params + recv_params:,} params", flush=True)
+
+    # Pre-compute coordinate channels for autoencoder stage
+    coords_x = torch.linspace(-1, 1, 64, device=device)
+    coords_y = torch.linspace(-1, 1, 64, device=device)
+    gy, gx = torch.meshgrid(coords_y, coords_x, indexing='ij')
+    coord_ch = torch.stack([gx, gy], dim=0)  # [2, 64, 64]
+
+    history = {'epoch': [], 'train_acc': [], 'val_acc': [], 'stage': []}
+
+    # ════════════════════════════════════════════════════════════
+    # STAGE 1: Learn to See (autoencoder, 50 epochs)
+    # ════════════════════════════════════════════════════════════
+    print(f"\n{'='*60}", flush=True)
+    print(f"STAGE 1: Learn to See (autoencoder, 50 epochs)", flush=True)
+    print(f"{'='*60}", flush=True)
+
+    ae_opt = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=1e-3)
+    ae_sched = torch.optim.lr_scheduler.CosineAnnealingLR(ae_opt, T_max=50, eta_min=1e-5)
+    batch_size_ae = 64  # individual frames
+
+    # Collect a pool of subsampled frames for autoencoder training
+    # Use every 5th frame from all training sequences → 1600 * 8 = 12800 frames
+    print(f"│  Preparing frame pool for AE training...", flush=True)
+    subsample_indices = list(range(0, n_frames, 5))[:8]
+    train_frame_pool = train_frames[:, subsample_indices].reshape(-1, 3, S, S)  # [12800, 3, 64, 64]
+    print(f"│  Frame pool: {list(train_frame_pool.shape)}", flush=True)
+
+    for epoch in range(1, 51):
+        encoder.train()
+        decoder.train()
+        perm_ae = torch.randperm(len(train_frame_pool))
+        ep_loss = 0.0
+        n_batches = 0
+
+        for start in range(0, len(train_frame_pool), batch_size_ae):
+            idx = perm_ae[start:start + batch_size_ae]
+            rgb = train_frame_pool[idx].to(device)  # [B, 3, 64, 64]
+
+            # Add coord channels
+            B_ae = rgb.shape[0]
+            coord_exp = coord_ch.unsqueeze(0).expand(B_ae, -1, -1, -1)
+            x_in = torch.cat([rgb, coord_exp], dim=1)  # [B, 5, 64, 64]
+
+            z = encoder(x_in)       # [B, 64]
+            recon = decoder(z)       # [B, 3, 64, 64]
+            loss = F.mse_loss(recon, rgb)
+
+            ae_opt.zero_grad()
+            loss.backward()
+            ae_opt.step()
+            ep_loss += loss.item()
+            n_batches += 1
+
+            if device.type == 'mps' and n_batches % 100 == 0:
+                torch.mps.empty_cache()
+
+        ae_sched.step()
+
+        if epoch % 10 == 0 or epoch == 1:
+            elapsed = time.time() - t0
+            print(f"│  [S1] Epoch {epoch:2d}/50 | recon_loss={ep_loss/n_batches:.4f} | "
+                  f"[{elapsed:.0f}s]", flush=True)
+
+    # Final AE loss on val
+    encoder.eval()
+    decoder.eval()
+    with torch.no_grad():
+        val_pool = val_frames[:, subsample_indices].reshape(-1, 3, S, S)
+        val_sample = val_pool[:256].to(device)
+        coord_exp = coord_ch.unsqueeze(0).expand(256, -1, -1, -1)
+        x_in = torch.cat([val_sample, coord_exp], dim=1)
+        z = encoder(x_in)
+        recon = decoder(z)
+        val_recon_loss = F.mse_loss(recon, val_sample).item()
+    print(f"│  Stage 1 val recon loss: {val_recon_loss:.4f}", flush=True)
+
+    # Discard decoder
+    del decoder, ae_opt, ae_sched, train_frame_pool, val_pool
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    # ════════════════════════════════════════════════════════════
+    # STAGE 2: Learn to Talk (frozen CNN, 100 epochs)
+    # ════════════════════════════════════════════════════════════
+    print(f"\n{'='*60}", flush=True)
+    print(f"STAGE 2: Learn to Talk (frozen CNN, 100 epochs)", flush=True)
+    print(f"{'='*60}", flush=True)
+
+    # Freeze encoder
+    for p in encoder.parameters():
+        p.requires_grad = False
+
+    comm_params = list(sender.lstm.parameters()) + list(sender.message_head.parameters()) + \
+                  list(receiver.parameters())
+    comm_opt = torch.optim.Adam(comm_params, lr=3e-4)
+    comm_sched = torch.optim.lr_scheduler.CosineAnnealingLR(comm_opt, T_max=100, eta_min=1e-5)
+    batch_size = 16
+    entropy_weight = 0.1
+
+    best_s2_val = 0.0
+    best_s2_epoch = 0
+
+    for epoch in range(1, 101):
+        sender.train()
+        receiver.train()
+
+        perm_t = torch.randperm(n_train)
+        ep_loss, ep_correct, ep_total = 0, 0, 0
+
+        for start in range(0, n_train, batch_size):
+            idx = perm_t[start:start + batch_size]
+            frame_b = train_frames[idx].to(device)
+            label_b = train_labels[idx].to(device)
+
+            message, logits = sender(frame_b, tau=1.0)
+            pred = receiver(message)
+            ce_loss = F.cross_entropy(pred, label_b)
+            msg_probs = F.softmax(logits, dim=-1)
+            entropy = -(msg_probs * (msg_probs + 1e-8).log()).sum(dim=-1).mean()
+            loss = ce_loss - entropy_weight * entropy
+
+            comm_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(comm_params, 1.0)
+            comm_opt.step()
+
+            ep_loss += ce_loss.item() * len(label_b)
+            ep_correct += (pred.argmax(dim=-1) == label_b).sum().item()
+            ep_total += len(label_b)
+
+            if device.type == 'mps' and (start // batch_size) % 50 == 0:
+                torch.mps.empty_cache()
+
+        comm_sched.step()
+        train_acc = ep_correct / ep_total
+
+        if epoch % 10 == 0 or epoch == 1:
+            sender.eval()
+            receiver.eval()
+            with torch.no_grad():
+                val_correct = 0
+                val_tokens = []
+                for vi in range(0, n_val, batch_size):
+                    vf = val_frames[vi:vi+batch_size].to(device)
+                    vl = val_labels[vi:vi+batch_size].to(device)
+                    msg, _ = sender(vf, hard=True)
+                    vp = receiver(msg).argmax(dim=-1)
+                    val_correct += (vp == vl).sum().item()
+                    val_tokens.append(msg.argmax(dim=-1).cpu())
+                val_acc = val_correct / n_val
+                val_tokens = torch.cat(val_tokens)
+                unique_tokens = val_tokens.unique().tolist()
+
+            elapsed = time.time() - t0
+            print(f"│  [S2] Epoch {epoch:3d}/100 | loss={ep_loss/ep_total:.4f} | "
+                  f"train={train_acc:.3f} | val={val_acc:.3f} | "
+                  f"tokens={len(unique_tokens)} | [{elapsed:.0f}s]", flush=True)
+
+            if epoch % 50 == 0:
+                for lbl in range(3):
+                    mask = val_labels[:len(val_tokens)] == lbl
+                    if mask.sum() > 0:
+                        toks = val_tokens[mask]
+                        counts = [(t, (toks == t).sum().item()) for t in range(8)]
+                        counts.sort(key=lambda x: -x[1])
+                        print(f"│    heavy={lbl}: {counts[:3]}", flush=True)
+
+            history['epoch'].append(epoch + 50)
+            history['train_acc'].append(train_acc)
+            history['val_acc'].append(val_acc)
+            history['stage'].append(2)
+
+            if val_acc > best_s2_val:
+                best_s2_val = val_acc
+                best_s2_epoch = epoch
+
+    print(f"│  Stage 2 best val: {best_s2_val:.3f} at epoch {best_s2_epoch}", flush=True)
+
+    # ════════════════════════════════════════════════════════════
+    # STAGE 3: Communication Refines Vision (100 epochs)
+    # ════════════════════════════════════════════════════════════
+    print(f"\n{'='*60}", flush=True)
+    print(f"STAGE 3: Communication Refines Vision (100 epochs)", flush=True)
+    print(f"{'='*60}", flush=True)
+
+    # Unfreeze encoder
+    for p in encoder.parameters():
+        p.requires_grad = True
+
+    all_params = list(sender.parameters()) + list(receiver.parameters())
+    ft_opt = torch.optim.Adam(all_params, lr=1e-4)
+    ft_sched = torch.optim.lr_scheduler.CosineAnnealingLR(ft_opt, T_max=100, eta_min=1e-6)
+
+    best_s3_val = 0.0
+    best_s3_epoch = 0
+    best_state = None
+
+    for epoch in range(1, 101):
+        sender.train()
+        receiver.train()
+
+        # τ anneal 1.0 → 0.1
+        tau = 1.0 - 0.9 * (epoch - 1) / 99
+
+        perm_t = torch.randperm(n_train)
+        ep_loss, ep_correct, ep_total = 0, 0, 0
+
+        for start in range(0, n_train, batch_size):
+            idx = perm_t[start:start + batch_size]
+            frame_b = train_frames[idx].to(device)
+            label_b = train_labels[idx].to(device)
+
+            message, logits = sender(frame_b, tau=tau)
+            pred = receiver(message)
+            ce_loss = F.cross_entropy(pred, label_b)
+            msg_probs = F.softmax(logits, dim=-1)
+            entropy = -(msg_probs * (msg_probs + 1e-8).log()).sum(dim=-1).mean()
+            loss = ce_loss - entropy_weight * entropy
+
+            ft_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(all_params, 1.0)
+            ft_opt.step()
+
+            ep_loss += ce_loss.item() * len(label_b)
+            ep_correct += (pred.argmax(dim=-1) == label_b).sum().item()
+            ep_total += len(label_b)
+
+            if device.type == 'mps' and (start // batch_size) % 50 == 0:
+                torch.mps.empty_cache()
+
+        ft_sched.step()
+        train_acc = ep_correct / ep_total
+
+        if epoch % 10 == 0 or epoch == 1:
+            sender.eval()
+            receiver.eval()
+            with torch.no_grad():
+                val_correct = 0
+                val_tokens = []
+                for vi in range(0, n_val, batch_size):
+                    vf = val_frames[vi:vi+batch_size].to(device)
+                    vl = val_labels[vi:vi+batch_size].to(device)
+                    msg, _ = sender(vf, hard=True)
+                    vp = receiver(msg).argmax(dim=-1)
+                    val_correct += (vp == vl).sum().item()
+                    val_tokens.append(msg.argmax(dim=-1).cpu())
+                val_acc = val_correct / n_val
+                val_tokens = torch.cat(val_tokens)
+                unique_tokens = val_tokens.unique().tolist()
+
+            elapsed = time.time() - t0
+            print(f"│  [S3] Epoch {epoch:3d}/100 | τ={tau:.2f} | loss={ep_loss/ep_total:.4f} | "
+                  f"train={train_acc:.3f} | val={val_acc:.3f} | "
+                  f"tokens={len(unique_tokens)} | [{elapsed:.0f}s]", flush=True)
+
+            if epoch % 50 == 0:
+                for lbl in range(3):
+                    mask = val_labels[:len(val_tokens)] == lbl
+                    if mask.sum() > 0:
+                        toks = val_tokens[mask]
+                        counts = [(t, (toks == t).sum().item()) for t in range(8)]
+                        counts.sort(key=lambda x: -x[1])
+                        print(f"│    heavy={lbl}: {counts[:3]}", flush=True)
+
+            history['epoch'].append(epoch + 150)
+            history['train_acc'].append(train_acc)
+            history['val_acc'].append(val_acc)
+            history['stage'].append(3)
+
+            if val_acc > best_s3_val:
+                best_s3_val = val_acc
+                best_s3_epoch = epoch
+                best_state = {
+                    'sender': {k: v.cpu().clone() for k, v in sender.state_dict().items()},
+                    'receiver': {k: v.cpu().clone() for k, v in receiver.state_dict().items()},
+                }
+
+    print(f"│  Stage 3 best val: {best_s3_val:.3f} at epoch {best_s3_epoch}", flush=True)
+
+    # ── Final analysis ─────────────────────────────────────────
+    delta = best_s3_val - best_s2_val
+    print(f"\n{'='*60}", flush=True)
+    print(f"RESULTS", flush=True)
+    print(f"{'='*60}", flush=True)
+    print(f"  Stage 2 (frozen CNN):    {best_s2_val:.3f} (epoch {best_s2_epoch})", flush=True)
+    print(f"  Stage 3 (fine-tuned):    {best_s3_val:.3f} (epoch {best_s3_epoch})", flush=True)
+    print(f"  Delta (S3 - S2):         {delta:+.3f} ({delta*100:+.1f}pp)", flush=True)
+    print(f"  Recon loss (Stage 1):    {val_recon_loss:.4f}", flush=True)
+
+    # Token purity with best model
+    if best_state is not None:
+        sender.load_state_dict({k: v.to(device) for k, v in best_state['sender'].items()})
+        receiver.load_state_dict({k: v.to(device) for k, v in best_state['receiver'].items()})
+    sender.eval()
+    receiver.eval()
+
+    with torch.no_grad():
+        all_val_tokens = []
+        all_val_preds = []
+        for vi in range(0, n_val, batch_size):
+            vf = val_frames[vi:vi+batch_size].to(device)
+            msg, _ = sender(vf, hard=True)
+            vp = receiver(msg).argmax(dim=-1)
+            all_val_tokens.append(msg.argmax(dim=-1).cpu())
+            all_val_preds.append(vp.cpu())
+        all_val_tokens = torch.cat(all_val_tokens)
+        all_val_preds = torch.cat(all_val_preds)
+
+    print(f"\n  Token → label mapping (best Stage 3 model):", flush=True)
+    for tok in sorted(all_val_tokens.unique().tolist()):
+        tok_mask = all_val_tokens == tok
+        n_tok = tok_mask.sum().item()
+        if n_tok > 0:
+            labels_for_tok = val_labels[:len(all_val_tokens)][tok_mask]
+            counts = [(lbl, (labels_for_tok == lbl).sum().item()) for lbl in range(3)]
+            counts.sort(key=lambda x: -x[1])
+            purity = counts[0][1] / n_tok
+            print(f"    Token {tok}: n={n_tok}, labels={counts}, purity={purity:.2f}", flush=True)
+
+    # ── Visualization ──────────────────────────────────────────
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+
+    # 1. Training curves with stage boundaries
+    ax = axes[0]
+    s2_mask = [s == 2 for s in history['stage']]
+    s3_mask = [s == 3 for s in history['stage']]
+    s2_ep = [history['epoch'][i] for i in range(len(s2_mask)) if s2_mask[i]]
+    s2_tr = [history['train_acc'][i] for i in range(len(s2_mask)) if s2_mask[i]]
+    s2_va = [history['val_acc'][i] for i in range(len(s2_mask)) if s2_mask[i]]
+    s3_ep = [history['epoch'][i] for i in range(len(s3_mask)) if s3_mask[i]]
+    s3_tr = [history['train_acc'][i] for i in range(len(s3_mask)) if s3_mask[i]]
+    s3_va = [history['val_acc'][i] for i in range(len(s3_mask)) if s3_mask[i]]
+    ax.plot(s2_ep, s2_tr, 'b-', alpha=0.5, label='S2 train')
+    ax.plot(s2_ep, s2_va, 'b-', linewidth=2, label='S2 val')
+    ax.plot(s3_ep, s3_tr, 'r-', alpha=0.5, label='S3 train')
+    ax.plot(s3_ep, s3_va, 'r-', linewidth=2, label='S3 val')
+    ax.axvline(x=150, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(y=0.333, color='gray', linestyle=':', alpha=0.5, label='Chance')
+    ax.text(100, 0.95, 'Stage 2\n(frozen)', ha='center', fontsize=9, color='blue')
+    ax.text(200, 0.95, 'Stage 3\n(fine-tune)', ha='center', fontsize=9, color='red')
+    ax.set_xlabel('Epoch (offset)')
+    ax.set_ylabel('Accuracy')
+    ax.set_title('Training Curves')
+    ax.legend(fontsize=8)
+    ax.set_ylim(0, 1)
+
+    # 2. Message distribution
+    ax = axes[1]
+    width = 0.25
+    for lbl in range(3):
+        mask = val_labels[:len(all_val_tokens)] == lbl
+        tokens = all_val_tokens[mask].numpy()
+        counts = np.bincount(tokens, minlength=8)
+        ax.bar(np.arange(8) + lbl * width - width, counts, width=width,
+               label=f'Heavy={lbl}')
+    ax.set_xlabel('Message Token')
+    ax.set_ylabel('Count')
+    ax.set_title('Message Distribution (Best Model)')
+    ax.legend()
+    ax.set_xticks(range(8))
+
+    # 3. Summary
+    ax = axes[2]
+    ax.axis('off')
+    summary = (
+        f"Phase 29j-v2: Staged Perception\n"
+        f"{'='*32}\n"
+        f"Stage 1 (see):    recon={val_recon_loss:.4f}\n"
+        f"Stage 2 (talk):   val={best_s2_val:.3f}\n"
+        f"Stage 3 (refine): val={best_s3_val:.3f}\n"
+        f"Delta S3-S2:      {delta:+.3f}\n\n"
+        f"Encoder: {enc_params:,}p\n"
+        f"LSTM+head: {lstm_params+head_params:,}p\n"
+        f"Receiver: {recv_params:,}p\n"
+        f"Data: {n_train} train, {n_val} val\n"
+        f"Avg coll/seq: {avg_coll:.1f}"
+    )
+    ax.text(0.1, 0.5, summary, transform=ax.transAxes, fontsize=11,
+            verticalalignment='center', fontfamily='monospace')
+
+    plt.tight_layout()
+    plt.savefig('results/phase29j_v2_staged.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\nSaved: results/phase29j_v2_staged.png", flush=True)
+
+    torch.save(best_state, 'results/phase29j_v2_model.pt')
+    print(f"Saved: results/phase29j_v2_model.pt", flush=True)
+
+    if best_s3_val > 0.50:
+        verdict = "SUCCESS"
+    elif best_s3_val > 0.33 and delta > 0.10:
+        verdict = "PARTIAL — comm improved perception"
+    elif best_s2_val > 0.33:
+        verdict = "PARTIAL — frozen CNN has signal"
+    else:
+        verdict = "FAIL"
+    print(f"\nVerdict: {verdict}", flush=True)
+
+    return {
+        'stage2_val': best_s2_val,
+        'stage3_val': best_s3_val,
+        'delta': delta,
+        'recon_loss': val_recon_loss,
+        'verdict': verdict,
+    }
+
+
 def run_phase29j_comm_driven_perception():
     """Phase 29j: Communication-driven physics perception.
 

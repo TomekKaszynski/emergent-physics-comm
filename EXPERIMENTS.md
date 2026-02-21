@@ -742,6 +742,24 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Diagnosis:** Two compounding failures: (1) Severe data scarcity — 382 training sequences for 496K params = 1300× overparameterized. (2) Mode collapse — Gumbel-softmax with CNN gives same problem as Phase 30. The entropy bonus (0.1) wasn't enough to prevent collapse. Token distributions identical across all labels.
 - **Verdict:** FAIL — 37.5% val (chance). Insufficient data for end-to-end CNN training, plus mode collapse.
 
+### Phase 29j-v2: Staged Communication-Driven Perception (Feb 21)
+- **Goal:** Fix 29j's data scarcity and mode collapse. 2000 sequences (all 3-object), smaller model (~55K params vs 496K), three training stages: see→talk→refine.
+- **Architecture:** PhysicsCNNv2 (42K params, 3 conv layers 5→16→32→64, k=4, s=2), CommSenderv2 (LSTM 64→32 + message head, ~13K params), CommReceiver (387 params). Total: 55K params on 1600 train. Ratio: 29×.
+- **Stage 1 (see):** AE pretraining, 50 epochs. Val recon loss: 0.012. CNN learns basic spatial features.
+- **Stage 2 (talk):** Frozen CNN + train LSTM/receiver, 100 epochs, τ=1.0.
+  ```
+  All 100 epochs: train=35.3%, val=29.0%, loss=1.098 (= log(3))
+  ```
+  **Zero learning.** Loss never moved from cross-entropy of random guessing. Token distributions uniform across all labels.
+- **Stage 3 (refine):** Unfreeze CNN, end-to-end, 100 epochs, τ 1.0→0.1.
+  ```
+  All 100 epochs: train=35.3%, val=29.0%, loss=1.098
+  ```
+  **Still zero learning.** Fine-tuning didn't help — gradients through Gumbel-softmax couldn't reshape CNN features.
+- **Delta S3-S2:** -1.0pp (no improvement from fine-tuning).
+- **Diagnosis:** The autoencoder CNN learns to reconstruct appearance (recon=0.012) but these features carry zero information about mass. The LSTM+receiver cannot extract mass signal from appearance-only features, and the Gumbel-softmax gradient pathway is too noisy to reshape CNN features toward physics-relevant representations. The fundamental issue: mass is invisible in individual frames — it only manifests through temporal dynamics (how objects move differently during collisions). A reconstruction loss doesn't incentivize learning dynamic features.
+- **Verdict:** FAIL — 29.0% val (below chance). Staged training doesn't help when the base features are physics-blind.
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**
@@ -753,12 +771,13 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 **Mass inference from vision (Phase 29g-j):**
 - 29g: slot centroid features → **54.9%** (FAIL). Centroid noise drowns collision signal.
 - 29h: JEPA prediction error → **50.6%** (FAIL). Background noise dominates.
-- 29i: slot delta LSTM → **52.3%** (FAIL). Pure overfitting, no generalizable signal in frozen slots.
-- 29j: end-to-end CNN+LSTM+Gumbel → **37.5%** (FAIL). Mode collapse + data scarcity (382 train, 496K params).
-- **Conclusion:** Four approaches to bridge vision→mass have failed. Frozen DINOv2 slots don't encode dynamics (29g-i). End-to-end training on tiny datasets doesn't converge (29j).
+- 29i: slot delta LSTM → **52.3%** (FAIL). Pure overfitting in frozen slots.
+- 29j: end-to-end CNN+Gumbel → **37.5%** (FAIL). Mode collapse + data scarcity.
+- 29j-v2: staged see→talk→refine → **29.0%** (FAIL). Zero learning across all 3 stages. AE features physics-blind.
+- **Conclusion:** Five approaches to bridge vision→mass have failed. The core issue: mass is invisible in individual frames. It only manifests through collision dynamics over time. Reconstruction-based features (DINOv2, autoencoders) don't encode physics.
 
 **Emergent communication (Phase 30 series):**
 - Phase 30: mode collapse (33%). Phase 30b: overfitting (41%).
 - Phase 30c: **98.5%** — separated perception from communication. 3-token emergent language.
 
-**Next steps:** (1) Scale up data for 29j (5000+ sequences, all 3-object), (2) try 29k: insert SlotAttention between PhysicsCNN and LSTM (structured perception), (3) accept GT positions and build full multi-agent pipeline, (4) transformer slot predictor.
+**Next steps:** (1) Direct supervised approach: train CNN on frame-pairs bracketing collisions with mass label (bypass communication bottleneck to test if CNN can learn physics at all), (2) try 29k: SlotAttention between CNN and LSTM, (3) accept GT positions and build full multi-agent pipeline.
