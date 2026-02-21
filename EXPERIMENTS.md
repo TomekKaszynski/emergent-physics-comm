@@ -809,6 +809,50 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Diagnosis:** Farneback optical flow fails catastrophically on uniform colored circles — there's no texture/gradient for it to track within each object. The aperture problem: a solid circle moving right looks identical pixel-by-pixel to the same circle — only the edges provide signal, and at 64×64 those edges are ~2px wide. Mean velocity error is 4.8px against a 0-10px range (~50% noise), completely destroying all collision features. The dv_ratio, which had 3.9× GT separation, collapses to 1.00× with flow.
 - **Verdict:** FAIL — 50.0% (chance). Optical flow is the wrong tool for textureless objects at 64×64.
 
+### Phase 29 Diagnostics — Comprehensive gap analysis (Feb 21)
+- **D1: Noise tolerance sweep** — GT positions + Gaussian noise σ:
+  ```
+  σ (px)   Val acc   dv_sep
+    0.0     91.4%    2.55x
+    0.5     91.1%    2.49x
+    1.0     87.1%    2.24x
+    2.0     81.8%    1.76x    ← need <2px noise for >80%
+    3.0     76.9%    1.44x
+    4.0     68.0%    1.34x    ← need <4px for >65%
+    5.0     63.6%    1.24x
+    8.0     60.1%    1.11x
+   10.0     52.2%    1.07x
+  ```
+- **D2: Position error by method** (pixels, 64×64 space):
+  ```
+  Method             Mean    Median   90th    95th
+  GT                 0.000   0.000    0.000   0.000
+  centroid_16x16    20.402  19.303   37.012  41.158
+  hard_com_64x64    21.999  20.808   39.817  44.511
+  soft_com_64x64    20.100  19.062   36.285  40.319
+  ```
+- **D3: Velocity error** (pixels/frame):
+  ```
+  Method             Mean    Median   90th
+  centroid_16x16     6.564   5.629   12.568
+  hard_com_64x64     7.212   5.867   14.163
+  soft_com_64x64     6.458   5.559   12.325
+  ```
+- **D4: Feature separation + classifier**:
+  ```
+  Method             Pos err  Vel err  dv_ratio sep  Val acc
+  GT                   0.0      0.0       2.55x      91.7%
+  centroid_16x16      20.4      6.6       1.01x      51.3%
+  hard_com_64x64      22.0      7.2       1.02x      50.9%
+  soft_com_64x64      20.1      6.5       1.02x      52.3%
+  ```
+- **Key findings:**
+  1. **Precision target: <2px position error needed for >80% accuracy, <4px for >65%.** All SA methods have 20px mean error — 5× too high.
+  2. **Hard masks don't help.** hard_com_64x64 is actually slightly *worse* than soft centroid_16x16 (22.0 vs 20.4px position error). Upsampling a 16×16 grid to 64×64 doesn't add real spatial precision.
+  3. **The bottleneck is the 16×16 patch grid.** DINOv2 produces 16×16=256 patch tokens. Each patch covers 4×4 pixels. Centroid precision is fundamentally limited to ~2px at best (half a patch), but slot attention introduces additional noise through soft competition → 20px actual error.
+  4. **All three SA position methods are equivalent.** The position error is dominated by slot assignment noise (which object does each slot track?), not the centroid extraction method.
+- **Verdict:** The vision→physics gap is quantitatively understood. SA position error (20px) is 5-10× above the noise tolerance threshold (2-4px). No downstream feature engineering can overcome this.
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**
@@ -817,19 +861,13 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Mass inference from dynamics: 98.6%** with pairwise collision features on GT positions (Phase 29f)
 - **Emergent communication: 98.5%** with physics features → Gumbel-softmax → receiver (Phase 30c)
 
-**Mass inference from vision (Phase 29g-m):**
-- 29g: slot centroid features → **54.9%** (FAIL). Centroid noise drowns collision signal.
-- 29h: JEPA prediction error → **50.6%** (FAIL). Background noise dominates.
-- 29i: slot delta LSTM → **52.3%** (FAIL). Pure overfitting in frozen slots.
-- 29j: end-to-end CNN+Gumbel → **37.5%** (FAIL). Mode collapse + data scarcity.
-- 29j-v2: staged see→talk→refine → **29.0%** (FAIL). Zero learning across all 3 stages.
-- 29k: amplified physics (10:1 mass + 224px) → **51.9%/53.1%** (FAIL). Centroid noise is structural.
-- 29l: motion energy via slot masks → **52.7%** (FAIL). Soft masks leak motion between objects.
-- 29m: optical flow + hard masks → **50.0%** (FAIL). Farneback fails on textureless objects (4.8px error on 0-10px range).
-- **Conclusion:** Eight approaches to bridge vision→mass have failed. The velocity estimation problem at 64×64 with uniform circles is harder than expected — centroids are quantized, soft masks leak, optical flow has no texture. GT position tracking remains the only reliable velocity source.
+**Mass inference from vision (Phase 29g-m + diagnostics):**
+- 29g-m: Eight approaches FAILED (54.9% → 50.0%). See individual entries above.
+- **29 Diagnostics: Root cause identified.** SA position error is 20px mean. Need <4px for >65% accuracy, <2px for >80%. The 16×16 DINOv2 patch grid fundamentally limits precision to ~2px/patch, and slot attention noise adds another ~18px on top. No position extraction method (centroid, hard COM, soft COM) can fix this — they're all equivalent at ~20px.
+- **The gap is structural:** 20px error vs 2-4px required = 5-10× too imprecise.
 
 **Emergent communication (Phase 30 series):**
 - Phase 30: mode collapse (33%). Phase 30b: overfitting (41%).
 - Phase 30c: **98.5%** — separated perception from communication. 3-token emergent language.
 
-**Next steps:** (1) Accept GT positions and build full multi-agent pipeline (perception→physics gap is structural), (2) Direct supervised CNN on collision frame-pairs (bypass slot attention entirely), (3) Alternative position extraction (e.g., argmax of slot attention instead of soft centroid).
+**Next steps:** (1) Accept GT positions and build the full multi-agent communication pipeline (the interesting research is in communication, not perception), (2) If vision is needed: train a dedicated object tracker (not slot attention) on this specific task, or use higher-resolution backbone (32×32 patches).

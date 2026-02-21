@@ -13594,6 +13594,638 @@ def run_phase30_emergent_comm():
     }
 
 
+def run_phase29_diagnostics():
+    """Phase 29 Diagnostics: Comprehensive analysis of the vision→physics gap.
+
+    Four diagnostics:
+    1. Noise tolerance sweep: GT positions + Gaussian noise σ=[0..10]px → val_acc
+    2. Position method comparison: centroid_16x16 vs hard_com_64x64 vs soft_com_64x64
+    3. Velocity error: per-method velocity estimation error vs GT
+    4. Feature separation + classifier accuracy per method
+    """
+    import random
+    import math
+
+    print("=" * 70, flush=True)
+    print("PHASE 29 DIAGNOSTICS: Vision→Physics Gap Analysis", flush=True)
+    print("=" * 70, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Generate sequences (same as 29f) ──────────────────────
+    n_sequences = 1000
+    n_frames = 40
+    S = 64
+
+    palette = [
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0],
+    ]
+
+    print(f"\n┌─ Generating {n_sequences} sequences (3 obj, 40 frames, v=±7)", flush=True)
+    all_frames = []
+    all_obj_info = []
+    all_gt_positions = []       # [1000][n_obj][40][2] in normalized [0,1]
+    all_collision_events = []   # [1000][(frame, i, j, dv_i, dv_j)]
+    collision_counts = []
+
+    random.seed(42)
+    for seq_i in range(n_sequences):
+        n_obj = random.randint(3, 4)
+        masses = [1.0, 3.0]
+        for _ in range(n_obj - 2):
+            masses.append(random.choice([1.0, 3.0]))
+        random.shuffle(masses)
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(7, 10)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-7.0, 7.0)
+            vy = random.uniform(-7.0, 7.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi], 'color': palette[oi % len(palette)]
+            })
+
+        all_obj_info.append([{
+            'cx0': obj['cx'] / S, 'cy0': obj['cy'] / S,
+            'r': obj['r'], 'mass': obj['mass']
+        } for obj in objects])
+
+        obj_positions = [[None] * n_frames for _ in range(n_obj)]
+        seq_collision_events = []
+        seq_collisions = 0
+
+        frames = []
+        for fi in range(n_frames):
+            for oi in range(n_obj):
+                obj_positions[oi][fi] = [objects[oi]['cx'] / S, objects[oi]['cy'] / S]
+
+            img = np.ones((S, S, 3), dtype=np.float32) * 0.5
+            for obj in objects:
+                r = obj['r']
+                cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+                color = np.array(obj['color'])
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if dx*dx + dy*dy <= r*r:
+                            px, py = cx_i + dx, cy_i + dy
+                            if 0 <= px < S and 0 <= py < S:
+                                img[py, px] = color
+            frames.append(img.transpose(2, 0, 1))
+
+            for i in range(n_obj):
+                for j in range(i + 1, n_obj):
+                    oi_o, oj_o = objects[i], objects[j]
+                    dx_c = oj_o['cx'] - oi_o['cx']
+                    dy_c = oj_o['cy'] - oi_o['cy']
+                    dist = math.hypot(dx_c, dy_c)
+                    min_dist = oi_o['r'] + oj_o['r']
+                    if dist < min_dist and dist > 0.1:
+                        nx, ny = dx_c / dist, dy_c / dist
+                        dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                              (oi_o['vy'] - oj_o['vy']) * ny
+                        if dvn > 0:
+                            seq_collisions += 1
+                            m1, m2 = oi_o['mass'], oj_o['mass']
+                            imp = 2 * dvn / (m1 + m2)
+                            dv_i = imp * m2
+                            dv_j = imp * m1
+                            seq_collision_events.append((fi, i, j, dv_i, dv_j))
+                            oi_o['vx'] -= imp * m2 * nx
+                            oi_o['vy'] -= imp * m2 * ny
+                            oj_o['vx'] += imp * m1 * nx
+                            oj_o['vy'] += imp * m1 * ny
+                            overlap = min_dist - dist
+                            oi_o['cx'] -= overlap * nx * 0.5
+                            oi_o['cy'] -= overlap * ny * 0.5
+                            oj_o['cx'] += overlap * nx * 0.5
+                            oj_o['cy'] += overlap * ny * 0.5
+
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        all_frames.append(np.array(frames))
+        all_gt_positions.append(obj_positions)
+        all_collision_events.append(seq_collision_events)
+        collision_counts.append(seq_collisions)
+
+        if (seq_i + 1) % 200 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    all_frames_t = torch.tensor(np.array(all_frames), dtype=torch.float32)
+    avg_coll = np.mean(collision_counts)
+    n_total_obj = sum(len(info) for info in all_obj_info)
+    n_light = sum(1 for info in all_obj_info for o in info if o['mass'] == 1.0)
+    n_heavy = n_total_obj - n_light
+    print(f"│  Objects: {n_total_obj} (light={n_light}, heavy={n_heavy})", flush=True)
+    print(f"│  Avg collisions/seq: {avg_coll:.1f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Helper: compute 6 features from position trajectories ─
+    def compute_features(positions_dict, collision_events_list, obj_info_list,
+                         n_sequences, n_frames, mass_heavy=3.0):
+        """Compute 6 pairwise collision features from positions.
+
+        positions_dict: {seq_i: {obj_i: tensor [40, 2] in normalized coords}}
+        Returns: features [N, 6], labels [N]
+        """
+        features = []
+        labels = []
+        dv_threshold = 0.02
+
+        for seq_i in range(n_sequences):
+            obj_info = obj_info_list[seq_i]
+            n_obj = len(obj_info)
+            collision_events = collision_events_list[seq_i]
+
+            for oi in range(n_obj):
+                pos = positions_dict[seq_i][oi]  # [40, 2]
+                v = pos[1:] - pos[:-1]           # [39, 2]
+                speed = v.norm(dim=-1)           # [39]
+                dv = v[1:] - v[:-1]              # [38, 2]
+                dv_mag = dv.norm(dim=-1)          # [38]
+
+                coll_mask = dv_mag > dv_threshold
+                n_coll = coll_mask.float().sum().item()
+                avg_dv_coll = dv_mag[coll_mask].mean().item() if n_coll > 0 else 0.0
+                max_dv = dv_mag.max().item()
+                avg_speed = speed.mean().item()
+                speed_var = speed.var().item()
+
+                # Pairwise dv_ratio from GT collision timestamps
+                dv_ratios = []
+                for (frame, ci, cj, gt_dv_i, gt_dv_j) in collision_events:
+                    if ci == oi:
+                        partner = cj
+                    elif cj == oi:
+                        partner = ci
+                    else:
+                        continue
+
+                    if frame >= 1 and frame < n_frames - 1:
+                        my_v_before = pos[frame] - pos[frame - 1]
+                        my_v_after = pos[frame + 1] - pos[frame]
+                        my_dv = (my_v_after - my_v_before).norm().item()
+
+                        p_pos = positions_dict[seq_i][partner]
+                        p_v_before = p_pos[frame] - p_pos[frame - 1]
+                        p_v_after = p_pos[frame + 1] - p_pos[frame]
+                        p_dv = (p_v_after - p_v_before).norm().item()
+
+                        if p_dv > 1e-8:
+                            dv_ratios.append(my_dv / p_dv)
+
+                avg_dv_ratio = np.mean(dv_ratios) if dv_ratios else 1.0
+
+                features.append([avg_dv_ratio, avg_dv_coll, max_dv,
+                                 avg_speed, speed_var, n_coll / 38.0])
+                labels.append(1.0 if obj_info[oi]['mass'] == mass_heavy else 0.0)
+
+        return torch.tensor(features, dtype=torch.float32), \
+               torch.tensor(labels, dtype=torch.float32)
+
+    # ── Helper: train classifier, return best val_acc ─────────
+    def train_classifier_quick(features, labels, n_epochs=100):
+        n_train = int(0.8 * len(labels))
+        perm = torch.randperm(len(labels))
+        train_f = features[perm[:n_train]]
+        train_l = labels[perm[:n_train]]
+        val_f = features[perm[n_train:]]
+        val_l = labels[perm[n_train:]]
+
+        clf = nn.Sequential(
+            nn.Linear(6, 32), nn.ReLU(), nn.Linear(32, 1),
+        ).to(device)
+        opt = torch.optim.Adam(clf.parameters(), lr=1e-3)
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=n_epochs, eta_min=1e-5)
+
+        best_val = 0.0
+        batch_size = 64
+
+        for epoch in range(n_epochs):
+            clf.train()
+            pt = torch.randperm(len(train_f))
+            for i in range(0, len(train_f), batch_size):
+                idx = pt[i:i+batch_size]
+                logits = clf(train_f[idx].to(device)).squeeze(-1)
+                loss = F.binary_cross_entropy_with_logits(logits, train_l[idx].to(device))
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+            sched.step()
+
+            if (epoch + 1) % 10 == 0:
+                clf.eval()
+                with torch.no_grad():
+                    v_logits = clf(val_f.to(device)).squeeze(-1)
+                    val_acc = ((v_logits > 0).float() == val_l.to(device)).float().mean().item()
+                if val_acc > best_val:
+                    best_val = val_acc
+
+        return best_val
+
+    # ══════════════════════════════════════════════════════════
+    # DIAGNOSTIC 1: Noise tolerance sweep
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"DIAGNOSTIC 1: Noise Tolerance Sweep", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    sigmas_px = [0, 0.5, 1, 2, 3, 4, 5, 8, 10]
+    noise_results = []
+
+    # Build GT positions dict
+    gt_pos_dict = {}
+    for seq_i in range(n_sequences):
+        gt_pos_dict[seq_i] = {}
+        n_obj = len(all_obj_info[seq_i])
+        for oi in range(n_obj):
+            gt_pos_dict[seq_i][oi] = torch.tensor(
+                all_gt_positions[seq_i][oi], dtype=torch.float32)
+
+    for sigma_px in sigmas_px:
+        sigma_norm = sigma_px / S  # convert to normalized space
+
+        # Add noise to GT positions
+        noisy_pos_dict = {}
+        for seq_i in range(n_sequences):
+            noisy_pos_dict[seq_i] = {}
+            n_obj = len(all_obj_info[seq_i])
+            for oi in range(n_obj):
+                gt = gt_pos_dict[seq_i][oi].clone()
+                if sigma_norm > 0:
+                    gt = gt + torch.randn_like(gt) * sigma_norm
+                noisy_pos_dict[seq_i][oi] = gt
+
+        features, labels = compute_features(
+            noisy_pos_dict, all_collision_events, all_obj_info,
+            n_sequences, n_frames)
+
+        # dv_ratio separation
+        dv_ratio_light = features[labels == 0, 0].mean().item()
+        dv_ratio_heavy = features[labels == 1, 0].mean().item()
+        dv_sep = dv_ratio_light / dv_ratio_heavy if abs(dv_ratio_heavy) > 1e-8 else float('inf')
+
+        val_acc = train_classifier_quick(features, labels, n_epochs=100)
+        noise_results.append({'sigma': sigma_px, 'val_acc': val_acc, 'dv_sep': dv_sep})
+        print(f"│  σ={sigma_px:5.1f}px → val_acc={val_acc*100:.1f}%, "
+              f"dv_ratio sep={dv_sep:.2f}x", flush=True)
+
+    print(f"│", flush=True)
+    print(f"│  Summary: noise tolerance", flush=True)
+    print(f"│  {'σ (px)':>8s}  {'Val acc':>8s}  {'dv_sep':>8s}", flush=True)
+    print(f"│  {'-'*28}", flush=True)
+    for r in noise_results:
+        print(f"│  {r['sigma']:8.1f}  {r['val_acc']*100:7.1f}%  {r['dv_sep']:8.2f}x", flush=True)
+    print(f"└─ Done [{time.time()-t0:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # DIAGNOSTIC 2: Position method comparison
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"DIAGNOSTIC 2: Position Method Comparison", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    # Load frozen SlotAttentionDINO
+    print(f"\n┌─ Loading frozen SlotAttentionDINO", flush=True)
+    ae = SlotAttentionDINO(n_slots=7, slot_dim=64, img_size=64).to(device)
+    state = torch.load(OUTPUT_DIR / "phase27_model.pt", map_location=device)
+    ae.load_state_dict(state)
+    ae.eval()
+    for p in ae.parameters():
+        p.requires_grad = False
+    print("│  Model loaded", flush=True)
+    print("└─ Done", flush=True)
+
+    # Encode all frames → slot masks (16x16)
+    P = 16
+    xs_grid = torch.linspace(0, 1, P)
+    ys_grid = torch.linspace(0, 1, P)
+    grid_y_16, grid_x_16 = torch.meshgrid(ys_grid, xs_grid, indexing='ij')
+    gx16 = grid_x_16.reshape(-1).to(device)
+    gy16 = grid_y_16.reshape(-1).to(device)
+
+    xs64 = torch.linspace(0, 1, S)
+    ys64 = torch.linspace(0, 1, S)
+    grid_y_64, grid_x_64 = torch.meshgrid(ys64, xs64, indexing='ij')
+    gx64 = grid_x_64.to(device)  # [64, 64]
+    gy64 = grid_y_64.to(device)
+
+    print(f"\n┌─ Encoding {n_sequences * n_frames} frames → slot masks", flush=True)
+
+    all_alpha = []  # [1000, 40, 7, 256]
+
+    with torch.no_grad():
+        for seq_i in range(n_sequences):
+            seq_alpha = []
+            for fi in range(0, n_frames, 8):
+                batch = all_frames_t[seq_i, fi:fi+8].to(device)
+                slots, _ = ae.encode(batch)
+                _, alpha = ae.decode(slots)  # [B, 7, 256]
+                seq_alpha.append(alpha.cpu())
+            all_alpha.append(torch.cat(seq_alpha, dim=0))
+
+            if (seq_i + 1) % 200 == 0:
+                print(f"│  Encoded {seq_i+1}/{n_sequences}", flush=True)
+                if device.type == 'mps':
+                    torch.mps.empty_cache()
+
+    all_alpha = torch.stack(all_alpha)  # [1000, 40, 7, 256]
+    print(f"│  Alpha cache: {list(all_alpha.shape)}", flush=True)
+    print("└─ Done", flush=True)
+
+    del all_frames_t
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    # Match slots to objects (frame-0 centroids)
+    print(f"\n┌─ Matching slots to objects", flush=True)
+    slot_assignments = []
+    match_dists = []
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        alpha_f0 = all_alpha[seq_i, 0]  # [7, 256]
+        n_obj = len(obj_info)
+
+        ws = alpha_f0.sum(dim=-1, keepdim=True) + 1e-8
+        cx = (alpha_f0 * gx16.cpu()).sum(dim=-1) / ws.squeeze(-1)
+        cy = (alpha_f0 * gy16.cpu()).sum(dim=-1) / ws.squeeze(-1)
+
+        used_slots = set()
+        seq_slots = []
+        for obj in obj_info:
+            best_slot, best_d = -1, float('inf')
+            for si in range(7):
+                if si in used_slots:
+                    continue
+                d = math.hypot(cx[si].item() - obj['cx0'], cy[si].item() - obj['cy0'])
+                if d < best_d:
+                    best_d = d
+                    best_slot = si
+            used_slots.add(best_slot)
+            seq_slots.append(best_slot)
+            match_dists.append(best_d)
+
+        slot_assignments.append(seq_slots)
+
+    avg_match_dist = np.mean(match_dists)
+    print(f"│  Avg match distance: {avg_match_dist:.4f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # Compute positions three ways
+    print(f"\n┌─ Computing positions: 3 methods", flush=True)
+
+    method_positions = {
+        'centroid_16x16': {},
+        'hard_com_64x64': {},
+        'soft_com_64x64': {},
+    }
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        n_obj = len(obj_info)
+        seq_slots = slot_assignments[seq_i]
+
+        for method in method_positions:
+            method_positions[method][seq_i] = {}
+
+        for oi in range(n_obj):
+            si = seq_slots[oi]
+            alpha_slot = all_alpha[seq_i, :, si, :]  # [40, 256]
+
+            # Method (a): centroid on 16x16 grid
+            ws = alpha_slot.sum(dim=-1, keepdim=True) + 1e-8  # [40, 1]
+            cx_16 = (alpha_slot * gx16.cpu()).sum(dim=-1) / ws.squeeze(-1)  # [40]
+            cy_16 = (alpha_slot * gy16.cpu()).sum(dim=-1) / ws.squeeze(-1)
+            method_positions['centroid_16x16'][seq_i][oi] = torch.stack([cx_16, cy_16], dim=-1)
+
+            # Upsample masks to 64x64
+            alpha_2d = all_alpha[seq_i, :, :, :].reshape(n_frames, 7, P, P)  # [40, 7, 16, 16]
+            alpha_up = F.interpolate(alpha_2d, size=(S, S), mode='bilinear',
+                                     align_corners=False)  # [40, 7, 64, 64]
+
+            # Method (b): hard argmax → binary mask → center of mass
+            winner = alpha_up.argmax(dim=1)  # [40, 64, 64]
+            hard_mask = (winner == si).float()  # [40, 64, 64]
+            hm_sum = hard_mask.sum(dim=(-2, -1), keepdim=True) + 1e-8  # [40, 1, 1]
+            cx_hard = (hard_mask * gx64.cpu()).sum(dim=(-2, -1)) / hm_sum.squeeze(-1).squeeze(-1)
+            cy_hard = (hard_mask * gy64.cpu()).sum(dim=(-2, -1)) / hm_sum.squeeze(-1).squeeze(-1)
+            method_positions['hard_com_64x64'][seq_i][oi] = torch.stack([cx_hard, cy_hard], dim=-1)
+
+            # Method (c): soft mask (upsampled) → weighted center of mass
+            soft_mask = alpha_up[:, si, :, :]  # [40, 64, 64]
+            sm_sum = soft_mask.sum(dim=(-2, -1), keepdim=True) + 1e-8
+            cx_soft = (soft_mask * gx64.cpu()).sum(dim=(-2, -1)) / sm_sum.squeeze(-1).squeeze(-1)
+            cy_soft = (soft_mask * gy64.cpu()).sum(dim=(-2, -1)) / sm_sum.squeeze(-1).squeeze(-1)
+            method_positions['soft_com_64x64'][seq_i][oi] = torch.stack([cx_soft, cy_soft], dim=-1)
+
+    print("│  All 3 methods computed", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Diagnostic 2: Position errors ─────────────────────────
+    print(f"\n┌─ DIAGNOSTIC 2: Position error vs GT (pixels)", flush=True)
+
+    pos_errors = {}  # method → list of errors in pixels
+    for method in method_positions:
+        errors = []
+        for seq_i in range(n_sequences):
+            n_obj = len(all_obj_info[seq_i])
+            for oi in range(n_obj):
+                gt = gt_pos_dict[seq_i][oi]  # [40, 2] normalized
+                pred = method_positions[method][seq_i][oi]  # [40, 2] normalized
+                err_px = (pred - gt).norm(dim=-1) * S  # in pixels
+                errors.extend(err_px.tolist())
+        pos_errors[method] = np.array(errors)
+
+    print(f"│  {'Method':20s}  {'Mean':>8s}  {'Median':>8s}  {'90th':>8s}  {'95th':>8s}", flush=True)
+    print(f"│  {'-'*58}", flush=True)
+    print(f"│  {'GT':20s}  {'0.000':>8s}  {'0.000':>8s}  {'0.000':>8s}  {'0.000':>8s}", flush=True)
+    for method in method_positions:
+        e = pos_errors[method]
+        print(f"│  {method:20s}  {e.mean():8.3f}  {np.median(e):8.3f}  "
+              f"{np.percentile(e, 90):8.3f}  {np.percentile(e, 95):8.3f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Diagnostic 3: Velocity errors ─────────────────────────
+    print(f"\n┌─ DIAGNOSTIC 3: Velocity error vs GT (pixels/frame)", flush=True)
+
+    vel_errors = {}
+    for method in method_positions:
+        errors = []
+        for seq_i in range(n_sequences):
+            n_obj = len(all_obj_info[seq_i])
+            for oi in range(n_obj):
+                gt = gt_pos_dict[seq_i][oi]
+                gt_v = (gt[1:] - gt[:-1]) * S  # [39, 2] pixels
+                pred = method_positions[method][seq_i][oi]
+                pred_v = (pred[1:] - pred[:-1]) * S
+                err = (pred_v - gt_v).norm(dim=-1)  # [39]
+                errors.extend(err.tolist())
+        vel_errors[method] = np.array(errors)
+
+    print(f"│  {'Method':20s}  {'Mean':>8s}  {'Median':>8s}  {'90th':>8s}", flush=True)
+    print(f"│  {'-'*50}", flush=True)
+    print(f"│  {'GT':20s}  {'0.000':>8s}  {'0.000':>8s}  {'0.000':>8s}", flush=True)
+    for method in method_positions:
+        e = vel_errors[method]
+        print(f"│  {method:20s}  {e.mean():8.3f}  {np.median(e):8.3f}  "
+              f"{np.percentile(e, 90):8.3f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Diagnostic 4: Feature separation + classifier ─────────
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"DIAGNOSTIC 4: Feature Separation + Classifier per Method", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    feat_names = ['avg_dv_ratio', 'avg_dv_coll', 'max_dv',
+                  'avg_speed', 'speed_var', 'n_coll_norm']
+
+    method_results = {}
+
+    # GT baseline
+    gt_features, gt_labels = compute_features(
+        gt_pos_dict, all_collision_events, all_obj_info, n_sequences, n_frames)
+    gt_val_acc = train_classifier_quick(gt_features, gt_labels, n_epochs=100)
+    gt_dv_l = gt_features[gt_labels == 0, 0].mean().item()
+    gt_dv_h = gt_features[gt_labels == 1, 0].mean().item()
+    gt_dv_sep = gt_dv_l / gt_dv_h if abs(gt_dv_h) > 1e-8 else float('inf')
+    method_results['GT'] = {
+        'pos_err': 0.0, 'vel_err': 0.0, 'dv_sep': gt_dv_sep, 'val_acc': gt_val_acc
+    }
+    print(f"│  GT:              dv_sep={gt_dv_sep:.2f}x, val_acc={gt_val_acc*100:.1f}%", flush=True)
+
+    for method in method_positions:
+        feats, labels = compute_features(
+            method_positions[method], all_collision_events, all_obj_info,
+            n_sequences, n_frames)
+        val_acc = train_classifier_quick(feats, labels, n_epochs=100)
+        dv_l = feats[labels == 0, 0].mean().item()
+        dv_h = feats[labels == 1, 0].mean().item()
+        dv_sep = dv_l / dv_h if abs(dv_h) > 1e-8 else float('inf')
+        method_results[method] = {
+            'pos_err': pos_errors[method].mean(),
+            'vel_err': vel_errors[method].mean(),
+            'dv_sep': dv_sep,
+            'val_acc': val_acc,
+        }
+        print(f"│  {method:20s}: dv_sep={dv_sep:.2f}x, val_acc={val_acc*100:.1f}%", flush=True)
+
+    # ── Final comparison table ────────────────────────────────
+    print(f"\n{'=' * 70}", flush=True)
+    print(f"FINAL COMPARISON TABLE", flush=True)
+    print(f"{'=' * 70}", flush=True)
+    print(f"{'Method':20s} │ {'Pos err(px)':>11s} │ {'Vel err(px)':>11s} │ "
+          f"{'dv_ratio sep':>12s} │ {'Val acc':>8s}", flush=True)
+    print(f"{'-'*70}", flush=True)
+    for method in ['GT', 'centroid_16x16', 'hard_com_64x64', 'soft_com_64x64']:
+        r = method_results[method]
+        print(f"{method:20s} │ {r['pos_err']:11.3f} │ {r['vel_err']:11.3f} │ "
+              f"{r['dv_sep']:11.2f}x │ {r['val_acc']*100:7.1f}%", flush=True)
+
+    # ── Visualization ──────────────────────────────────────────
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle('Phase 29 Diagnostics: Vision→Physics Gap', fontsize=14, fontweight='bold')
+
+    # 1. Noise tolerance curve
+    ax = axes[0, 0]
+    sigmas = [r['sigma'] for r in noise_results]
+    accs = [r['val_acc'] * 100 for r in noise_results]
+    ax.plot(sigmas, accs, 'b-o', linewidth=2, markersize=6)
+    ax.axhline(y=65, color='green', linestyle='--', alpha=0.5, label='65% target')
+    ax.axhline(y=50, color='red', linestyle='--', alpha=0.5, label='50% chance')
+    # Mark the SA position error range
+    sa_errors = [pos_errors[m].mean() for m in method_positions]
+    for i, m in enumerate(method_positions):
+        ax.axvline(x=pos_errors[m].mean(), color=['orange', 'purple', 'cyan'][i],
+                   linestyle=':', alpha=0.7, label=f'{m} pos err')
+    ax.set_xlabel('Position noise σ (pixels)')
+    ax.set_ylabel('Val accuracy (%)')
+    ax.set_title('D1: Noise Tolerance')
+    ax.legend(fontsize=7, loc='lower left')
+    ax.set_ylim(40, 105)
+    ax.grid(True, alpha=0.3)
+
+    # 2. Position error by method
+    ax = axes[0, 1]
+    methods = list(method_positions.keys())
+    means = [pos_errors[m].mean() for m in methods]
+    medians = [np.median(pos_errors[m]) for m in methods]
+    x = np.arange(len(methods))
+    width = 0.35
+    ax.bar(x - width/2, means, width, label='Mean', color='steelblue')
+    ax.bar(x + width/2, medians, width, label='Median', color='skyblue')
+    ax.set_xticks(x)
+    ax.set_xticklabels([m.replace('_', '\n') for m in methods], fontsize=8)
+    ax.set_ylabel('Position error (px)')
+    ax.set_title('D2: Position Error by Method')
+    ax.legend()
+
+    # 3. Velocity error by method
+    ax = axes[1, 0]
+    v_means = [vel_errors[m].mean() for m in methods]
+    v_medians = [np.median(vel_errors[m]) for m in methods]
+    ax.bar(x - width/2, v_means, width, label='Mean', color='firebrick')
+    ax.bar(x + width/2, v_medians, width, label='Median', color='lightsalmon')
+    ax.set_xticks(x)
+    ax.set_xticklabels([m.replace('_', '\n') for m in methods], fontsize=8)
+    ax.set_ylabel('Velocity error (px/frame)')
+    ax.set_title('D3: Velocity Error by Method')
+    ax.legend()
+
+    # 4. Classifier accuracy by method
+    ax = axes[1, 1]
+    all_methods = ['GT'] + methods
+    all_accs = [method_results[m]['val_acc'] * 100 for m in all_methods]
+    colors = ['green', 'steelblue', 'purple', 'orange']
+    bars = ax.bar(range(len(all_methods)), all_accs, color=colors)
+    ax.set_xticks(range(len(all_methods)))
+    ax.set_xticklabels([m.replace('_', '\n') for m in all_methods], fontsize=8)
+    ax.set_ylabel('Val accuracy (%)')
+    ax.set_title('D4: Classifier Accuracy')
+    ax.axhline(y=50, color='red', linestyle='--', alpha=0.5)
+    ax.axhline(y=65, color='green', linestyle='--', alpha=0.5)
+    ax.set_ylim(40, 105)
+    for bar, acc in zip(bars, all_accs):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                f'{acc:.1f}%', ha='center', fontsize=9)
+
+    plt.tight_layout()
+    plt.savefig('results/phase29_diagnostics.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\nSaved: results/phase29_diagnostics.png", flush=True)
+
+    elapsed = time.time() - t0
+    print(f"\nTotal time: {elapsed:.0f}s", flush=True)
+
+    return {
+        'noise_results': noise_results,
+        'method_results': method_results,
+        'pos_errors': {m: pos_errors[m].mean() for m in method_positions},
+        'vel_errors': {m: vel_errors[m].mean() for m in method_positions},
+    }
+
+
 def run_phase29m_optical_flow():
     """Phase 29m: Optical flow + hard slot masks for mass inference.
 
