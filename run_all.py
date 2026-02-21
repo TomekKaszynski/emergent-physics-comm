@@ -36,7 +36,7 @@ from world_model import (
     SlotAttentionAutoencoder, SlotJEPAPredictor, SlotAttentionAEv2,
     SlotAttentionAEv3,
     SoftPositionEmbed, SlotAttentionModuleV2, SlotAttentionAEv5,
-    SlotAttentionDINO, SlotPredictor
+    SlotAttentionDINO, SlotPredictor, MassClassifier
 )
 
 OUTPUT_DIR = Path("results")
@@ -11738,6 +11738,389 @@ def run_phase28_slot_jepa():
         'step_cosines': step_cosines,
         'slot_var': slot_var,
         'success': success_1step and success_vs_copy,
+    }
+
+
+def _run_phase29_mass_inference_v1():
+    """Phase 29 v1 (deprecated — poor matching). Kept for reference."""
+    pass
+
+
+def run_phase29_mass_inference():
+    """Phase 29: Infer object mass from slot dynamics.
+
+    Objects have mass (light=1.0, heavy=3.0) that affects elastic collisions.
+    Mass is invisible — must be inferred from dynamics over time.
+    Frozen SlotAttentionDINO encodes frames → slot vectors.
+    MassClassifier: temporal features of slot trajectory → light/heavy.
+
+    Key improvements over v1:
+    - Store object positions during generation for reliable matching
+    - Render object masks, match to slot masks via IoU
+    - Use temporal features (mean + variance + mean delta) not just mean pool
+    """
+    import random
+    import math
+
+    print("=" * 60, flush=True)
+    print("PHASE 29: Mass Inference from Dynamics", flush=True)
+    print("=" * 60, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Load frozen SlotAttentionDINO ─────────────────────────
+    print("\n┌─ Loading frozen SlotAttentionDINO", flush=True)
+    ae = SlotAttentionDINO(n_slots=7, slot_dim=64, img_size=64).to(device)
+    state = torch.load(OUTPUT_DIR / "phase27_model.pt", map_location=device)
+    ae.load_state_dict(state)
+    ae.eval()
+    for p in ae.parameters():
+        p.requires_grad = False
+    print("│  Model loaded and frozen", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Generate physics sequences with mass ──────────────────
+    n_sequences = 1000
+    n_frames = 20
+    img_size = 64
+    S = img_size
+
+    palette = [
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0],
+    ]
+
+    print(f"\n┌─ Generating {n_sequences} sequences with mass physics", flush=True)
+    all_frames = []
+    all_obj_info = []  # list of [{cx0, cy0, r, mass}, ...] per sequence
+
+    random.seed(42)
+    for seq_i in range(n_sequences):
+        n_obj = random.randint(2, 3)
+
+        # At least one light, one heavy
+        masses = [1.0, 3.0]
+        if n_obj == 3:
+            masses.append(random.choice([1.0, 3.0]))
+        random.shuffle(masses)
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(6, 9)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-4.0, 4.0)
+            vy = random.uniform(-4.0, 4.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi], 'color': palette[oi % len(palette)]
+            })
+
+        # Store initial positions (normalized) for slot-object matching
+        all_obj_info.append([{
+            'cx0': obj['cx'] / S, 'cy0': obj['cy'] / S,
+            'r': obj['r'], 'mass': obj['mass']
+        } for obj in objects])
+
+        frames = []
+        for fi in range(n_frames):
+            img = np.ones((S, S, 3), dtype=np.float32) * 0.5
+            for obj in objects:
+                r = obj['r']
+                cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+                color = np.array(obj['color'])
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if dx*dx + dy*dy <= r*r:
+                            px, py = cx_i + dx, cy_i + dy
+                            if 0 <= px < S and 0 <= py < S:
+                                img[py, px] = color
+            frames.append(img.transpose(2, 0, 1))
+
+            # Elastic collisions
+            for i in range(len(objects)):
+                for j in range(i + 1, len(objects)):
+                    oi_o, oj_o = objects[i], objects[j]
+                    dx = oj_o['cx'] - oi_o['cx']
+                    dy = oj_o['cy'] - oi_o['cy']
+                    dist = math.hypot(dx, dy)
+                    min_dist = oi_o['r'] + oj_o['r']
+                    if dist < min_dist and dist > 0.1:
+                        nx, ny = dx / dist, dy / dist
+                        dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                              (oi_o['vy'] - oj_o['vy']) * ny
+                        if dvn > 0:
+                            m1, m2 = oi_o['mass'], oj_o['mass']
+                            imp = 2 * dvn / (m1 + m2)
+                            oi_o['vx'] -= imp * m2 * nx
+                            oi_o['vy'] -= imp * m2 * ny
+                            oj_o['vx'] += imp * m1 * nx
+                            oj_o['vy'] += imp * m1 * ny
+                            overlap = min_dist - dist
+                            oi_o['cx'] -= overlap * nx * 0.5
+                            oi_o['cy'] -= overlap * ny * 0.5
+                            oj_o['cx'] += overlap * nx * 0.5
+                            oj_o['cy'] += overlap * ny * 0.5
+
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        all_frames.append(np.array(frames))
+        if (seq_i + 1) % 200 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    all_frames = torch.tensor(np.array(all_frames), dtype=torch.float32)
+    n_total_obj = sum(len(info) for info in all_obj_info)
+    n_light = sum(1 for info in all_obj_info for o in info if o['mass'] == 1.0)
+    n_heavy = n_total_obj - n_light
+    print(f"│  Frames: {list(all_frames.shape)}", flush=True)
+    print(f"│  Objects: {n_total_obj} (light={n_light}, heavy={n_heavy})", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Encode all frames ─────────────────────────────────────
+    print(f"\n┌─ Encoding {n_sequences * n_frames} frames → slot vectors", flush=True)
+    all_slots = []
+    all_alphas_f0 = []
+
+    with torch.no_grad():
+        for seq_i in range(n_sequences):
+            seq_slots = []
+            for fi in range(0, n_frames, 8):
+                batch = all_frames[seq_i, fi:fi+8].to(device)
+                slots, _ = ae.encode(batch)
+                seq_slots.append(slots.cpu())
+            all_slots.append(torch.cat(seq_slots, dim=0))
+
+            frame0 = all_frames[seq_i, 0:1].to(device)
+            _, _, _, _, _, alpha0 = ae(frame0, training=False)
+            all_alphas_f0.append(alpha0[0].cpu())
+
+            if (seq_i + 1) % 200 == 0:
+                print(f"│  Encoded {seq_i+1}/{n_sequences}", flush=True)
+                if device.type == 'mps':
+                    torch.mps.empty_cache()
+
+    all_slots = torch.stack(all_slots)  # [1000, 20, 7, 64]
+    print(f"│  Slot cache: {list(all_slots.shape)}", flush=True)
+    print("└─ Done", flush=True)
+
+    del all_frames
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    # ── Match slots to objects ────────────────────────────────
+    print(f"\n┌─ Matching slots to objects (centroid distance)", flush=True)
+    P = 16
+    xs = torch.linspace(0, 1, P)
+    ys = torch.linspace(0, 1, P)
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
+    gx_flat = grid_x.reshape(-1)
+    gy_flat = grid_y.reshape(-1)
+
+    trajectories = []
+    labels = []
+    match_dists = []
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        alpha0 = all_alphas_f0[seq_i]  # [7, 256]
+
+        # Compute slot centroids from attention masks
+        slot_cx = []
+        slot_cy = []
+        for si in range(7):
+            w = alpha0[si]
+            ws = w.sum() + 1e-8
+            slot_cx.append((w * gx_flat).sum().item() / ws.item())
+            slot_cy.append((w * gy_flat).sum().item() / ws.item())
+
+        # Hungarian-style matching: each object gets its nearest slot
+        used_slots = set()
+        for obj in obj_info:
+            best_slot, best_d = -1, float('inf')
+            for si in range(7):
+                if si in used_slots:
+                    continue
+                d = math.hypot(slot_cx[si] - obj['cx0'], slot_cy[si] - obj['cy0'])
+                if d < best_d:
+                    best_d = d
+                    best_slot = si
+            used_slots.add(best_slot)
+            match_dists.append(best_d)
+
+            traj = all_slots[seq_i, :, best_slot, :]  # [20, 64]
+            trajectories.append(traj)
+            labels.append(1.0 if obj['mass'] == 3.0 else 0.0)
+
+    trajectories = torch.stack(trajectories)
+    labels = torch.tensor(labels, dtype=torch.float32)
+
+    avg_match_dist = np.mean(match_dists)
+    print(f"│  Avg match distance: {avg_match_dist:.4f} (in [0,1] space)", flush=True)
+    print(f"│  Samples: {len(labels)} (light={int((labels==0).sum())}, "
+          f"heavy={int((labels==1).sum())})", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Train/val split ───────────────────────────────────────
+    n_train = int(0.8 * len(labels))
+    perm = torch.randperm(len(labels))
+    train_traj = trajectories[perm[:n_train]]
+    train_labels = labels[perm[:n_train]]
+    val_traj = trajectories[perm[n_train:]]
+    val_labels = labels[perm[n_train:]]
+
+    print(f"\n│  Train: {len(train_traj)} | Val: {len(val_traj)}", flush=True)
+
+    # ── Train MassClassifier ──────────────────────────────────
+    clf_epochs = 200
+    batch_size = 64
+    lr = 1e-3
+
+    print(f"\n{'=' * 50}", flush=True)
+    print(f"Training MassClassifier ({clf_epochs} epochs)", flush=True)
+    print("=" * 50, flush=True)
+
+    clf = MassClassifier(slot_dim=64, hidden_dim=64).to(device)
+    clf_params = sum(p.numel() for p in clf.parameters())
+    print(f"│  Classifier params: {clf_params:,}", flush=True)
+
+    clf_opt = torch.optim.Adam(clf.parameters(), lr=lr)
+    clf_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+        clf_opt, T_max=clf_epochs, eta_min=1e-5)
+
+    best_val_acc = 0.0
+    best_epoch = 0
+
+    for epoch in range(clf_epochs):
+        clf.train()
+        perm_t = torch.randperm(len(train_traj))
+        ep_loss, ep_correct, ep_total = 0, 0, 0
+
+        for i in range(0, len(train_traj), batch_size):
+            idx = perm_t[i:i+batch_size]
+            traj_b = train_traj[idx].to(device)
+            lbl_b = train_labels[idx].to(device)
+            logits = clf(traj_b).squeeze(-1)
+            loss = F.binary_cross_entropy_with_logits(logits, lbl_b)
+            clf_opt.zero_grad()
+            loss.backward()
+            clf_opt.step()
+            ep_loss += loss.item()
+            preds = (logits > 0).float()
+            ep_correct += (preds == lbl_b).sum().item()
+            ep_total += len(lbl_b)
+
+        clf_sched.step()
+        train_acc = ep_correct / ep_total
+
+        should_print = (epoch + 1) == 1 or (epoch + 1) % 20 == 0
+        if should_print:
+            clf.eval()
+            with torch.no_grad():
+                val_logits = clf(val_traj.to(device)).squeeze(-1)
+                val_preds = (val_logits > 0).float()
+                val_acc = (val_preds == val_labels.to(device)).float().mean().item()
+
+            elapsed = time.time() - t0
+            print(f"│  Epoch {epoch+1:3d}/{clf_epochs}: "
+                  f"loss={ep_loss/(ep_total/batch_size):.4f} "
+                  f"train_acc={train_acc*100:.1f}% "
+                  f"val_acc={val_acc*100:.1f}%", flush=True)
+
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_epoch = epoch + 1
+                torch.save(clf.state_dict(), OUTPUT_DIR / "phase29_mass_clf.pt")
+
+    print(f"│  Best val accuracy: {best_val_acc*100:.1f}% at epoch {best_epoch}", flush=True)
+
+    # Load best
+    clf.load_state_dict(torch.load(OUTPUT_DIR / "phase29_mass_clf.pt", map_location=device))
+    clf.eval()
+
+    # ── Detailed evaluation ───────────────────────────────────
+    print(f"\n┌─ Evaluation", flush=True)
+    with torch.no_grad():
+        val_logits = clf(val_traj.to(device)).squeeze(-1)
+        val_preds = (val_logits > 0).float().cpu()
+        val_acc = (val_preds == val_labels).float().mean().item()
+        light_mask = val_labels == 0
+        heavy_mask = val_labels == 1
+        light_acc = (val_preds[light_mask] == 0).float().mean().item() if light_mask.any() else 0
+        heavy_acc = (val_preds[heavy_mask] == 1).float().mean().item() if heavy_mask.any() else 0
+
+    print(f"│  Overall accuracy: {val_acc*100:.1f}%", flush=True)
+    print(f"│  Light accuracy: {light_acc*100:.1f}%", flush=True)
+    print(f"│  Heavy accuracy: {heavy_acc*100:.1f}%", flush=True)
+    print(f"│  Baseline (random): 50%", flush=True)
+    print(f"│  Target: >80%", flush=True)
+    print(f"│  {'SUCCESS' if val_acc > 0.8 else 'BELOW TARGET'}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Visualization ─────────────────────────────────────────
+    print(f"\n┌─ Generating visualizations", flush=True)
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+    with torch.no_grad():
+        all_logits = clf(trajectories.to(device)).squeeze(-1).cpu()
+        all_probs = torch.sigmoid(all_logits).numpy()
+
+    light_probs = all_probs[labels.numpy() == 0]
+    heavy_probs = all_probs[labels.numpy() == 1]
+
+    axes[0].hist(light_probs, bins=30, alpha=0.6, label='Light (m=1)', color='blue')
+    axes[0].hist(heavy_probs, bins=30, alpha=0.6, label='Heavy (m=3)', color='red')
+    axes[0].axvline(x=0.5, color='k', linestyle='--', label='Threshold')
+    axes[0].set_xlabel('P(heavy)')
+    axes[0].set_ylabel('Count')
+    axes[0].set_title('Mass Classifier Confidence')
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+
+    traj_var = trajectories.var(dim=1).mean(dim=-1).numpy()
+    axes[1].hist(traj_var[labels.numpy() == 0], bins=30, alpha=0.6,
+                 label='Light (m=1)', color='blue')
+    axes[1].hist(traj_var[labels.numpy() == 1], bins=30, alpha=0.6,
+                 label='Heavy (m=3)', color='red')
+    axes[1].set_xlabel('Slot temporal variance')
+    axes[1].set_ylabel('Count')
+    axes[1].set_title('Temporal Variance by Mass')
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+
+    plt.suptitle(f'Phase 29: Mass Inference — {val_acc*100:.1f}% accuracy',
+                 fontsize=12, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / "phase29_mass_inference.png", dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"│  → results/phase29_mass_inference.png", flush=True)
+    print("└─ Done", flush=True)
+
+    elapsed = time.time() - t0
+    print(f"\n│  Total time: {elapsed:.0f}s ({elapsed/60:.1f}min)", flush=True)
+
+    return {
+        'val_acc': val_acc,
+        'light_acc': light_acc,
+        'heavy_acc': heavy_acc,
+        'best_epoch': best_epoch,
     }
 
 

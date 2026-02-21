@@ -2248,6 +2248,42 @@ class SlotPredictor(nn.Module):
         return pred_flat.reshape(B, self.n_slots, self.slot_dim)
 
 
+class MassClassifier(nn.Module):
+    """Phase 29: Classify object mass from slot trajectory over time.
+
+    Takes slot vectors for a single object across T frames.
+    Computes temporal features: mean, variance, and mean abs delta.
+    Classifies light (m=1) vs heavy (m=3).
+
+    Input: [B, T, slot_dim] — one object's slot across T frames
+    Output: [B, 1] — logit (>0 = heavy)
+    """
+
+    def __init__(self, slot_dim=64, hidden_dim=64):
+        super().__init__()
+        # 3 temporal features × slot_dim
+        self.net = nn.Sequential(
+            nn.Linear(slot_dim * 3, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1),
+        )
+
+    def forward(self, slot_trajectory):
+        """
+        Args:
+            slot_trajectory: [B, T, slot_dim]
+        Returns:
+            logit: [B, 1]
+        """
+        mean = slot_trajectory.mean(dim=1)  # [B, D]
+        var = slot_trajectory.var(dim=1)    # [B, D]
+        deltas = (slot_trajectory[:, 1:] - slot_trajectory[:, :-1]).abs().mean(dim=1)  # [B, D]
+        features = torch.cat([mean, var, deltas], dim=-1)  # [B, 3*D]
+        return self.net(features)
+
+
 def count_params(model):
     return sum(p.numel() for p in model.parameters())
 

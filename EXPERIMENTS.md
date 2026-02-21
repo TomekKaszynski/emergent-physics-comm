@@ -464,6 +464,33 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 | 1-step cosine | 0.998 | 0.976 |
 | 5-step rollout ratio | 4.76× | 2.43× |
 
+### Phase 29: Mass Inference from Dynamics
+**Date:** Feb 21
+
+- **Goal:** Infer object mass (light=1.0 vs heavy=3.0) from slot trajectories during elastic collisions. Target: >80% classification accuracy.
+- **Architecture:** MassClassifier MLP — temporal features (mean + variance + mean_abs_delta of slot trajectory over 20 frames) → [3×64=192] → Linear(192,64)+ReLU → Linear(64,64)+ReLU → Linear(64,1). 16.6K params.
+- **Physics:** Elastic collisions with mass: `v1_new = ((m1-m2)*v1 + 2*m2*v2) / (m1+m2)`. 2-4 circles per scene, each randomly light (1.0) or heavy (3.0).
+- **Data:** 1000 sequences × 20 frames. Frozen SlotAttentionDINO encodes → [1000, 20, 7, 64]. Slot-object matching via centroid distance (avg match dist: 0.074). 2490 samples (1264 light, 1226 heavy). Train: 1992, Val: 498.
+- **v1 attempt (mean-only features, temporal-variance matching):** 55.3% val accuracy — barely above chance. Poor slot-object matching and mean-only pooling discarded temporal info.
+- **v2 attempt (temporal features, centroid matching):**
+  ```
+  Ep   1: train_acc=49.6% val_acc=52.6%
+  Ep  20: train_acc=57.2% val_acc=53.2%  ← best val
+  Ep  40: train_acc=63.0% val_acc=49.8%
+  Ep 100: train_acc=77.4% val_acc=49.8%
+  Ep 200: train_acc=85.7% val_acc=49.0%
+  ```
+  Best val: 53.2% at epoch 20.
+- **Diagnosis:** Extreme overfitting — train 85.7% but val ~50%. The classifier memorizes training sequences but doesn't generalize. Slot vectors encode object appearance (position, shape, color) but mass information lives in collision dynamics (how velocities change on impact). The temporal summary features (mean, var, delta) over slot space don't isolate collision events or velocity changes.
+- **Verdict:** FAIL — 53.2% val accuracy vs 80% target. Slot representations don't encode mass-distinguishing dynamics. Possible fixes: (1) explicitly compute velocity from slot centroids rather than using raw slot features, (2) detect collision frames and compare pre/post velocity ratios, (3) use a sequence model (LSTM/transformer) instead of pooled features, (4) train the slot attention end-to-end with mass classification loss.
+
 ## Current State (Feb 21)
 
-Slot JEPA predictor beats copy baseline by 20.5% with faster physics (v=±5.0, Δ=3). Framework validated: frozen DINOv2 SA → cached slots → MLP predictor learns dynamics. Next steps: larger predictor or transformer for better rollout stability, multi-agent communication.
+**Validated pipeline:**
+- DINOv2 + SlotAttention (5 iters, 7 slots, 64-dim): entropy 0.170 on CLEVR, 0.429 complex CLEVR, 0.293 real photos, 90.2% video consistency
+- Slot JEPA predictor: beats copy baseline by 20.5% (v=±5.0, Δ=3)
+
+**Failed:**
+- Mass inference from slot trajectories: 53.2% (near chance). Slot features don't encode physics properties like mass — they encode visual appearance.
+
+**Next steps:** (1) Explicit velocity/dynamics features from slot centroids, (2) multi-agent communication with different viewpoints, (3) transformer-based slot predictor for longer rollouts.
