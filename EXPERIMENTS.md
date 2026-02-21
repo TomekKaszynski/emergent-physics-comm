@@ -525,6 +525,34 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Diagnosis:** Signal exists (67.7% >> 50%) but is weak. Even with perfect ground-truth positions, the MLP only reaches 67.7%. Root causes: (1) only 1.7 collisions per sequence on avg — many objects never collide and carry zero mass info, (2) 20 frames is too short for enough collision events, (3) wall bounces don't reveal mass (all masses bounce identically off walls). The overfitting gap is much smaller (82% vs 68%) than Phase 29/29b, confirming ground-truth positions are cleaner signal.
 - **Verdict:** PARTIAL — confirms mass signal exists but is weak. The task itself is hard with current physics config (sparse collisions, short sequences). To reach >80%, need: more collisions (faster objects, smaller arena, more objects) or longer sequences.
 
+### Phase 29d: Dense Collision Physics — GT Positions
+**Date:** Feb 21
+
+- **Goal:** Force mass signal with denser collisions. GT positions, no DINOv2. Target: >85% val accuracy, 5+ avg collisions.
+- **Physics changes vs 29c:**
+  | Parameter | 29c | 29d |
+  |-----------|-----|-----|
+  | Frames | 20 | 40 |
+  | Objects | 2-3 | 3-4 |
+  | Radius | 6-9 | 7-10 |
+  | Velocity | ±4 | ±7 |
+- **Collision statistics:**
+  - Sequences with ≥1 collision: 1000/1000 (100%)
+  - Avg collisions per sequence: 16.0 (target was 5+)
+  - Distribution: 0=0, 1=0, 2=2, 3-5=34, 6+=964
+- **Data:** 3480 samples (1730 light, 1750 heavy). Train: 2784, Val: 696.
+- **Result:**
+  ```
+  Ep   1: train_acc=50.1% val_acc=50.7%
+  Ep  20: train_acc=86.9% val_acc=76.4%  ← best val
+  Ep  40: train_acc=94.0% val_acc=76.4%
+  Ep 100: train_acc=99.6% val_acc=74.3%
+  Ep 200: train_acc=99.8% val_acc=74.0%
+  ```
+  Best val: 76.4% at epoch 20. Light: 65.8%, Heavy: 86.6%.
+- **Diagnosis:** Collision density is excellent (16 avg). Signal is stronger than 29c (76.4% vs 67.7%). But massive overfitting: train 99.8% vs val 76.4%. The MLP with 19K params memorizes the 2784 training trajectories (each a unique path through 234-dim space) but can't generalize to unseen trajectories. The flattened position/velocity/acceleration features don't give the MLP an inductive bias for isolating collision events — it sees raw coordinates, not physical interactions. Needs: (1) regularization (dropout, weight decay), (2) collision-aware features (detect collision frames, compute velocity ratio), or (3) more training data.
+- **Verdict:** BELOW TARGET — 76.4% vs 85%. Collisions are dense enough but the classifier architecture can't generalize. Did not proceed to slot centroids.
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**
@@ -534,7 +562,8 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 **Mass inference (Phase 29 series):**
 - Phase 29: Slot vectors → 53.2% (appearance, not dynamics)
 - Phase 29b: Slot centroids → 51.2% (16×16 grid too coarse)
-- Phase 29c: Ground-truth positions → 67.7% (signal exists but sparse collisions)
-- Conclusion: task needs denser collisions to be solvable, then perception can be addressed
+- Phase 29c: GT positions, sparse collisions → 67.7%
+- Phase 29d: GT positions, dense collisions (16 avg) → 76.4% (overfitting: train 99.8%)
+- Conclusion: collision density solved, but MLP classifier overfits. Needs regularization or collision-aware features.
 
-**Next steps:** (1) Make mass task easier: faster objects + longer sequences + more collisions, then retry with GT and slot features, (2) multi-agent communication, (3) transformer slot predictor.
+**Next steps:** (1) Add dropout/weight decay to classifier, or use collision-aware features, (2) multi-agent communication, (3) transformer slot predictor.
