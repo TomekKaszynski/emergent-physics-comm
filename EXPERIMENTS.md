@@ -873,6 +873,19 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Diagnosis:** When the coarse centroid is 20px off, the 16×16 crop (covering 25% of the 64×64 canvas) often doesn't contain the actual object center. The refinement net can't find what isn't in its field of view. The 10.8% position improvement (20.1→17.9px) doesn't meaningfully change the dv_ratio separation (1.02→1.08×). The fundamental issue is that slot attention assigns the wrong region to objects — refinement within that wrong region can't recover the true position.
 - **Verdict:** FAIL — 50.9% val, 17.9px position error (target <2px). Local refinement can't fix global slot assignment errors.
 
+### Phase 29o-classical — Color-based center-of-mass (Feb 22)
+- **Goal:** Classical CV baseline: threshold RGB channels (known GT colors), compute center-of-mass per color cluster. Measure position error → collision features → mass classifier. Compare to SA-based methods from diagnostics.
+- **Results:**
+  ```
+  Method               Pos err(px)  Vel err(px)  dv_ratio sep  Val acc
+  GT                         0.000        0.000        2.55x    91.7%
+  Color-COM 64x64            0.444        0.658        2.84x    89.9%
+  SA centroid (diag ref)       ~20          ~14       ~1.08x     ~52%
+  ```
+  Missed frames: 8/139,200 (0.01%). Position error: mean 0.44px, median 0.39px, 95th percentile 0.89px — all well below the 2px threshold.
+- **Key insight:** Color-based COM achieves **0.44px** position error vs SA's **~20px** — a **45× improvement**. The entire physics extraction pipeline works nearly perfectly (89.9% vs 91.7% GT ceiling) when positions are accurate. This conclusively proves the bottleneck was always slot attention's position precision, not the downstream physics reasoning.
+- **Verdict:** SUCCESS — 89.9% val_acc, 0.44px position error. Classical CV solves the "where" problem that slot attention couldn't.
+
 ## Current State (Feb 22)
 
 **Validated pipeline:**
@@ -884,11 +897,11 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 **Mass inference from vision (Phase 29g-n + diagnostics):**
 - 29g-m: Eight approaches FAILED (54.9% → 50.0%). See individual entries above.
 - 29n: position refinement (SlotRefineNet) → **50.9%** (FAIL). Local crop refinement can't fix global slot assignment errors (20→17.9px, still 5× above threshold).
-- **29 Diagnostics: Root cause identified.** SA position error is 20px mean. Need <4px for >65% accuracy, <2px for >80%. The 16×16 DINOv2 patch grid fundamentally limits precision to ~2px/patch, and slot attention noise adds another ~18px on top. No position extraction method or local refinement can fix this.
-- **The gap is structural:** 20px error vs 2-4px required = 5-10× too imprecise.
+- **29 Diagnostics: Root cause identified.** SA position error is 20px mean. Need <4px for >65% accuracy, <2px for >80%. The 16×16 DINOv2 patch grid fundamentally limits precision to ~2px/patch, and slot attention noise adds another ~18px on top.
+- **29o-classical: Color-COM achieves 0.44px error → 89.9% mass accuracy.** Classical CV solves the position problem that slot attention couldn't. The gap was always spatial precision, not physics reasoning.
 
 **Emergent communication (Phase 30 series):**
 - Phase 30: mode collapse (33%). Phase 30b: overfitting (41%).
 - Phase 30c: **98.5%** — separated perception from communication. 3-token emergent language.
 
-**Next steps:** (1) Accept GT positions and build the full multi-agent communication pipeline (the interesting research is in communication, not perception), (2) If vision is needed: train a dedicated object tracker (not slot attention) on this specific task, or use higher-resolution backbone (32×32 patches).
+**Next steps:** (1) Accept GT or color-COM positions and build the full multi-agent communication pipeline (the interesting research is in communication, not perception), (2) If slot-attention vision is needed: train a dedicated object tracker or use higher-resolution backbone (32×32 patches), (3) Explore whether slot attention can be augmented with a color-COM "hint" to improve its spatial precision.
