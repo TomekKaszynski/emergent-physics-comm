@@ -853,6 +853,13 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
   4. **All three SA position methods are equivalent.** The position error is dominated by slot assignment noise (which object does each slot track?), not the centroid extraction method.
 - **Verdict:** The vision→physics gap is quantitatively understood. SA position error (20px) is 5-10× above the noise tolerance threshold (2-4px). No downstream feature engineering can overcome this.
 
+### Phase 29 Position Error Over Time (Feb 21)
+- **Goal:** Does SA tracking drift over time, or is error constant?
+- **Method:** soft_com_64x64 positions vs GT, per timestep t=0..39.
+- **Results:** Error starts at **8.6px** (t=0), rises to **~20px** by t=10, then plateaus at **~22px** for t=10-39.
+- **Interpretation:** Even at t=0 (the matching frame), error is 8.6px — already above the 4px threshold for >65% accuracy. This is the baseline slot-to-object assignment error: the initial centroid match is imprecise because slot attention masks don't tightly wrap single objects. The additional drift from 8.6→22px (frames 0-10) reflects slot swaps and tracking failures as objects move. After t=10 the error saturates — it's essentially random which slot tracks which object at that point.
+- **Key insight:** The 8.6px t=0 error means even perfect temporal tracking wouldn't be enough — the initial object localization through slot attention is already 2× above the 4px threshold. The problem is slot attention's spatial precision, not temporal drift.
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**

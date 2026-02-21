@@ -13594,6 +13594,302 @@ def run_phase30_emergent_comm():
     }
 
 
+def run_phase29_position_error_over_time():
+    """Phase 29: Position error over time — does SA tracking drift?
+
+    Computes mean position error (soft_com_64x64 vs GT) per timestep t=0..39.
+    Shows whether SA tracks well initially but drifts, or is consistently noisy.
+    """
+    import random
+    import math
+
+    print("=" * 60, flush=True)
+    print("PHASE 29: Position Error Over Time", flush=True)
+    print("=" * 60, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Generate sequences (same as 29f) ──────────────────────
+    n_sequences = 1000
+    n_frames = 40
+    S = 64
+
+    palette = [
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0],
+    ]
+
+    print(f"\n┌─ Generating {n_sequences} sequences (3 obj, 40 frames, v=±7)", flush=True)
+    all_frames = []
+    all_obj_info = []
+    all_gt_positions = []
+
+    random.seed(42)
+    for seq_i in range(n_sequences):
+        n_obj = random.randint(3, 4)
+        masses = [1.0, 3.0]
+        for _ in range(n_obj - 2):
+            masses.append(random.choice([1.0, 3.0]))
+        random.shuffle(masses)
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(7, 10)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-7.0, 7.0)
+            vy = random.uniform(-7.0, 7.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi], 'color': palette[oi % len(palette)]
+            })
+
+        all_obj_info.append([{
+            'cx0': obj['cx'] / S, 'cy0': obj['cy'] / S,
+            'r': obj['r'], 'mass': obj['mass']
+        } for obj in objects])
+
+        obj_positions = [[None] * n_frames for _ in range(n_obj)]
+
+        frames = []
+        for fi in range(n_frames):
+            for oi in range(n_obj):
+                obj_positions[oi][fi] = [objects[oi]['cx'] / S, objects[oi]['cy'] / S]
+
+            img = np.ones((S, S, 3), dtype=np.float32) * 0.5
+            for obj in objects:
+                r = obj['r']
+                cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+                color = np.array(obj['color'])
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if dx*dx + dy*dy <= r*r:
+                            px, py = cx_i + dx, cy_i + dy
+                            if 0 <= px < S and 0 <= py < S:
+                                img[py, px] = color
+            frames.append(img.transpose(2, 0, 1))
+
+            # Elastic collisions
+            for i in range(n_obj):
+                for j in range(i + 1, n_obj):
+                    oi_o, oj_o = objects[i], objects[j]
+                    dx_c = oj_o['cx'] - oi_o['cx']
+                    dy_c = oj_o['cy'] - oi_o['cy']
+                    dist = math.hypot(dx_c, dy_c)
+                    min_dist = oi_o['r'] + oj_o['r']
+                    if dist < min_dist and dist > 0.1:
+                        nx, ny = dx_c / dist, dy_c / dist
+                        dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                              (oi_o['vy'] - oj_o['vy']) * ny
+                        if dvn > 0:
+                            m1, m2 = oi_o['mass'], oj_o['mass']
+                            imp = 2 * dvn / (m1 + m2)
+                            oi_o['vx'] -= imp * m2 * nx
+                            oi_o['vy'] -= imp * m2 * ny
+                            oj_o['vx'] += imp * m1 * nx
+                            oj_o['vy'] += imp * m1 * ny
+                            overlap = min_dist - dist
+                            oi_o['cx'] -= overlap * nx * 0.5
+                            oi_o['cy'] -= overlap * ny * 0.5
+                            oj_o['cx'] += overlap * nx * 0.5
+                            oj_o['cy'] += overlap * ny * 0.5
+
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        all_frames.append(np.array(frames))
+        all_gt_positions.append(obj_positions)
+
+        if (seq_i + 1) % 200 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    all_frames_t = torch.tensor(np.array(all_frames), dtype=torch.float32)
+    n_total_obj = sum(len(info) for info in all_obj_info)
+    print(f"│  Objects: {n_total_obj}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Encode → slot masks ───────────────────────────────────
+    print(f"\n┌─ Loading frozen SlotAttentionDINO", flush=True)
+    ae = SlotAttentionDINO(n_slots=7, slot_dim=64, img_size=64).to(device)
+    state = torch.load(OUTPUT_DIR / "phase27_model.pt", map_location=device)
+    ae.load_state_dict(state)
+    ae.eval()
+    for p in ae.parameters():
+        p.requires_grad = False
+    print("│  Model loaded", flush=True)
+    print("└─ Done", flush=True)
+
+    P = 16
+    xs_grid = torch.linspace(0, 1, P)
+    ys_grid = torch.linspace(0, 1, P)
+    grid_y_16, grid_x_16 = torch.meshgrid(ys_grid, xs_grid, indexing='ij')
+    gx16 = grid_x_16.reshape(-1).to(device)
+    gy16 = grid_y_16.reshape(-1).to(device)
+
+    xs64 = torch.linspace(0, 1, S)
+    ys64 = torch.linspace(0, 1, S)
+    grid_y_64, grid_x_64 = torch.meshgrid(ys64, xs64, indexing='ij')
+    gx64 = grid_x_64  # [64, 64]
+    gy64 = grid_y_64
+
+    print(f"\n┌─ Encoding {n_sequences * n_frames} frames → slot masks", flush=True)
+
+    all_alpha = []  # [1000, 40, 7, 256]
+
+    with torch.no_grad():
+        for seq_i in range(n_sequences):
+            seq_alpha = []
+            for fi in range(0, n_frames, 8):
+                batch = all_frames_t[seq_i, fi:fi+8].to(device)
+                slots, _ = ae.encode(batch)
+                _, alpha = ae.decode(slots)  # [B, 7, 256]
+                seq_alpha.append(alpha.cpu())
+            all_alpha.append(torch.cat(seq_alpha, dim=0))
+
+            if (seq_i + 1) % 200 == 0:
+                print(f"│  Encoded {seq_i+1}/{n_sequences}", flush=True)
+                if device.type == 'mps':
+                    torch.mps.empty_cache()
+
+    all_alpha = torch.stack(all_alpha)  # [1000, 40, 7, 256]
+    print(f"│  Alpha cache: {list(all_alpha.shape)}", flush=True)
+    print("└─ Done", flush=True)
+
+    del all_frames_t
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    # ── Match slots to objects (frame-0 centroids) ────────────
+    print(f"\n┌─ Matching slots to objects", flush=True)
+
+    slot_assignments = []
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        alpha_f0 = all_alpha[seq_i, 0]  # [7, 256]
+        n_obj = len(obj_info)
+
+        ws = alpha_f0.sum(dim=-1, keepdim=True) + 1e-8
+        cx = (alpha_f0 * gx16.cpu()).sum(dim=-1) / ws.squeeze(-1)
+        cy = (alpha_f0 * gy16.cpu()).sum(dim=-1) / ws.squeeze(-1)
+
+        used_slots = set()
+        seq_slots = []
+        for obj in obj_info:
+            best_slot, best_d = -1, float('inf')
+            for si in range(7):
+                if si in used_slots:
+                    continue
+                d = math.hypot(cx[si].item() - obj['cx0'], cy[si].item() - obj['cy0'])
+                if d < best_d:
+                    best_d = d
+                    best_slot = si
+            used_slots.add(best_slot)
+            seq_slots.append(best_slot)
+
+        slot_assignments.append(seq_slots)
+
+    print("└─ Done", flush=True)
+
+    # ── Compute soft_com_64x64 positions & per-timestep error ─
+    print(f"\n┌─ Computing soft_com_64x64 positions + per-timestep error", flush=True)
+
+    # per_timestep_errors[t] = list of errors in pixels
+    per_timestep_errors = [[] for _ in range(n_frames)]
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        n_obj = len(obj_info)
+        seq_slots = slot_assignments[seq_i]
+
+        # Upsample masks for this sequence
+        alpha_2d = all_alpha[seq_i].reshape(n_frames, 7, P, P)  # [40, 7, 16, 16]
+        alpha_up = F.interpolate(alpha_2d, size=(S, S), mode='bilinear',
+                                 align_corners=False)  # [40, 7, 64, 64]
+
+        for oi in range(n_obj):
+            si = seq_slots[oi]
+            soft_mask = alpha_up[:, si, :, :]  # [40, 64, 64]
+            sm_sum = soft_mask.sum(dim=(-2, -1), keepdim=True) + 1e-8
+            cx_soft = (soft_mask * gx64).sum(dim=(-2, -1)) / sm_sum.squeeze(-1).squeeze(-1)
+            cy_soft = (soft_mask * gy64).sum(dim=(-2, -1)) / sm_sum.squeeze(-1).squeeze(-1)
+
+            gt_pos = torch.tensor(all_gt_positions[seq_i][oi], dtype=torch.float32)  # [40, 2]
+
+            for t in range(n_frames):
+                err_px = math.hypot(
+                    (cx_soft[t].item() - gt_pos[t, 0].item()) * S,
+                    (cy_soft[t].item() - gt_pos[t, 1].item()) * S)
+                per_timestep_errors[t].append(err_px)
+
+        if (seq_i + 1) % 200 == 0:
+            print(f"│  Processed {seq_i+1}/{n_sequences}", flush=True)
+
+    # Compute stats per timestep
+    mean_errors = [np.mean(per_timestep_errors[t]) for t in range(n_frames)]
+    median_errors = [np.median(per_timestep_errors[t]) for t in range(n_frames)]
+    p90_errors = [np.percentile(per_timestep_errors[t], 90) for t in range(n_frames)]
+
+    print(f"│", flush=True)
+    print(f"│  Per-timestep position error (pixels):", flush=True)
+    print(f"│  {'t':>3s}  {'Mean':>8s}  {'Median':>8s}  {'90th':>8s}", flush=True)
+    print(f"│  {'-'*32}", flush=True)
+    for t in range(n_frames):
+        print(f"│  {t:3d}  {mean_errors[t]:8.2f}  {median_errors[t]:8.2f}  "
+              f"{p90_errors[t]:8.2f}", flush=True)
+    print(f"│", flush=True)
+    print(f"│  Overall: mean={np.mean(mean_errors):.2f}, "
+          f"t=0: {mean_errors[0]:.2f}, t=39: {mean_errors[39]:.2f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Plot ──────────────────────────────────────────────────
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+    ax.plot(range(n_frames), mean_errors, 'b-o', markersize=4, linewidth=2, label='Mean')
+    ax.plot(range(n_frames), median_errors, 'g--s', markersize=3, linewidth=1.5, label='Median')
+    ax.fill_between(range(n_frames), median_errors, p90_errors, alpha=0.15, color='blue',
+                    label='Median→90th')
+    ax.axhline(y=2, color='green', linestyle=':', alpha=0.7, label='2px (>80% acc)')
+    ax.axhline(y=4, color='orange', linestyle=':', alpha=0.7, label='4px (>65% acc)')
+    ax.set_xlabel('Timestep', fontsize=12)
+    ax.set_ylabel('Position error (pixels)', fontsize=12)
+    ax.set_title('SA Position Error Over Time (soft_com_64x64 vs GT)', fontsize=13)
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(-0.5, 39.5)
+    ax.set_ylim(0, max(p90_errors) * 1.1)
+
+    plt.tight_layout()
+    plt.savefig('results/phase29_pos_error_time.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\nSaved: results/phase29_pos_error_time.png", flush=True)
+
+    elapsed = time.time() - t0
+    print(f"Total time: {elapsed:.0f}s", flush=True)
+
+    return {
+        'mean_errors': mean_errors,
+        'median_errors': median_errors,
+        'p90_errors': p90_errors,
+    }
+
+
 def run_phase29_diagnostics():
     """Phase 29 Diagnostics: Comprehensive analysis of the vision→physics gap.
 
