@@ -2249,38 +2249,42 @@ class SlotPredictor(nn.Module):
 
 
 class MassClassifier(nn.Module):
-    """Phase 29: Classify object mass from slot trajectory over time.
+    """Phase 29b: Classify object mass from centroid trajectory.
 
-    Takes slot vectors for a single object across T frames.
-    Computes temporal features: mean, variance, and mean abs delta.
+    Takes 2D centroid positions for a single object across T frames.
+    Computes velocity and acceleration from position deltas.
     Classifies light (m=1) vs heavy (m=3).
 
-    Input: [B, T, slot_dim] — one object's slot across T frames
+    Input: [B, T, 2] — centroid positions over time
     Output: [B, 1] — logit (>0 = heavy)
     """
 
-    def __init__(self, slot_dim=64, hidden_dim=64):
+    def __init__(self, n_frames=20, hidden_dim=64):
         super().__init__()
-        # 3 temporal features × slot_dim
+        # positions T*2 + velocities (T-1)*2 + accelerations (T-2)*2
+        input_dim = n_frames * 2 + (n_frames - 1) * 2 + (n_frames - 2) * 2
         self.net = nn.Sequential(
-            nn.Linear(slot_dim * 3, hidden_dim),
+            nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, 1),
         )
 
-    def forward(self, slot_trajectory):
+    def forward(self, positions):
         """
         Args:
-            slot_trajectory: [B, T, slot_dim]
+            positions: [B, T, 2] — centroid positions over time
         Returns:
             logit: [B, 1]
         """
-        mean = slot_trajectory.mean(dim=1)  # [B, D]
-        var = slot_trajectory.var(dim=1)    # [B, D]
-        deltas = (slot_trajectory[:, 1:] - slot_trajectory[:, :-1]).abs().mean(dim=1)  # [B, D]
-        features = torch.cat([mean, var, deltas], dim=-1)  # [B, 3*D]
+        velocities = positions[:, 1:] - positions[:, :-1]       # [B, T-1, 2]
+        accelerations = velocities[:, 1:] - velocities[:, :-1]  # [B, T-2, 2]
+        features = torch.cat([
+            positions.flatten(1),       # [B, T*2]
+            velocities.flatten(1),      # [B, (T-1)*2]
+            accelerations.flatten(1),   # [B, (T-2)*2]
+        ], dim=-1)  # [B, 114]
         return self.net(features)
 
 

@@ -11763,7 +11763,7 @@ def run_phase29_mass_inference():
     import math
 
     print("=" * 60, flush=True)
-    print("PHASE 29: Mass Inference from Dynamics", flush=True)
+    print("PHASE 29b: Mass Inference from Centroid Trajectories", flush=True)
     print("=" * 60, flush=True)
     t0 = time.time()
 
@@ -11890,31 +11890,41 @@ def run_phase29_mass_inference():
     print(f"│  Objects: {n_total_obj} (light={n_light}, heavy={n_heavy})", flush=True)
     print("└─ Done", flush=True)
 
-    # ── Encode all frames ─────────────────────────────────────
-    print(f"\n┌─ Encoding {n_sequences * n_frames} frames → slot vectors", flush=True)
-    all_slots = []
-    all_alphas_f0 = []
+    # ── Encode all frames → centroids ────────────────────────
+    print(f"\n┌─ Encoding {n_sequences * n_frames} frames → slot centroids", flush=True)
+
+    # Grid for centroid computation (16x16 DINOv2 patches)
+    P = 16
+    xs = torch.linspace(0, 1, P)
+    ys = torch.linspace(0, 1, P)
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
+    gx_flat = grid_x.reshape(-1).to(device)  # [256]
+    gy_flat = grid_y.reshape(-1).to(device)  # [256]
+
+    all_centroids = []  # will be [1000, 20, 7, 2]
 
     with torch.no_grad():
         for seq_i in range(n_sequences):
-            seq_slots = []
+            seq_centroids = []
             for fi in range(0, n_frames, 8):
                 batch = all_frames[seq_i, fi:fi+8].to(device)
                 slots, _ = ae.encode(batch)
-                seq_slots.append(slots.cpu())
-            all_slots.append(torch.cat(seq_slots, dim=0))
-
-            frame0 = all_frames[seq_i, 0:1].to(device)
-            _, _, _, _, _, alpha0 = ae(frame0, training=False)
-            all_alphas_f0.append(alpha0[0].cpu())
+                _, alpha = ae.decode(slots)  # [B, 7, 256]
+                # Compute centroids from attention masks
+                ws = alpha.sum(dim=-1, keepdim=True) + 1e-8  # [B, 7, 1]
+                cx = (alpha * gx_flat).sum(dim=-1) / ws.squeeze(-1)  # [B, 7]
+                cy = (alpha * gy_flat).sum(dim=-1) / ws.squeeze(-1)  # [B, 7]
+                centroids = torch.stack([cx, cy], dim=-1)  # [B, 7, 2]
+                seq_centroids.append(centroids.cpu())
+            all_centroids.append(torch.cat(seq_centroids, dim=0))
 
             if (seq_i + 1) % 200 == 0:
                 print(f"│  Encoded {seq_i+1}/{n_sequences}", flush=True)
                 if device.type == 'mps':
                     torch.mps.empty_cache()
 
-    all_slots = torch.stack(all_slots)  # [1000, 20, 7, 64]
-    print(f"│  Slot cache: {list(all_slots.shape)}", flush=True)
+    all_centroids = torch.stack(all_centroids)  # [1000, 20, 7, 2]
+    print(f"│  Centroid cache: {list(all_centroids.shape)}", flush=True)
     print("└─ Done", flush=True)
 
     del all_frames
@@ -11923,12 +11933,6 @@ def run_phase29_mass_inference():
 
     # ── Match slots to objects ────────────────────────────────
     print(f"\n┌─ Matching slots to objects (centroid distance)", flush=True)
-    P = 16
-    xs = torch.linspace(0, 1, P)
-    ys = torch.linspace(0, 1, P)
-    grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
-    gx_flat = grid_x.reshape(-1)
-    gy_flat = grid_y.reshape(-1)
 
     trajectories = []
     labels = []
@@ -11936,32 +11940,25 @@ def run_phase29_mass_inference():
 
     for seq_i in range(n_sequences):
         obj_info = all_obj_info[seq_i]
-        alpha0 = all_alphas_f0[seq_i]  # [7, 256]
+        frame0_centroids = all_centroids[seq_i, 0]  # [7, 2]
 
-        # Compute slot centroids from attention masks
-        slot_cx = []
-        slot_cy = []
-        for si in range(7):
-            w = alpha0[si]
-            ws = w.sum() + 1e-8
-            slot_cx.append((w * gx_flat).sum().item() / ws.item())
-            slot_cy.append((w * gy_flat).sum().item() / ws.item())
-
-        # Hungarian-style matching: each object gets its nearest slot
+        # Greedy matching: each object gets its nearest slot
         used_slots = set()
         for obj in obj_info:
             best_slot, best_d = -1, float('inf')
             for si in range(7):
                 if si in used_slots:
                     continue
-                d = math.hypot(slot_cx[si] - obj['cx0'], slot_cy[si] - obj['cy0'])
+                d = math.hypot(
+                    frame0_centroids[si, 0].item() - obj['cx0'],
+                    frame0_centroids[si, 1].item() - obj['cy0'])
                 if d < best_d:
                     best_d = d
                     best_slot = si
             used_slots.add(best_slot)
             match_dists.append(best_d)
 
-            traj = all_slots[seq_i, :, best_slot, :]  # [20, 64]
+            traj = all_centroids[seq_i, :, best_slot, :]  # [20, 2]
             trajectories.append(traj)
             labels.append(1.0 if obj['mass'] == 3.0 else 0.0)
 
@@ -11993,7 +11990,7 @@ def run_phase29_mass_inference():
     print(f"Training MassClassifier ({clf_epochs} epochs)", flush=True)
     print("=" * 50, flush=True)
 
-    clf = MassClassifier(slot_dim=64, hidden_dim=64).to(device)
+    clf = MassClassifier(n_frames=n_frames, hidden_dim=64).to(device)
     clf_params = sum(p.numel() for p in clf.parameters())
     print(f"│  Classifier params: {clf_params:,}", flush=True)
 
@@ -12094,14 +12091,16 @@ def run_phase29_mass_inference():
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
 
-    traj_var = trajectories.var(dim=1).mean(dim=-1).numpy()
-    axes[1].hist(traj_var[labels.numpy() == 0], bins=30, alpha=0.6,
+    # Speed = magnitude of velocity vectors, averaged over time
+    vels = (trajectories[:, 1:] - trajectories[:, :-1])  # [N, T-1, 2]
+    speeds = vels.norm(dim=-1).mean(dim=-1).numpy()  # [N]
+    axes[1].hist(speeds[labels.numpy() == 0], bins=30, alpha=0.6,
                  label='Light (m=1)', color='blue')
-    axes[1].hist(traj_var[labels.numpy() == 1], bins=30, alpha=0.6,
+    axes[1].hist(speeds[labels.numpy() == 1], bins=30, alpha=0.6,
                  label='Heavy (m=3)', color='red')
-    axes[1].set_xlabel('Slot temporal variance')
+    axes[1].set_xlabel('Average speed (centroid displacement)')
     axes[1].set_ylabel('Count')
-    axes[1].set_title('Temporal Variance by Mass')
+    axes[1].set_title('Speed by Mass')
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
 

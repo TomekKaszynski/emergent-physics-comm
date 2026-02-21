@@ -484,6 +484,25 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Diagnosis:** Extreme overfitting — train 85.7% but val ~50%. The classifier memorizes training sequences but doesn't generalize. Slot vectors encode object appearance (position, shape, color) but mass information lives in collision dynamics (how velocities change on impact). The temporal summary features (mean, var, delta) over slot space don't isolate collision events or velocity changes.
 - **Verdict:** FAIL — 53.2% val accuracy vs 80% target. Slot representations don't encode mass-distinguishing dynamics. Possible fixes: (1) explicitly compute velocity from slot centroids rather than using raw slot features, (2) detect collision frames and compare pre/post velocity ratios, (3) use a sequence model (LSTM/transformer) instead of pooled features, (4) train the slot attention end-to-end with mass classification loss.
 
+### Phase 29b: Centroid Trajectory Features
+**Date:** Feb 21
+
+- **Goal:** Fix Phase 29 by using 2D centroid positions instead of 64-dim slot vectors. Mass info lives in how objects move, not what they look like.
+- **Change:** Extract centroid positions from slot attention alpha masks at all 20 frames (not just frame 0). Compute velocity [T-1, 2] and acceleration [T-2, 2] from position deltas. Flatten all → 114-dim input to MLP classifier. Same physics, encoding, and matching as Phase 29.
+- **Architecture:** MassClassifier MLP — positions(40) + velocities(38) + accelerations(36) = 114 dims → Linear(114,64)+ReLU → Linear(64,64)+ReLU → Linear(64,1). 11.6K params.
+- **Data:** Same as Phase 29: 1000 sequences, 2490 samples, centroid cache [1000, 20, 7, 2]. Avg match distance 0.074.
+- **Result:**
+  ```
+  Ep   1: train_acc=51.2% val_acc=48.6%
+  Ep  40: train_acc=65.6% val_acc=51.2%  ← best val
+  Ep 100: train_acc=81.2% val_acc=48.8%
+  Ep 200: train_acc=86.7% val_acc=50.4%
+  ```
+  Best val: 51.2% at epoch 40.
+- **Diagnosis:** Same overfitting pattern as Phase 29 (train 87%, val ~50%). Centroid positions from 16×16 DINOv2 patch grid alpha masks are noisy approximations — the spatial resolution is too coarse to capture subtle velocity changes during collisions. The mass signal (how much velocity changes on collision) is buried in centroid extraction noise. The classifier memorizes noisy training trajectories but can't generalize.
+- **Verdict:** FAIL — 51.2% val accuracy vs 80% target. Neither slot vectors nor centroid trajectories extracted from frozen slot attention carry enough mass information. Root cause: the 16×16 patch grid gives only ~4px resolution for centroid positions on 64×64 images, while mass-dependent velocity differences during collisions are sub-pixel at this scale.
+- **Possible fixes:** (1) Use ground-truth positions to verify the task is solvable at all, (2) higher-resolution encoder (not DINOv2 14×14 patches), (3) end-to-end training with mass classification loss, (4) longer sequences with more collisions, (5) larger mass ratio (1:10 instead of 1:3).
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**
@@ -491,6 +510,7 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - Slot JEPA predictor: beats copy baseline by 20.5% (v=±5.0, Δ=3)
 
 **Failed:**
-- Mass inference from slot trajectories: 53.2% (near chance). Slot features don't encode physics properties like mass — they encode visual appearance.
+- Phase 29: Mass from slot vectors — 53.2% (slot features encode appearance, not dynamics)
+- Phase 29b: Mass from centroid trajectories — 51.2% (16×16 patch grid too coarse for sub-pixel velocity differences)
 
-**Next steps:** (1) Explicit velocity/dynamics features from slot centroids, (2) multi-agent communication with different viewpoints, (3) transformer-based slot predictor for longer rollouts.
+**Next steps:** (1) Verify task solvability with ground-truth positions, (2) multi-agent communication with different viewpoints, (3) transformer-based slot predictor for longer rollouts.
