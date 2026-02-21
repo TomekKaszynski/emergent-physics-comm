@@ -670,6 +670,30 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
   The sender discovered that avg_dv_ratio separates heavy from light, identified WHICH object has the lowest ratio, and encoded the answer as a discrete token. The receiver learned the token→label mapping. Nobody told them which token means what — the language emerged end-to-end through Gumbel-softmax.
 - **Verdict:** SUCCESS — 98.5% val acc (target was >75%). Emergent communication works when perception is handled. The sender only needs to compare 18 numbers and pick one of 3 objects, not discover physics from 240 raw coordinates.
 
+### Phase 29g: Slot Centroid Collision Features (Feb 21)
+- **Goal:** Bridge 29f (GT features, 98.6%) with 29b (slot centroids, 51%). Use GT collision timestamps but measure Δv from slot centroid velocities. Tests whether slot centroid tracking is precise enough for mass inference. Target: >80%.
+- **Architecture:** Same 257-param classifier (Linear(6,32)+ReLU+Linear(32,1)). Frozen SlotAttentionDINO (phase27_model.pt). Greedy slot-object matching on frame 0.
+- **Side-by-side feature comparison (the key result):**
+  ```
+  Feature          GT light  GT heavy  GT sep   Slot light  Slot heavy  Slot sep
+  avg_dv_ratio       2.22      0.57     3.90       2.74        2.70      1.01
+  avg_dv_coll        0.13      0.08     1.63       0.09        0.08      1.03
+  max_dv             0.30      0.17     1.75       0.26        0.25      1.03
+  avg_speed          0.10      0.07     1.52       0.06        0.06      1.05
+  speed_var          0.002     0.001    2.52       0.003       0.002     1.07
+  n_coll_norm        0.57      0.46     1.24       0.79        0.77      1.02
+  ```
+  **Slot centroid features have ZERO separation.** GT avg_dv_ratio separates 3.9×, slot version: 1.01×. The 16×16 patch grid (~4px resolution) adds so much noise to centroid positions that velocity differences during collisions are completely buried. All 6 features collapse to separation ≈1.0.
+- **Result:**
+  ```
+  GT features:    99.1% val (epoch 80)
+  Slot centroids: 54.9% val (epoch 80) — barely above chance
+  Gap: 44.3pp
+  ```
+- **Match distance:** avg 0.136 in [0,1] space = ~8.7 pixels on 64×64. This is the slot centroid noise floor — comparable to object radii (7-10px). Velocity changes during collisions are ~2-5 pixels/frame, well below the centroid noise.
+- **Diagnosis:** The slot attention model tracks objects adequately for visual binding (90% consistency) but the centroid positions are too noisy for physics-level measurements. The 16×16 DINOv2 patch grid gives ~4px resolution — velocity changes during collisions (Δv ≈ 0.02-0.1 in normalized space = 1-6px) are at or below the noise floor. This is a fundamental resolution limit, not a feature engineering problem.
+- **Verdict:** FAIL — 54.9% val (target >80%). Slot centroids are NOT accurate enough for pairwise collision features. The vision→physics pipeline needs either: (a) higher resolution encoder, (b) end-to-end training with physics loss, or (c) larger visual effects of mass (bigger objects, higher velocities, more extreme mass ratios).
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**
@@ -680,11 +704,14 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 
 **Mass inference (Phase 29 series):**
 - Phase 29–29f: progressed from 53% to **98.6%** by isolating bottlenecks (slot features → GT positions → dense collisions → physics features → pairwise ratios)
-- Key insight: mass lives in pairwise collision ratios (Newton's 3rd law)
+- Phase 29g: slot centroids → **54.9%** (FAIL). 16×16 DINOv2 patch grid too coarse for collision physics. Centroid noise (~8.7px) drowns velocity changes (~2-5px).
+- Key insight: mass lives in pairwise collision ratios (Newton's 3rd law), but slot centroids can't measure them
 
 **Emergent communication (Phase 30 series):**
 - Phase 30: mode collapse (33%). Phase 30b: overfitting (41%). Both failed trying to learn perception + communication jointly.
 - Phase 30c: **98.5%** — separated perception (frozen physics features) from communication (learned Gumbel-softmax). 3-token emergent language with near-perfect purity. Solved in 20 epochs with 1259 params.
 - Key insight: communication is easy once perception is solved. The bottleneck was never the discrete channel — it was expecting the sender to discover physics from raw trajectories.
 
-**Next steps:** (1) Bridge slot centroids → collision features → emergent communication (full vision pipeline), (2) multi-agent JEPA with communication, (3) transformer slot predictor.
+**The resolution bottleneck:** Slot centroid positions from DINOv2 (16×16 patches) have ~8.7px noise. Collision velocity changes are ~2-5px. The signal is below the noise floor. Options: (1) higher-res encoder (32×32 or 64×64 patches), (2) end-to-end training with physics loss to sharpen centroids, (3) larger mass effects (mass ratio 1:10, higher velocities), (4) learn dynamics directly from slot vectors (bypass centroid extraction).
+
+**Next steps:** (1) Try larger images (128×128) or higher-res encoder to reduce centroid noise, (2) end-to-end slot attention + mass classifier, (3) learn dynamics from slot vectors directly (JEPA-style, bypass centroid extraction), (4) transformer slot predictor.
