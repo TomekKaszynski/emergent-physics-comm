@@ -313,6 +313,24 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 
 **Finding:** 5 iterations is optimal. More iterations (6, 7) cause early winner-take-all collapse where 1-2 slots grab >95% coverage before recovering. While 7 iters eventually reaches 0.266, it never catches up to 5 iters (0.232). The over-sharpening from extra iterations is counterproductive with per-slot learnable init.
 
+### Phase 27b Test 0b: Extended training (5 iters, 200 epochs)
+**Date:** Feb 21
+
+- **Change:** ae_epochs 100→200 to push entropy below 0.2. n_iters=5, everything else identical.
+- **Config:** 200 epochs (max), batch=32, 7 slots, constant LR 4e-4, warmup 30, 5 SA iters
+- **Result:**
+  ```
+  Ep   1: recon=6.6766 entropy=1.000 active=4/7
+  Ep   5: recon=2.6098 entropy=1.000 active=3/7
+  Ep  10: recon=2.1788 entropy=0.809 active=3/7
+  Ep  15: recon=1.9038 entropy=0.836 active=3/7
+  Ep  20: recon=1.7055 entropy=0.886 active=4/7
+  Ep  60: recon=0.9828 entropy=0.527 active=7/7 max_cov=36.4%
+  Ep  70: recon=0.8989 entropy=0.173 active=7/7 max_cov=62.8%  ← SUCCESS, early stop
+  ```
+  Eval: entropy=0.170, 7/7 active, max_cov=63.8%
+- **Verdict:** SUCCESS — entropy broke below 0.2 target at epoch 70 (0.170 vs 0.232 at 100ep in Test 0). Sharp drop from 0.527→0.173 between epochs 60-70 suggests phase transition in slot specialization. Max coverage rose to 63.8% (one dominant slot, likely background), but all 7 slots active. Best entropy yet.
+
 ## Current State (Feb 21)
 
-DINOv2 + 5 SA iters: entropy 0.232, 7/7 slots, 29% max_cov. Best result yet. n_iters=5 confirmed as optimal via ablation (tested 3/5/6/7). Ready for next phase.
+DINOv2 + 5 SA iters: entropy 0.170 at epoch 70 (early stop). Sub-0.2 target achieved. 7/7 slots active, max_cov=63.8%. Best result yet. Ready for next phase.
