@@ -13594,6 +13594,437 @@ def run_phase30_emergent_comm():
     }
 
 
+def run_phase29i_slot_delta_lstm():
+    """Phase 29i: Slot vector temporal differences with LSTM.
+
+    Instead of collapsing slots to 2D centroids (29g) or scalar prediction
+    error (29h), feed full 64-dim slot change vectors into an LSTM that can
+    learn collision signatures across multiple dimensions simultaneously.
+
+    Per matched object: Δslot = slot[t+1] - slot[t] → [39, 64]
+    LSTM(64→32) → final hidden → Linear(32,1) → heavy/light
+    ~5K params. The signal is in the temporal pattern, not any single feature.
+    """
+    import random
+    import math
+
+    print("=" * 60, flush=True)
+    print("PHASE 29i: Slot Delta LSTM — Learned Collision Signatures", flush=True)
+    print("=" * 60, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Load frozen SlotAttentionDINO ──────────────────────────
+    print("\n┌─ Loading frozen SlotAttentionDINO", flush=True)
+    ae = SlotAttentionDINO(n_slots=7, slot_dim=64, img_size=64).to(device)
+    state = torch.load(OUTPUT_DIR / "phase27_model.pt", map_location=device)
+    ae.load_state_dict(state)
+    ae.eval()
+    for p in ae.parameters():
+        p.requires_grad = False
+    print("│  Model loaded and frozen", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Generate sequences with dense mass physics ─────────────
+    n_sequences = 1000
+    n_frames = 40
+    S = 64
+
+    palette = [
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0],
+    ]
+
+    print(f"\n┌─ Generating {n_sequences} sequences with dense mass physics", flush=True)
+    all_frames = []
+    all_obj_info = []
+    collision_counts = []
+
+    random.seed(42)
+    for seq_i in range(n_sequences):
+        n_obj = random.randint(3, 4)
+        masses = [1.0, 3.0]
+        for _ in range(n_obj - 2):
+            masses.append(random.choice([1.0, 3.0]))
+        random.shuffle(masses)
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(7, 10)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-7.0, 7.0)
+            vy = random.uniform(-7.0, 7.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi], 'color': palette[oi % len(palette)]
+            })
+
+        all_obj_info.append([{
+            'cx0': obj['cx'] / S, 'cy0': obj['cy'] / S,
+            'r': obj['r'], 'mass': obj['mass']
+        } for obj in objects])
+
+        seq_collisions = 0
+        frames = []
+        for fi in range(n_frames):
+            img = np.ones((S, S, 3), dtype=np.float32) * 0.5
+            for obj in objects:
+                r = obj['r']
+                cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+                color = np.array(obj['color'])
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if dx*dx + dy*dy <= r*r:
+                            px, py = cx_i + dx, cy_i + dy
+                            if 0 <= px < S and 0 <= py < S:
+                                img[py, px] = color
+            frames.append(img.transpose(2, 0, 1))
+
+            for i in range(len(objects)):
+                for j in range(i + 1, len(objects)):
+                    oi_o, oj_o = objects[i], objects[j]
+                    dx = oj_o['cx'] - oi_o['cx']
+                    dy = oj_o['cy'] - oi_o['cy']
+                    dist = math.hypot(dx, dy)
+                    min_dist = oi_o['r'] + oj_o['r']
+                    if dist < min_dist and dist > 0.1:
+                        nx, ny = dx / dist, dy / dist
+                        dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                              (oi_o['vy'] - oj_o['vy']) * ny
+                        if dvn > 0:
+                            seq_collisions += 1
+                            m1, m2 = oi_o['mass'], oj_o['mass']
+                            imp = 2 * dvn / (m1 + m2)
+                            oi_o['vx'] -= imp * m2 * nx
+                            oi_o['vy'] -= imp * m2 * ny
+                            oj_o['vx'] += imp * m1 * nx
+                            oj_o['vy'] += imp * m1 * ny
+                            overlap = min_dist - dist
+                            oi_o['cx'] -= overlap * nx * 0.5
+                            oi_o['cy'] -= overlap * ny * 0.5
+                            oj_o['cx'] += overlap * nx * 0.5
+                            oj_o['cy'] += overlap * ny * 0.5
+
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        all_frames.append(np.array(frames))
+        collision_counts.append(seq_collisions)
+
+        if (seq_i + 1) % 200 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    all_frames = torch.tensor(np.array(all_frames), dtype=torch.float32)
+    avg_coll = np.mean(collision_counts)
+    n_total_obj = sum(len(info) for info in all_obj_info)
+    n_light = sum(1 for info in all_obj_info for o in info if o['mass'] == 1.0)
+    n_heavy = n_total_obj - n_light
+    print(f"│  Frames: {list(all_frames.shape)}", flush=True)
+    print(f"│  Objects: {n_total_obj} (light={n_light}, heavy={n_heavy})", flush=True)
+    print(f"│  Avg collisions/seq: {avg_coll:.1f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Encode all frames → slots + centroids ──────────────────
+    print(f"\n┌─ Encoding {n_sequences * n_frames} frames → slots", flush=True)
+
+    P = 16
+    xs = torch.linspace(0, 1, P)
+    ys = torch.linspace(0, 1, P)
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
+    gx_flat = grid_x.reshape(-1).to(device)
+    gy_flat = grid_y.reshape(-1).to(device)
+
+    all_slots = []
+    all_centroids = []
+
+    with torch.no_grad():
+        for seq_i in range(n_sequences):
+            seq_slots = []
+            seq_centroids = []
+            for fi in range(0, n_frames, 8):
+                batch = all_frames[seq_i, fi:fi+8].to(device)
+                slots, _ = ae.encode(batch)
+                _, alpha = ae.decode(slots)
+
+                seq_slots.append(slots.cpu())
+
+                ws = alpha.sum(dim=-1, keepdim=True) + 1e-8
+                cx = (alpha * gx_flat).sum(dim=-1) / ws.squeeze(-1)
+                cy = (alpha * gy_flat).sum(dim=-1) / ws.squeeze(-1)
+                centroids = torch.stack([cx, cy], dim=-1)
+                seq_centroids.append(centroids.cpu())
+
+            all_slots.append(torch.cat(seq_slots, dim=0))
+            all_centroids.append(torch.cat(seq_centroids, dim=0))
+
+            if (seq_i + 1) % 200 == 0:
+                print(f"│  Encoded {seq_i+1}/{n_sequences}", flush=True)
+                if device.type == 'mps':
+                    torch.mps.empty_cache()
+
+    all_slots = torch.stack(all_slots)          # [1000, 40, 7, 64]
+    all_centroids = torch.stack(all_centroids)  # [1000, 40, 7, 2]
+    print(f"│  Slot cache: {list(all_slots.shape)}", flush=True)
+    print("└─ Done", flush=True)
+
+    del all_frames
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    # ── Match slots to objects ─────────────────────────────────
+    print(f"\n┌─ Matching slots to objects (frame-0 centroids)", flush=True)
+
+    slot_assignments = []
+    match_dists = []
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        frame0_centroids = all_centroids[seq_i, 0]
+        n_obj = len(obj_info)
+
+        used_slots = set()
+        seq_slots_assigned = []
+        for obj in obj_info:
+            best_slot, best_d = -1, float('inf')
+            for si in range(7):
+                if si in used_slots:
+                    continue
+                d = math.hypot(
+                    frame0_centroids[si, 0].item() - obj['cx0'],
+                    frame0_centroids[si, 1].item() - obj['cy0'])
+                if d < best_d:
+                    best_d = d
+                    best_slot = si
+            used_slots.add(best_slot)
+            seq_slots_assigned.append(best_slot)
+            match_dists.append(best_d)
+
+        slot_assignments.append(seq_slots_assigned)
+
+    avg_match_dist = np.mean(match_dists)
+    print(f"│  Avg match distance: {avg_match_dist:.4f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Compute slot deltas per object ─────────────────────────
+    print(f"\n┌─ Computing slot delta sequences", flush=True)
+
+    all_deltas = []  # list of [39, 64] tensors
+    labels = []
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        n_obj = len(obj_info)
+        seq_slots_assigned = slot_assignments[seq_i]
+
+        for oi in range(n_obj):
+            slot_idx = seq_slots_assigned[oi]
+            slot_traj = all_slots[seq_i, :, slot_idx, :]  # [40, 64]
+            delta = slot_traj[1:] - slot_traj[:-1]         # [39, 64]
+            all_deltas.append(delta)
+            labels.append(1.0 if obj_info[oi]['mass'] == 3.0 else 0.0)
+
+    all_deltas = torch.stack(all_deltas)  # [N, 39, 64]
+    labels = torch.tensor(labels, dtype=torch.float32)
+
+    # Quick stats on delta magnitudes
+    delta_norms = all_deltas.norm(dim=-1)  # [N, 39]
+    light_norms = delta_norms[labels == 0].mean().item()
+    heavy_norms = delta_norms[labels == 1].mean().item()
+    print(f"│  Delta samples: {all_deltas.shape}", flush=True)
+    print(f"│  Avg delta norm — light: {light_norms:.4f}, heavy: {heavy_norms:.4f}, "
+          f"ratio: {light_norms/heavy_norms:.2f}", flush=True)
+    print(f"│  Samples: {len(labels)} (light={int((labels==0).sum())}, heavy={int((labels==1).sum())})", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Train/val split ────────────────────────────────────────
+    n_train = int(0.8 * len(labels))
+    perm = torch.randperm(len(labels))
+    train_deltas = all_deltas[perm[:n_train]]
+    train_labels = labels[perm[:n_train]]
+    val_deltas = all_deltas[perm[n_train:]]
+    val_labels = labels[perm[n_train:]]
+
+    print(f"\n│  Train: {n_train} | Val: {len(labels) - n_train}", flush=True)
+
+    # ── LSTM classifier ───────────────────────────────────────
+    class SlotDeltaClassifier(nn.Module):
+        """LSTM over slot delta sequence → binary classification."""
+        def __init__(self, input_dim=64, hidden_dim=32):
+            super().__init__()
+            self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers=1,
+                                batch_first=True)
+            self.head = nn.Linear(hidden_dim, 1)
+
+        def forward(self, x):
+            # x: [B, 39, 64]
+            _, (h_n, _) = self.lstm(x)  # h_n: [1, B, 32]
+            h = h_n.squeeze(0)           # [B, 32]
+            return self.head(h).squeeze(-1)  # [B]
+
+    clf = SlotDeltaClassifier(input_dim=64, hidden_dim=32).to(device)
+    clf_params = sum(p.numel() for p in clf.parameters())
+    print(f"\n  SlotDeltaClassifier: {clf_params} params", flush=True)
+
+    # ── Training ───────────────────────────────────────────────
+    clf_epochs = 200
+    batch_size = 64
+
+    print(f"\n{'=' * 50}", flush=True)
+    print(f"Training LSTM classifier ({clf_epochs} epochs)", flush=True)
+    print("=" * 50, flush=True)
+
+    clf_opt = torch.optim.Adam(clf.parameters(), lr=1e-3)
+    clf_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+        clf_opt, T_max=clf_epochs, eta_min=1e-5)
+
+    best_val_acc = 0.0
+    best_epoch = 0
+    best_state = None
+    history = {'epoch': [], 'train_acc': [], 'val_acc': []}
+
+    for epoch in range(clf_epochs):
+        clf.train()
+        perm_t = torch.randperm(n_train)
+        ep_loss, ep_correct, ep_total = 0, 0, 0
+
+        for i in range(0, n_train, batch_size):
+            idx = perm_t[i:i+batch_size]
+            delta_b = train_deltas[idx].to(device)   # [B, 39, 64]
+            lbl_b = train_labels[idx].to(device)
+
+            logits = clf(delta_b)
+            loss = F.binary_cross_entropy_with_logits(logits, lbl_b)
+
+            clf_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(clf.parameters(), 1.0)
+            clf_opt.step()
+
+            ep_loss += loss.item() * len(lbl_b)
+            ep_correct += ((logits > 0).float() == lbl_b).sum().item()
+            ep_total += len(lbl_b)
+
+        clf_sched.step()
+        train_acc = ep_correct / ep_total
+
+        if (epoch + 1) % 10 == 0 or epoch == 0:
+            clf.eval()
+            with torch.no_grad():
+                # Val in batches to avoid MPS memory issues
+                val_correct = 0
+                for vi in range(0, len(val_deltas), batch_size):
+                    vd = val_deltas[vi:vi+batch_size].to(device)
+                    vl = val_labels[vi:vi+batch_size].to(device)
+                    vlogits = clf(vd)
+                    val_correct += ((vlogits > 0).float() == vl).sum().item()
+                val_acc = val_correct / len(val_labels)
+
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_epoch = epoch + 1
+                best_state = {k: v.cpu().clone() for k, v in clf.state_dict().items()}
+
+            elapsed = time.time() - t0
+            if (epoch + 1) % 10 == 0 or epoch == 0:
+                print(f"│  Epoch {epoch+1:3d}: train={train_acc*100:.1f}% "
+                      f"val={val_acc*100:.1f}% loss={ep_loss/ep_total:.4f} "
+                      f"[{elapsed:.0f}s]", flush=True)
+
+            history['epoch'].append(epoch + 1)
+            history['train_acc'].append(train_acc)
+            history['val_acc'].append(val_acc)
+
+    print(f"\n  Best val_acc = {best_val_acc*100:.1f}% at epoch {best_epoch}", flush=True)
+
+    # ── Visualization ──────────────────────────────────────────
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+
+    # 1. Training curves
+    ax = axes[0]
+    ax.plot(history['epoch'], history['train_acc'], 'b-', label='Train')
+    ax.plot(history['epoch'], history['val_acc'], 'r-', label='Val')
+    ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5, label='Chance')
+    ax.axhline(y=0.65, color='green', linestyle='--', alpha=0.5, label='Target')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Accuracy')
+    ax.set_title('Training Curves')
+    ax.legend()
+    ax.set_ylim(0.4, 1.0)
+
+    # 2. Delta norm distribution (light vs heavy)
+    ax = axes[1]
+    # Per-object mean delta norm
+    light_mean_norms = delta_norms[labels == 0].mean(dim=1).numpy()
+    heavy_mean_norms = delta_norms[labels == 1].mean(dim=1).numpy()
+    bins = np.linspace(0, delta_norms.mean(dim=1).max().item() * 1.2, 40)
+    ax.hist(light_mean_norms, bins=bins, alpha=0.6, label='Light (m=1)', color='skyblue')
+    ax.hist(heavy_mean_norms, bins=bins, alpha=0.6, label='Heavy (m=3)', color='firebrick')
+    ax.set_xlabel('Mean Δslot norm')
+    ax.set_ylabel('Count')
+    ax.set_title('Slot Delta Magnitude Distribution')
+    ax.legend()
+
+    # 3. Example delta norm time series
+    ax = axes[2]
+    # Find a good sequence
+    example_seq = None
+    for si in range(n_sequences):
+        obj_info = all_obj_info[si]
+        has_light = any(o['mass'] == 1.0 for o in obj_info)
+        has_heavy = any(o['mass'] == 3.0 for o in obj_info)
+        if has_light and has_heavy and collision_counts[si] >= 5:
+            example_seq = si
+            break
+
+    if example_seq is not None:
+        obj_info = all_obj_info[example_seq]
+        for oi in range(len(obj_info)):
+            slot_idx = slot_assignments[example_seq][oi]
+            slot_traj = all_slots[example_seq, :, slot_idx, :]
+            delta = slot_traj[1:] - slot_traj[:-1]
+            norm_seq = delta.norm(dim=-1).numpy()
+            mass_str = "heavy" if obj_info[oi]['mass'] == 3.0 else "light"
+            ax.plot(norm_seq, label=f'obj{oi} ({mass_str})', alpha=0.8)
+        ax.set_xlabel('Frame transition')
+        ax.set_ylabel('‖Δslot‖')
+        ax.set_title(f'Slot Delta Norms (seq {example_seq}, {collision_counts[example_seq]} coll)')
+        ax.legend(fontsize=8)
+
+    plt.tight_layout()
+    plt.savefig('results/phase29i_slot_delta_lstm.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\nSaved: results/phase29i_slot_delta_lstm.png", flush=True)
+
+    verdict = "SUCCESS" if best_val_acc > 0.80 else "PARTIAL" if best_val_acc > 0.65 else "FAIL"
+    print(f"\nVerdict: {verdict} (val_acc={best_val_acc*100:.1f}%, target>65%)", flush=True)
+
+    return {
+        'val_acc': best_val_acc,
+        'best_epoch': best_epoch,
+        'delta_norm_ratio': light_norms / heavy_norms,
+        'clf_params': clf_params,
+        'verdict': verdict,
+    }
+
+
 def run_phase29h_prediction_surprise():
     """Phase 29h: Prediction error as mass signal — JEPA surprise detects collisions.
 
