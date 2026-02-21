@@ -331,6 +331,31 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
   Eval: entropy=0.170, 7/7 active, max_cov=63.8%
 - **Verdict:** SUCCESS — entropy broke below 0.2 target at epoch 70 (0.170 vs 0.232 at 100ep in Test 0). Sharp drop from 0.527→0.173 between epochs 60-70 suggests phase transition in slot specialization. Max coverage rose to 63.8% (one dominant slot, likely background), but all 7 slots active. Best entropy yet.
 
+### Phase 27b Test 1: Complex CLEVR stress test
+**Date:** Feb 21
+
+- **Change:** Harder dataset — overlapping objects, varied radius 4-15, 2-6 objects/scene, random background colors. Locked config: DINOv2 + 5 SA iters + per-slot init.
+- **Config:** 200 epochs, batch=32, 7 slots, constant LR 4e-4, warmup 30, 5 SA iters
+- **Dataset:** `generate_clevr_images_complex()` — overlapping circles, random pastel backgrounds, max_objects=6
+- **Result:**
+  ```
+  Ep   1: recon=6.5058 entropy=1.000 active=6/7
+  Ep  10: recon=2.5472 entropy=0.963 active=4/7
+  Ep  25: recon=1.9387 entropy=0.949 active=7/7
+  Ep  40: recon=1.5262 entropy=0.564 active=7/7
+  Ep  50: recon=1.3786 entropy=0.431 active=7/7  ← below 0.5 target
+  Ep  70: recon=1.2530 entropy=0.398 active=7/7
+  Ep  90: recon=1.1750 entropy=0.374 active=7/7  ← best
+  Ep 100: recon=1.1211 entropy=0.378 active=7/7
+  Ep 150: recon=0.9428 entropy=0.410 active=7/7
+  Ep 200: recon=0.8523 entropy=0.426 active=7/7 max_cov=24.6%
+  ```
+  Eval: entropy=0.429, 7/7 active, max_cov=24.6%
+- **Verdict:** SUCCESS — entropy < 0.5 target met at epoch 50 (0.431). Best entropy 0.374 at epoch 90, slight regression to 0.429 by 200. Very even slot coverage (22-25% max_cov, nearly ideal 14% for 7 slots). Harder dataset converges slower (ep 50 vs ep 25 for simple CLEVR) but slots still differentiate reliably. Mild entropy regression after ep 90 suggests cosine LR schedule might help, or just train 100 epochs.
+
 ## Current State (Feb 21)
 
-DINOv2 + 5 SA iters: entropy 0.170 at epoch 70 (early stop). Sub-0.2 target achieved. 7/7 slots active, max_cov=63.8%. Best result yet. Ready for next phase.
+DINOv2 + 5 SA iters locked config validated on both simple and complex CLEVR:
+- Simple CLEVR: entropy 0.170 (ep 70, early stop)
+- Complex CLEVR: entropy 0.374 best (ep 90), 0.429 final (ep 200), 7/7 slots, 24.6% max_cov
+Ready for next phase.

@@ -1581,6 +1581,80 @@ def generate_clevr_images(n_images=5000, img_size=64, max_objects=4):
     }
 
 
+def generate_clevr_images_complex(n_images=5000, img_size=64, max_objects=6):
+    """Generate complex CLEVR-like images: overlapping circles, varied sizes, random backgrounds.
+
+    Stress test for Slot Attention — harder than basic CLEVR.
+    - Overlapping objects allowed
+    - Varied radius 4-15
+    - 2-max_objects objects per scene
+    - Random background colors (not just gray)
+    """
+    import torch
+    import random
+
+    palette = [
+        [1.0, 0.0, 0.0],    # red
+        [0.0, 1.0, 0.0],    # green
+        [0.0, 0.0, 1.0],    # blue
+        [1.0, 1.0, 0.0],    # yellow
+        [0.0, 1.0, 1.0],    # cyan
+        [1.0, 0.0, 1.0],    # magenta
+        [1.0, 0.5, 0.0],    # orange
+        [0.5, 0.0, 1.0],    # purple
+    ]
+
+    S = img_size
+    all_images = []
+    all_masks = []      # [N, max_objects+1, H, W] — channel 0 = background
+    all_n_obj = []
+
+    for _ in range(n_images):
+        # Random background color (pastel range 0.2-0.8 to avoid pure black/white)
+        bg_color = np.array([random.uniform(0.2, 0.8) for _ in range(3)], dtype=np.float32)
+        img = np.ones((S, S, 3), dtype=np.float32) * bg_color[None, None, :]
+        mask = np.zeros((max_objects + 1, S, S), dtype=np.float32)
+        mask[0] = 1.0  # background mask starts as all-1
+
+        n_obj = random.randint(2, max_objects)
+
+        for obj_i in range(n_obj):
+            r = random.randint(4, 15)
+            cx = random.randint(r + 1, S - r - 2)
+            cy = random.randint(r + 1, S - r - 2)
+
+            # Pick color different from background
+            color = np.array(palette[obj_i % len(palette)])
+
+            # Draw filled circle (later objects occlude earlier ones)
+            for dy in range(-r, r + 1):
+                for dx in range(-r, r + 1):
+                    if dx*dx + dy*dy <= r*r:
+                        px, py = cx + dx, cy + dy
+                        if 0 <= px < S and 0 <= py < S:
+                            img[py, px] = color
+                            # Clear previous object masks at this pixel
+                            mask[:obj_i + 1, py, px] = 0.0
+                            mask[obj_i + 1, py, px] = 1.0  # this object
+
+        # Recompute background mask: wherever no object claims the pixel
+        obj_coverage = mask[1:].sum(axis=0)  # sum over object channels
+        mask[0] = (obj_coverage == 0).astype(np.float32)
+
+        all_images.append(img.transpose(2, 0, 1))  # CHW
+        all_masks.append(mask)
+        all_n_obj.append(n_obj)
+
+        if (_ + 1) % 1000 == 0:
+            print(f"  Generated {_+1}/{n_images} complex CLEVR images", flush=True)
+
+    return {
+        'images': torch.tensor(np.array(all_images), dtype=torch.float32),
+        'masks_gt': torch.tensor(np.array(all_masks), dtype=torch.float32),
+        'n_objects': torch.tensor(all_n_obj, dtype=torch.int64),
+    }
+
+
 def collect_split_view_dataset(n_episodes=300, steps_per_episode=40,
                                n_objects=5, img_size=64):
     """Collect dataset with SPLIT views for Phase 25d.

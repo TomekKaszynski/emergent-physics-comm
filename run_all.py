@@ -26,7 +26,7 @@ from physics_sim import (
     SplitViewPhysics3D, collect_split_view_dataset,
     collect_rich_dataset,
     SimplifiedRichPhysics3D, collect_simplified_rich_dataset,
-    generate_clevr_images
+    generate_clevr_images, generate_clevr_images_complex
 )
 from world_model import (
     DirectWorldModel, LatentWorldModel, VisionWorldModel,
@@ -10890,10 +10890,10 @@ def run_phase27_dino_clevr():
     print(f"│  Device: {device}")
 
     # ── Dataset ────────────────────────────────────────────────
-    print("\n┌─ Generating CLEVR images")
-    data = generate_clevr_images(n_images=5000, img_size=64, max_objects=4)
+    print("\n┌─ Generating complex CLEVR images")
+    data = generate_clevr_images_complex(n_images=5000, img_size=64, max_objects=6)
     images = data['images']       # [5000, 3, 64, 64]
-    masks_gt = data['masks_gt']   # [5000, 5, 64, 64] (bg + 4 obj slots)
+    masks_gt = data['masks_gt']   # [5000, 7, 64, 64] (bg + 6 obj slots)
     n = len(images)
     n_train = int(0.8 * n)
     print(f"│  {n} images, train={n_train}, val={n-n_train}")
