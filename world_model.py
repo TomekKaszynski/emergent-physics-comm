@@ -2340,14 +2340,15 @@ class MassSender(nn.Module):
         # Message head
         self.message_head = nn.Linear(d_model, vocab_size)
 
-    def forward(self, trajectories, tau=1.0, hard=False):
+    def forward(self, trajectories, tau=1.0, hard=False, continuous=False):
         """
         Args:
             trajectories: [B, n_obj, T, 2]
             tau: Gumbel-softmax temperature
             hard: if True, use argmax (eval mode)
+            continuous: if True, return raw logits (no discretization)
         Returns:
-            message: [B, vocab_size] one-hot (soft or hard)
+            message: [B, vocab_size] — continuous, soft one-hot, or hard one-hot
         """
         B, K, T, _ = trajectories.shape
 
@@ -2363,8 +2364,10 @@ class MassSender(nn.Module):
         x = self.cross_obj_attn(x)                   # [B, K, d]
         x = x.mean(dim=1)                            # [B, d] pool over objects
 
-        # 3. Gumbel-softmax message
+        # 3. Message output
         logits = self.message_head(x)                # [B, vocab_size]
+        if continuous:
+            return logits                            # raw 8-dim vector
         if hard:
             idx = logits.argmax(dim=-1)
             message = F.one_hot(idx, self.vocab_size).float()

@@ -628,6 +628,27 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Diagnosis:** Classic mode collapse in emergent communication. The sender never learned to differentiate inputs — Gumbel-softmax `hard=True` through a 26K-param transformer provides too noisy a gradient signal. The loss stayed at log(3)≈1.099 throughout, indicating zero learning. The receiver learned to always predict the majority class for the single message.
 - **Verdict:** FAIL — mode collapse. Possible fixes: (1) add message entropy bonus to loss to prevent single-message collapse, (2) start with continuous communication then discretize, (3) simpler sender (MLP) to verify learnability, (4) warm up sender with supervised pre-training on mass labels before adding discrete bottleneck.
 
+### Phase 30b: Continuous Warmup → Discrete Communication (Feb 21)
+- **Goal:** Fix Phase 30 mode collapse. Phase A (epochs 1-150): continuous messages (raw 8-dim logits, no Gumbel-softmax). Phase B (epochs 151-300): discretize with Gumbel-softmax (τ=1.0→0.3). Auto-retry with MLP sender if Phase A val < 50%.
+- **Architecture:** Same MassSender (26K params) + MassReceiver (387 params). Fallback: MLPSender (40K params, flatten 240→128→64→8).
+- **Training:** Phase A: Adam lr=3e-4, continuous messages. Phase B: Adam lr=1e-4 (reset), Gumbel-softmax τ annealing. Grad clip=1.0.
+- **Result — Transformer sender:**
+  ```
+  Phase A (continuous): train 80.1%, val 35.7% at epoch 150
+  → FAILED Phase A (<50%), auto-retry triggered
+  ```
+  Massive overfitting. Messages not informative — all labels have identical token distributions (token 5 dominant for all). The 8-dim continuous vector encodes sequence identity, not mass features.
+- **Result — MLP sender (auto-retry):**
+  ```
+  Phase A (continuous): train 100%, val 41.0% at epoch 20 (peak)
+  → FAILED Phase A (<50%), both attempts failed
+  ```
+  Even worse overfitting. MLP memorized training data by epoch 40 but no generalization. Same token distribution across all labels.
+- **Best overall:** MLP at epoch 20, val=41.0% (barely above 33% chance).
+- **Diagnosis:** The fundamental issue is NOT mode collapse — it's that the bottleneck is too narrow for the sender to communicate mass-relevant features, while being wide enough (8 continuous dims) for memorization. The sender learns to encode sequence-specific features that don't generalize, rather than extracting collision dynamics. The receiver cannot decode mass from these arbitrary encodings.
+- **Key insight:** Emergent communication requires the sender to independently discover that collision velocity ratios matter — which took us 6 phases of careful feature engineering (Phase 29→29f). Expecting a neural network to discover Newton's third law AND encode it in 8 dims from 240 raw coordinates is too much. The sender needs either (a) physics-informed input features, or (b) a much stronger inductive bias toward collision detection.
+- **Verdict:** FAIL — overfitting without generalization (val 41%, target >60%).
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**
@@ -639,7 +660,9 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - Phase 29–29f: progressed from 53% to **98.6%** by isolating bottlenecks (slot features → GT positions → dense collisions → physics features → pairwise ratios)
 - Key insight: mass lives in pairwise collision ratios (Newton's 3rd law)
 
-**Emergent communication:**
-- Phase 30: mode collapse (33% = chance). Gumbel-softmax through transformer too noisy. Needs entropy bonus or continuous warmup.
+**Emergent communication (Phase 30 series):**
+- Phase 30: mode collapse (33% = chance). Gumbel-softmax gradients too noisy for transformer.
+- Phase 30b: continuous warmup → still FAIL (41%). Sender memorizes training sequences instead of extracting mass signal. The 8-dim bottleneck is simultaneously too narrow for mass features and too wide for memorization.
+- Core problem: expecting sender to independently discover Newton's 3rd law from raw trajectories is too much. Need physics-informed input or stronger inductive bias.
 
-**Next steps:** (1) Fix mode collapse: entropy bonus + continuous warmup, or simpler MLP sender, (2) bridge mass inference to slot centroids, (3) transformer slot predictor.
+**Next steps:** (1) Try physics-informed sender input (feed collision features from 29f instead of raw trajectories), (2) bridge mass inference to slot centroids, (3) transformer slot predictor.

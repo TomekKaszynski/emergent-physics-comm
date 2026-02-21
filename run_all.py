@@ -12411,6 +12411,419 @@ def run_phase29c_gt_diagnostic():
     }
 
 
+def run_phase30b_continuous_warmup():
+    """Phase 30b: Fix mode collapse — continuous warmup then discretize.
+
+    Phase A (epochs 1-150): Continuous messages (raw logits, no Gumbel-softmax).
+      Lets sender/receiver learn meaningful representations first.
+    Phase B (epochs 151-300): Discretize with Gumbel-softmax (τ=1.0→0.3).
+      Gradually forces discrete communication.
+
+    Auto-retry: If Phase A val_acc < 50% at epoch 150, replace transformer
+    sender with simple MLP sender and rerun both phases.
+    """
+    import time
+    import numpy as np
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    from world_model import MassSender, MassReceiver
+
+    device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+    print(f"Phase 30b: Continuous warmup → discrete communication", flush=True)
+    print(f"Device: {device}", flush=True)
+
+    # === Data generation (same as Phase 30) ===
+    print("\n--- Generating data: 2000 sequences, 3 objects, 1 heavy, 40 frames ---", flush=True)
+    np.random.seed(42)
+
+    n_sequences = 2000
+    n_objects = 3
+    n_frames = 40
+    arena_size = 64
+
+    all_trajectories = []  # [n_seq, n_objects, n_frames, 2]
+    all_labels = []        # [n_seq] — which object is heavy
+
+    for seq_i in range(n_sequences):
+        heavy_idx = np.random.randint(0, n_objects)
+        masses = np.ones(n_objects)
+        masses[heavy_idx] = 3.0
+
+        radii = np.random.uniform(7, 10, size=n_objects)
+
+        # Random initial positions (non-overlapping)
+        positions = np.zeros((n_objects, 2))
+        for obj_i in range(n_objects):
+            for _ in range(100):
+                pos = np.random.uniform(radii[obj_i], arena_size - radii[obj_i], size=2)
+                ok = True
+                for prev_i in range(obj_i):
+                    dist = np.linalg.norm(pos - positions[prev_i])
+                    if dist < radii[obj_i] + radii[prev_i] + 2:
+                        ok = False
+                        break
+                if ok:
+                    positions[obj_i] = pos
+                    break
+            else:
+                positions[obj_i] = pos
+
+        velocities = np.random.uniform(-7, 7, size=(n_objects, 2))
+
+        trajectory = np.zeros((n_objects, n_frames, 2))
+        trajectory[:, 0, :] = positions.copy()
+
+        for t in range(1, n_frames):
+            # Wall bounces
+            for obj_i in range(n_objects):
+                for dim in range(2):
+                    if positions[obj_i, dim] - radii[obj_i] < 0:
+                        positions[obj_i, dim] = radii[obj_i]
+                        velocities[obj_i, dim] = abs(velocities[obj_i, dim])
+                    elif positions[obj_i, dim] + radii[obj_i] > arena_size:
+                        positions[obj_i, dim] = arena_size - radii[obj_i]
+                        velocities[obj_i, dim] = -abs(velocities[obj_i, dim])
+
+            # Object-object elastic collisions
+            for i in range(n_objects):
+                for j in range(i + 1, n_objects):
+                    dist = np.linalg.norm(positions[i] - positions[j])
+                    if dist < radii[i] + radii[j]:
+                        # Elastic collision
+                        normal = (positions[j] - positions[i]) / (dist + 1e-8)
+                        v_rel = velocities[i] - velocities[j]
+                        v_rel_n = np.dot(v_rel, normal)
+                        if v_rel_n > 0:  # approaching
+                            m1, m2 = masses[i], masses[j]
+                            impulse = 2 * v_rel_n / (m1 + m2)
+                            velocities[i] -= impulse * m2 * normal
+                            velocities[j] += impulse * m1 * normal
+                            # Separate objects
+                            overlap = radii[i] + radii[j] - dist
+                            positions[i] -= normal * overlap / 2
+                            positions[j] += normal * overlap / 2
+
+            positions = positions + velocities
+            trajectory[:, t, :] = positions.copy()
+
+        all_trajectories.append(trajectory)
+        all_labels.append(heavy_idx)
+
+    trajectories_np = np.array(all_trajectories)  # [2000, 3, 40, 2]
+    labels_np = np.array(all_labels)               # [2000]
+
+    # Train/val split
+    n_train = 1600
+    train_traj = torch.tensor(trajectories_np[:n_train], dtype=torch.float32).to(device)
+    train_labels = torch.tensor(labels_np[:n_train], dtype=torch.long).to(device)
+    val_traj = torch.tensor(trajectories_np[n_train:], dtype=torch.float32).to(device)
+    val_labels = torch.tensor(labels_np[n_train:], dtype=torch.long).to(device)
+
+    # Normalize trajectories to [-1, 1]
+    train_traj = train_traj / 32.0 - 1.0
+    val_traj = val_traj / 32.0 - 1.0
+
+    print(f"Data: {n_train} train, {n_sequences - n_train} val", flush=True)
+    print(f"Label distribution — train: {[(train_labels == i).sum().item() for i in range(3)]}", flush=True)
+    print(f"Label distribution — val: {[(val_labels == i).sum().item() for i in range(3)]}", flush=True)
+
+    # === Training function ===
+    def train_two_phase(sender, receiver, run_name="transformer"):
+        """Train sender+receiver with Phase A (continuous) then Phase B (discrete)."""
+
+        sender_params = sum(p.numel() for p in sender.parameters())
+        receiver_params = sum(p.numel() for p in receiver.parameters())
+        print(f"\n{'='*60}", flush=True)
+        print(f"Training {run_name}: sender={sender_params} params, receiver={receiver_params} params", flush=True)
+        print(f"Phase A: continuous (epochs 1-150), Phase B: discrete (epochs 151-300)", flush=True)
+        print(f"{'='*60}", flush=True)
+
+        total_epochs = 300
+        phase_b_start = 150
+        batch_size = 64
+        best_val_acc = 0.0
+        best_state = None
+        t0 = time.time()
+
+        # Phase A optimizer
+        opt = torch.optim.Adam(list(sender.parameters()) + list(receiver.parameters()), lr=3e-4)
+
+        for epoch in range(1, total_epochs + 1):
+            sender.train()
+            receiver.train()
+
+            # Phase transition
+            if epoch == phase_b_start + 1:
+                print(f"\n--- Phase B start (epoch {epoch}) — switching to Gumbel-softmax ---", flush=True)
+                # Reset optimizer for Phase B
+                opt = torch.optim.Adam(list(sender.parameters()) + list(receiver.parameters()), lr=1e-4)
+
+            # Determine mode
+            if epoch <= phase_b_start:
+                continuous = True
+                tau = None
+            else:
+                continuous = False
+                # Anneal tau from 1.0 to 0.3 over Phase B
+                progress = (epoch - phase_b_start) / (total_epochs - phase_b_start)
+                tau = 1.0 - 0.7 * progress  # 1.0 → 0.3
+
+            # Training loop
+            perm = torch.randperm(n_train, device=device)
+            epoch_loss = 0.0
+            epoch_correct = 0
+            n_batches = 0
+
+            for start in range(0, n_train, batch_size):
+                idx = perm[start:start + batch_size]
+                traj_batch = train_traj[idx]    # [B, 3, 40, 2]
+                label_batch = train_labels[idx]  # [B]
+
+                if continuous:
+                    messages = sender(traj_batch, continuous=True)  # [B, 8] raw logits
+                else:
+                    messages = sender(traj_batch, tau=tau, hard=True, continuous=False)  # [B, 8] one-hot
+
+                logits = receiver(messages)  # [B, 3]
+                loss = F.cross_entropy(logits, label_batch)
+
+                opt.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(list(sender.parameters()) + list(receiver.parameters()), 1.0)
+                opt.step()
+
+                epoch_loss += loss.item()
+                epoch_correct += (logits.argmax(dim=-1) == label_batch).sum().item()
+                n_batches += 1
+
+                if device.type == 'mps' and n_batches % 100 == 0:
+                    torch.mps.empty_cache()
+
+            train_acc = epoch_correct / n_train
+
+            # Validation
+            if epoch % 10 == 0 or epoch == phase_b_start:
+                sender.eval()
+                receiver.eval()
+                with torch.no_grad():
+                    if continuous:
+                        val_messages = sender(val_traj, continuous=True)
+                    else:
+                        val_messages = sender(val_traj, tau=0.1, hard=True, continuous=False)
+                    val_logits = receiver(val_messages)
+                    val_acc = (val_logits.argmax(dim=-1) == val_labels).float().mean().item()
+                    val_loss = F.cross_entropy(val_logits, val_labels).item()
+
+                elapsed = time.time() - t0
+                phase_str = "A-cont" if epoch <= phase_b_start else f"B-disc(τ={tau:.2f})"
+                print(f"  [{run_name}] Epoch {epoch:3d} [{phase_str}] | "
+                      f"loss={epoch_loss/n_batches:.4f} | train_acc={train_acc:.3f} | "
+                      f"val_acc={val_acc:.3f} | val_loss={val_loss:.4f} | "
+                      f"elapsed={elapsed:.0f}s", flush=True)
+
+                # Message analysis
+                if epoch % 50 == 0 or epoch == phase_b_start:
+                    with torch.no_grad():
+                        if continuous:
+                            msg_for_analysis = sender(val_traj, continuous=True)
+                            msg_tokens = msg_for_analysis.argmax(dim=-1)  # pseudo-tokens
+                        else:
+                            msg_for_analysis = sender(val_traj, tau=0.1, hard=True, continuous=False)
+                            msg_tokens = msg_for_analysis.argmax(dim=-1)
+                        unique_tokens = msg_tokens.unique().tolist()
+                        print(f"    Messages: {len(unique_tokens)} unique tokens used: {unique_tokens}", flush=True)
+                        for lbl in range(3):
+                            mask = val_labels == lbl
+                            if mask.sum() > 0:
+                                tokens_for_label = msg_tokens[mask]
+                                token_counts = [(t, (tokens_for_label == t).sum().item()) for t in range(8)]
+                                token_counts.sort(key=lambda x: -x[1])
+                                top3 = token_counts[:3]
+                                print(f"    Label {lbl}: top tokens = {top3}", flush=True)
+
+                if val_acc > best_val_acc:
+                    best_val_acc = val_acc
+                    best_state = {
+                        'sender': {k: v.cpu().clone() for k, v in sender.state_dict().items()},
+                        'receiver': {k: v.cpu().clone() for k, v in receiver.state_dict().items()},
+                        'epoch': epoch,
+                        'val_acc': val_acc,
+                    }
+
+                # Check Phase A result
+                if epoch == phase_b_start:
+                    print(f"\n  Phase A result: val_acc = {val_acc:.3f}", flush=True)
+                    if val_acc < 0.50:
+                        print(f"  Phase A FAILED (< 50%). Will trigger auto-retry.", flush=True)
+                        return best_val_acc, best_state, False  # phase_a_passed = False
+
+        print(f"\n  Final best val_acc = {best_val_acc:.3f} at epoch {best_state['epoch']}", flush=True)
+        return best_val_acc, best_state, True  # phase_a_passed = True
+
+    # === Run 1: Transformer sender ===
+    sender = MassSender(n_frames=40, d_model=32, nhead=2, n_layers=2, vocab_size=8, n_obj=3).to(device)
+    receiver = MassReceiver(vocab_size=8, d_model=32, n_obj=3).to(device)
+
+    val_acc_1, best_state_1, phase_a_ok = train_two_phase(sender, receiver, run_name="transformer")
+
+    # === Auto-retry with MLP sender if Phase A failed ===
+    val_acc_2 = None
+    best_state_2 = None
+    if not phase_a_ok:
+        print(f"\n{'='*60}", flush=True)
+        print(f"AUTO-RETRY: Replacing transformer sender with MLP sender", flush=True)
+        print(f"{'='*60}", flush=True)
+
+        class MLPSender(nn.Module):
+            """Simple MLP sender: flatten trajectories → hidden → message."""
+            def __init__(self, n_objects=3, n_frames=40, vocab_size=8):
+                super().__init__()
+                self.vocab_size = vocab_size
+                input_dim = n_objects * n_frames * 2  # 240
+                self.net = nn.Sequential(
+                    nn.Linear(input_dim, 128),
+                    nn.ReLU(),
+                    nn.Linear(128, 64),
+                    nn.ReLU(),
+                    nn.Linear(64, vocab_size),
+                )
+
+            def forward(self, trajectories, tau=1.0, hard=False, continuous=False):
+                B = trajectories.shape[0]
+                x = trajectories.reshape(B, -1)  # [B, 240]
+                logits = self.net(x)  # [B, 8]
+                if continuous:
+                    return logits
+                if hard:
+                    idx = logits.argmax(dim=-1)
+                    message = F.one_hot(idx, self.vocab_size).float()
+                else:
+                    message = F.gumbel_softmax(logits, tau=tau, hard=True)
+                return message
+
+        mlp_sender = MLPSender(n_objects=3, n_frames=40, vocab_size=8).to(device)
+        mlp_receiver = MassReceiver(vocab_size=8, d_model=32, n_obj=3).to(device)
+
+        val_acc_2, best_state_2, _ = train_two_phase(mlp_sender, mlp_receiver, run_name="mlp")
+
+    # === Final evaluation ===
+    print(f"\n{'='*60}", flush=True)
+    print(f"FINAL RESULTS", flush=True)
+    print(f"{'='*60}", flush=True)
+    print(f"  Transformer sender: best val_acc = {val_acc_1:.3f}", flush=True)
+    if val_acc_2 is not None:
+        print(f"  MLP sender (retry):  best val_acc = {val_acc_2:.3f}", flush=True)
+
+    # Use best model for visualization
+    if val_acc_2 is not None and val_acc_2 > val_acc_1:
+        best_state = best_state_2
+        best_name = "mlp"
+        best_acc = val_acc_2
+    else:
+        best_state = best_state_1
+        best_name = "transformer"
+        best_acc = val_acc_1
+
+    # Detailed analysis with best model
+    print(f"\n  Best model: {best_name} (val_acc={best_acc:.3f}, epoch={best_state['epoch']})", flush=True)
+
+    # === Visualization ===
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+    # 1. Confusion matrix (reload best model)
+    if best_name == "transformer":
+        eval_sender = MassSender(n_frames=40, d_model=32, nhead=2, n_layers=2, vocab_size=8, n_obj=3).to(device)
+    else:
+        eval_sender = MLPSender(n_objects=3, n_frames=40, vocab_size=8).to(device)
+    eval_receiver = MassReceiver(vocab_size=8, d_model=32, n_obj=3).to(device)
+    eval_sender.load_state_dict({k: v.to(device) for k, v in best_state['sender'].items()})
+    eval_receiver.load_state_dict({k: v.to(device) for k, v in best_state['receiver'].items()})
+    eval_sender.eval()
+    eval_receiver.eval()
+
+    with torch.no_grad():
+        val_msgs = eval_sender(val_traj, tau=0.1, hard=True, continuous=False)
+        val_preds = eval_receiver(val_msgs).argmax(dim=-1)
+        msg_tokens = val_msgs.argmax(dim=-1)
+
+    # Confusion matrix
+    conf = torch.zeros(3, 3, dtype=torch.long)
+    for true, pred in zip(val_labels, val_preds):
+        conf[true.item()][pred.item()] += 1
+
+    ax = axes[0]
+    im = ax.imshow(conf.numpy(), cmap='Blues')
+    for i in range(3):
+        for j in range(3):
+            ax.text(j, i, str(conf[i][j].item()), ha='center', va='center', fontsize=14)
+    ax.set_xlabel('Predicted')
+    ax.set_ylabel('True')
+    ax.set_title(f'Confusion Matrix\nval_acc={best_acc:.3f}')
+    ax.set_xticks(range(3))
+    ax.set_yticks(range(3))
+    fig.colorbar(im, ax=ax)
+
+    # 2. Message distribution per label
+    ax = axes[1]
+    for lbl in range(3):
+        mask = val_labels == lbl
+        tokens = msg_tokens[mask].cpu().numpy()
+        counts = np.bincount(tokens, minlength=8)
+        ax.bar(np.arange(8) + lbl * 0.25 - 0.25, counts, width=0.25, label=f'Label {lbl}')
+    ax.set_xlabel('Message Token')
+    ax.set_ylabel('Count')
+    ax.set_title('Message Distribution by True Label')
+    ax.legend()
+    ax.set_xticks(range(8))
+
+    # 3. Summary text
+    ax = axes[2]
+    ax.axis('off')
+    unique_tokens = msg_tokens.unique().tolist()
+    summary = (
+        f"Phase 30b: Continuous Warmup\n"
+        f"{'='*35}\n"
+        f"Best model: {best_name}\n"
+        f"Val accuracy: {best_acc:.1%}\n"
+        f"Best epoch: {best_state['epoch']}\n"
+        f"Unique tokens used: {len(unique_tokens)}\n"
+        f"Tokens: {unique_tokens}\n\n"
+        f"Phase A: continuous (1-150)\n"
+        f"Phase B: discrete (151-300)\n"
+    )
+    if val_acc_2 is not None:
+        summary += f"\nTransformer: {val_acc_1:.1%}\nMLP retry: {val_acc_2:.1%}"
+    ax.text(0.1, 0.5, summary, transform=ax.transAxes, fontsize=12,
+            verticalalignment='center', fontfamily='monospace')
+
+    plt.tight_layout()
+    plt.savefig('results/phase30b_continuous_warmup.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\nSaved: results/phase30b_continuous_warmup.png", flush=True)
+
+    # Save checkpoint
+    torch.save(best_state, 'results/phase30b_model.pt')
+    print(f"Saved: results/phase30b_model.pt", flush=True)
+
+    verdict = "SUCCESS" if best_acc > 0.60 else "PARTIAL" if best_acc > 0.45 else "FAIL"
+    print(f"\nVerdict: {verdict} (val_acc={best_acc:.3f}, target>60%)", flush=True)
+
+    return {
+        'val_acc': best_acc,
+        'best_model': best_name,
+        'best_epoch': best_state['epoch'],
+        'unique_tokens': unique_tokens,
+        'verdict': verdict,
+        'transformer_acc': val_acc_1,
+        'mlp_acc': val_acc_2,
+    }
+
+
 def run_phase30_emergent_comm():
     """Phase 30: Emergent communication about mass — no hand-coded features.
 
