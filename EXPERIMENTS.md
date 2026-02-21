@@ -790,6 +790,25 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Diagnosis:** avg_spike_ratio shows the most separation (1.18×) — light objects do show slightly more motion at collision frames. But the slot masks are too soft/overlapping — motion energy leaks between objects. A heavy object moving fast looks the same as a light object moving fast when measured through soft masks. The masks identify object regions but don't cleanly separate overlapping motion at collision time.
 - **Verdict:** FAIL — 52.7% (target >65%). Motion energy through slot masks is still too noisy.
 
+### Phase 29m — Optical flow + hard slot masks (Feb 21)
+- **Goal:** Farneback optical flow for sub-pixel velocity estimation, hard argmax masks to prevent cross-object leakage. Same 6 pairwise features as 29f. Side-by-side GT comparison.
+- **Results:**
+  ```
+  Velocity accuracy (flow vs GT):
+    Mean error:   4.813 px (GT range: 0-10 px)
+    Median error: 4.085 px
+    90th pctile:  9.453 px
+
+  Feature comparison — GT vs Optical Flow:
+  Feature         GT sep   Flow sep
+  avg_dv_ratio     3.90     1.00    ← completely destroyed
+  avg_speed        1.52     1.04
+  speed_var        2.52     1.09
+  ```
+  GT classifier: **99.3%**. Flow classifier: **50.0%** (pure chance).
+- **Diagnosis:** Farneback optical flow fails catastrophically on uniform colored circles — there's no texture/gradient for it to track within each object. The aperture problem: a solid circle moving right looks identical pixel-by-pixel to the same circle — only the edges provide signal, and at 64×64 those edges are ~2px wide. Mean velocity error is 4.8px against a 0-10px range (~50% noise), completely destroying all collision features. The dv_ratio, which had 3.9× GT separation, collapses to 1.00× with flow.
+- **Verdict:** FAIL — 50.0% (chance). Optical flow is the wrong tool for textureless objects at 64×64.
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**
@@ -798,7 +817,7 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Mass inference from dynamics: 98.6%** with pairwise collision features on GT positions (Phase 29f)
 - **Emergent communication: 98.5%** with physics features → Gumbel-softmax → receiver (Phase 30c)
 
-**Mass inference from vision (Phase 29g-l):**
+**Mass inference from vision (Phase 29g-m):**
 - 29g: slot centroid features → **54.9%** (FAIL). Centroid noise drowns collision signal.
 - 29h: JEPA prediction error → **50.6%** (FAIL). Background noise dominates.
 - 29i: slot delta LSTM → **52.3%** (FAIL). Pure overfitting in frozen slots.
@@ -806,7 +825,8 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - 29j-v2: staged see→talk→refine → **29.0%** (FAIL). Zero learning across all 3 stages.
 - 29k: amplified physics (10:1 mass + 224px) → **51.9%/53.1%** (FAIL). Centroid noise is structural.
 - 29l: motion energy via slot masks → **52.7%** (FAIL). Soft masks leak motion between objects.
-- **Conclusion:** Seven approaches to bridge vision→mass have failed. Both centroid-based (29g, 29k) and mask-based (29l) approaches show ~1.0-1.2× feature separation vs GT's 3.9×. The slot attention representations are good for object identity but fundamentally imprecise for measuring dynamics.
+- 29m: optical flow + hard masks → **50.0%** (FAIL). Farneback fails on textureless objects (4.8px error on 0-10px range).
+- **Conclusion:** Eight approaches to bridge vision→mass have failed. The velocity estimation problem at 64×64 with uniform circles is harder than expected — centroids are quantized, soft masks leak, optical flow has no texture. GT position tracking remains the only reliable velocity source.
 
 **Emergent communication (Phase 30 series):**
 - Phase 30: mode collapse (33%). Phase 30b: overfitting (41%).

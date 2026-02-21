@@ -13594,6 +13594,605 @@ def run_phase30_emergent_comm():
     }
 
 
+def run_phase29m_optical_flow():
+    """Phase 29m: Optical flow + hard slot masks for mass inference.
+
+    Clean separation of concerns:
+    1. Slot attention masks → which pixels are which object (hard argmax)
+    2. Farneback optical flow → how much each pixel moved (sub-pixel accuracy)
+    3. Combine: per-object velocity time series at full 64x64 resolution
+    4. Same 6 pairwise collision features as 29f (GT collision timestamps)
+    5. Same 257-param classifier
+
+    Key differences from 29l:
+    - Hard masks (argmax) instead of soft masks → no cross-object leakage
+    - Optical flow instead of frame diff → actual velocity vectors, not energy
+    - Sub-pixel accuracy from Farneback → much better than centroid quantization
+    """
+    import random
+    import math
+    import cv2
+
+    print("=" * 60, flush=True)
+    print("PHASE 29m: Optical Flow + Hard Slot Masks", flush=True)
+    print("=" * 60, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Load frozen SlotAttentionDINO ─────────────────────────
+    print("\n┌─ Loading frozen SlotAttentionDINO", flush=True)
+    ae = SlotAttentionDINO(n_slots=7, slot_dim=64, img_size=64).to(device)
+    state = torch.load(OUTPUT_DIR / "phase27_model.pt", map_location=device)
+    ae.load_state_dict(state)
+    ae.eval()
+    for p in ae.parameters():
+        p.requires_grad = False
+    print("│  Model loaded and frozen", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Generate sequences (same as 29f/29g) ──────────────────
+    n_sequences = 1000
+    n_frames = 40
+    S = 64
+
+    palette = [
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0],
+    ]
+
+    print(f"\n┌─ Generating {n_sequences} sequences with dense mass physics", flush=True)
+    all_frames = []
+    all_obj_info = []
+    all_gt_positions = []
+    all_collision_events = []
+    collision_counts = []
+
+    random.seed(42)
+    for seq_i in range(n_sequences):
+        n_obj = random.randint(3, 4)
+        masses = [1.0, 3.0]
+        for _ in range(n_obj - 2):
+            masses.append(random.choice([1.0, 3.0]))
+        random.shuffle(masses)
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(7, 10)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-7.0, 7.0)
+            vy = random.uniform(-7.0, 7.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi], 'color': palette[oi % len(palette)]
+            })
+
+        all_obj_info.append([{
+            'cx0': obj['cx'] / S, 'cy0': obj['cy'] / S,
+            'r': obj['r'], 'mass': obj['mass']
+        } for obj in objects])
+
+        obj_positions = [[None] * n_frames for _ in range(n_obj)]
+        seq_collision_events = []
+        seq_collisions = 0
+
+        frames = []
+        for fi in range(n_frames):
+            for oi in range(n_obj):
+                obj_positions[oi][fi] = [objects[oi]['cx'] / S, objects[oi]['cy'] / S]
+
+            img = np.ones((S, S, 3), dtype=np.float32) * 0.5
+            for obj in objects:
+                r = obj['r']
+                cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+                color = np.array(obj['color'])
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if dx*dx + dy*dy <= r*r:
+                            px, py = cx_i + dx, cy_i + dy
+                            if 0 <= px < S and 0 <= py < S:
+                                img[py, px] = color
+            frames.append(img.transpose(2, 0, 1))
+
+            for i in range(n_obj):
+                for j in range(i + 1, n_obj):
+                    oi_o, oj_o = objects[i], objects[j]
+                    dx_c = oj_o['cx'] - oi_o['cx']
+                    dy_c = oj_o['cy'] - oi_o['cy']
+                    dist = math.hypot(dx_c, dy_c)
+                    min_dist = oi_o['r'] + oj_o['r']
+                    if dist < min_dist and dist > 0.1:
+                        nx, ny = dx_c / dist, dy_c / dist
+                        dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                              (oi_o['vy'] - oj_o['vy']) * ny
+                        if dvn > 0:
+                            seq_collisions += 1
+                            m1, m2 = oi_o['mass'], oj_o['mass']
+                            imp = 2 * dvn / (m1 + m2)
+                            dv_i = imp * m2
+                            dv_j = imp * m1
+                            seq_collision_events.append((fi, i, j, dv_i, dv_j))
+                            oi_o['vx'] -= imp * m2 * nx
+                            oi_o['vy'] -= imp * m2 * ny
+                            oj_o['vx'] += imp * m1 * nx
+                            oj_o['vy'] += imp * m1 * ny
+                            overlap = min_dist - dist
+                            oi_o['cx'] -= overlap * nx * 0.5
+                            oi_o['cy'] -= overlap * ny * 0.5
+                            oj_o['cx'] += overlap * nx * 0.5
+                            oj_o['cy'] += overlap * ny * 0.5
+
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        all_frames.append(np.array(frames))
+        all_gt_positions.append(obj_positions)
+        all_collision_events.append(seq_collision_events)
+        collision_counts.append(seq_collisions)
+
+        if (seq_i + 1) % 200 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    all_frames = np.array(all_frames)  # keep as numpy for cv2
+    avg_coll = np.mean(collision_counts)
+    n_with_coll = sum(1 for c in collision_counts if c > 0)
+    n_total_obj = sum(len(info) for info in all_obj_info)
+    n_light = sum(1 for info in all_obj_info for o in info if o['mass'] == 1.0)
+    n_heavy = n_total_obj - n_light
+    print(f"│  Frames: {list(all_frames.shape)}", flush=True)
+    print(f"│  Objects: {n_total_obj} (light={n_light}, heavy={n_heavy})", flush=True)
+    print(f"│  Avg collisions/seq: {avg_coll:.1f}, with ≥1: {n_with_coll}/{n_sequences}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Encode frames → hard slot masks ───────────────────────
+    print(f"\n┌─ Encoding frames → hard slot masks (16x16 → 64x64)", flush=True)
+
+    P = 16
+    xs_grid = torch.linspace(0, 1, P)
+    ys_grid = torch.linspace(0, 1, P)
+    grid_y, grid_x = torch.meshgrid(ys_grid, xs_grid, indexing='ij')
+    gx_flat = grid_x.reshape(-1).to(device)
+    gy_flat = grid_y.reshape(-1).to(device)
+
+    all_hard_masks = []   # [1000, 40, 7, 64, 64] as uint8
+    all_centroids_f0 = []
+
+    all_frames_t = torch.tensor(all_frames, dtype=torch.float32)
+
+    with torch.no_grad():
+        for seq_i in range(n_sequences):
+            seq_masks = []
+            for fi in range(0, n_frames, 8):
+                batch = all_frames_t[seq_i, fi:fi+8].to(device)
+                slots, _ = ae.encode(batch)
+                _, alpha = ae.decode(slots)  # [B, 7, 256]
+
+                # Hard masks: argmax over slots
+                alpha_2d = alpha.reshape(-1, 7, P, P)  # [B, 7, 16, 16]
+                winner = alpha_2d.argmax(dim=1, keepdim=True)  # [B, 1, 16, 16]
+                hard = (torch.arange(7, device=device).reshape(1, 7, 1, 1) == winner).float()  # [B, 7, 16, 16]
+
+                # Upsample to 64x64
+                hard_up = F.interpolate(hard, size=(S, S), mode='nearest')  # [B, 7, 64, 64]
+                seq_masks.append(hard_up.cpu())
+
+                # Frame-0 centroids for matching
+                if fi == 0:
+                    ws = alpha[:1].sum(dim=-1, keepdim=True) + 1e-8
+                    cx = (alpha[:1] * gx_flat).sum(dim=-1) / ws.squeeze(-1)
+                    cy = (alpha[:1] * gy_flat).sum(dim=-1) / ws.squeeze(-1)
+                    all_centroids_f0.append(torch.stack([cx, cy], dim=-1).cpu().squeeze(0))
+
+            all_hard_masks.append(torch.cat(seq_masks, dim=0))  # [40, 7, 64, 64]
+
+            if (seq_i + 1) % 200 == 0:
+                print(f"│  Encoded {seq_i+1}/{n_sequences}", flush=True)
+                if device.type == 'mps':
+                    torch.mps.empty_cache()
+
+    all_hard_masks = torch.stack(all_hard_masks)  # [1000, 40, 7, 64, 64]
+    print(f"│  Hard mask cache: {list(all_hard_masks.shape)}", flush=True)
+
+    del all_frames_t
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    # Check mask coverage
+    avg_pixels_per_slot = all_hard_masks.sum(dim=(-2, -1)).mean(dim=(0, 1))  # [7]
+    print(f"│  Avg pixels/slot: {avg_pixels_per_slot.numpy().round(1)}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Match slots to objects ────────────────────────────────
+    print(f"\n┌─ Matching slots to objects", flush=True)
+
+    slot_assignments = []
+    match_dists = []
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        frame0_centroids = all_centroids_f0[seq_i]
+        n_obj = len(obj_info)
+
+        used_slots = set()
+        seq_slots = []
+        for obj in obj_info:
+            best_slot, best_d = -1, float('inf')
+            for si in range(7):
+                if si in used_slots:
+                    continue
+                d = math.hypot(
+                    frame0_centroids[si, 0].item() - obj['cx0'],
+                    frame0_centroids[si, 1].item() - obj['cy0'])
+                if d < best_d:
+                    best_d = d
+                    best_slot = si
+            used_slots.add(best_slot)
+            seq_slots.append(best_slot)
+            match_dists.append(best_d)
+
+        slot_assignments.append(seq_slots)
+
+    avg_match_dist = np.mean(match_dists)
+    print(f"│  Avg match distance: {avg_match_dist:.4f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Compute optical flow ──────────────────────────────────
+    print(f"\n┌─ Computing optical flow (Farneback) for {n_sequences} sequences", flush=True)
+
+    # all_frames: [1000, 40, 3, 64, 64] as numpy float32
+    # Per-object velocity via flow + hard masks
+    # Store per-object velocity time series
+
+    flow_params = dict(
+        pyr_scale=0.5, levels=3, winsize=15,
+        iterations=3, poly_n=5, poly_sigma=1.2, flags=0
+    )
+
+    all_obj_velocities = []  # per-seq: [n_obj, 39, 2] (vx, vy from flow)
+
+    for seq_i in range(n_sequences):
+        n_obj = len(all_obj_info[seq_i])
+        seq_slots = slot_assignments[seq_i]
+        obj_vels = np.zeros((n_obj, n_frames - 1, 2), dtype=np.float32)
+
+        for fi in range(n_frames - 1):
+            # Convert to grayscale uint8 for cv2
+            frame_t = all_frames[seq_i, fi].transpose(1, 2, 0)    # [64, 64, 3]
+            frame_t1 = all_frames[seq_i, fi + 1].transpose(1, 2, 0)
+            gray_t = (np.mean(frame_t, axis=2) * 255).astype(np.uint8)
+            gray_t1 = (np.mean(frame_t1, axis=2) * 255).astype(np.uint8)
+
+            flow = cv2.calcOpticalFlowFarneback(gray_t, gray_t1, None, **flow_params)
+            # flow: [64, 64, 2] — (vx, vy) in pixels
+
+            for oi in range(n_obj):
+                mask = all_hard_masks[seq_i, fi, seq_slots[oi]].numpy()  # [64, 64]
+                mask_sum = mask.sum() + 1e-8
+                obj_vels[oi, fi, 0] = (flow[:, :, 0] * mask).sum() / mask_sum
+                obj_vels[oi, fi, 1] = (flow[:, :, 1] * mask).sum() / mask_sum
+
+        all_obj_velocities.append(obj_vels)
+
+        if (seq_i + 1) % 200 == 0:
+            print(f"│  Flow computed {seq_i+1}/{n_sequences}", flush=True)
+
+    print("└─ Done", flush=True)
+
+    del all_hard_masks
+
+    # ── Velocity accuracy diagnostic ──────────────────────────
+    print(f"\n┌─ Velocity accuracy: flow vs GT", flush=True)
+    vel_errors = []
+    for seq_i in range(min(200, n_sequences)):
+        obj_info = all_obj_info[seq_i]
+        n_obj = len(obj_info)
+        for oi in range(n_obj):
+            gt_pos = np.array(all_gt_positions[seq_i][oi])  # [40, 2] normalized
+            gt_v = (gt_pos[1:] - gt_pos[:-1]) * S  # [39, 2] in pixels
+            flow_v = all_obj_velocities[seq_i][oi]  # [39, 2] in pixels
+            err = np.sqrt(((gt_v - flow_v) ** 2).sum(axis=1))  # [39]
+            vel_errors.extend(err.tolist())
+    vel_errors = np.array(vel_errors)
+    print(f"│  Mean velocity error: {vel_errors.mean():.3f} px", flush=True)
+    print(f"│  Median velocity error: {np.median(vel_errors):.3f} px", flush=True)
+    print(f"│  90th percentile: {np.percentile(vel_errors, 90):.3f} px", flush=True)
+    print(f"│  GT velocity range: ~0-10 px/frame", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Compute features: GT and flow-based (side by side) ────
+    print(f"\n┌─ Computing pairwise collision features (GT vs flow)", flush=True)
+
+    gt_features = []
+    flow_features = []
+    labels_list = []
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        n_obj = len(obj_info)
+        collision_events = all_collision_events[seq_i]
+
+        for oi in range(n_obj):
+            # GT trajectory
+            gt_pos = torch.tensor(all_gt_positions[seq_i][oi], dtype=torch.float32)
+            gt_v = gt_pos[1:] - gt_pos[:-1]       # [39, 2] normalized
+            gt_speed = gt_v.norm(dim=-1)            # [39]
+            gt_dv = gt_v[1:] - gt_v[:-1]           # [38, 2]
+            gt_dv_mag = gt_dv.norm(dim=-1)          # [38]
+
+            # Flow-based velocity (convert to normalized coordinates)
+            flow_v_px = torch.tensor(all_obj_velocities[seq_i][oi], dtype=torch.float32)  # [39, 2] pixels
+            flow_v = flow_v_px / S  # normalize to [0,1] space
+            flow_speed = flow_v.norm(dim=-1)
+            flow_dv = flow_v[1:] - flow_v[:-1]     # [38, 2]
+            flow_dv_mag = flow_dv.norm(dim=-1)      # [38]
+
+            dv_threshold = 0.02
+
+            # GT features
+            gt_coll_mask = gt_dv_mag > dv_threshold
+            gt_n_coll = gt_coll_mask.float().sum().item()
+            gt_avg_dv_coll = gt_dv_mag[gt_coll_mask].mean().item() if gt_n_coll > 0 else 0.0
+            gt_max_dv = gt_dv_mag.max().item()
+            gt_avg_speed = gt_speed.mean().item()
+            gt_speed_var = gt_speed.var().item()
+
+            # Flow features
+            flow_coll_mask = flow_dv_mag > dv_threshold
+            flow_n_coll = flow_coll_mask.float().sum().item()
+            flow_avg_dv_coll = flow_dv_mag[flow_coll_mask].mean().item() if flow_n_coll > 0 else 0.0
+            flow_max_dv = flow_dv_mag.max().item()
+            flow_avg_speed = flow_speed.mean().item()
+            flow_speed_var = flow_speed.var().item()
+
+            # Pairwise dv_ratio from GT collision timestamps
+            gt_dv_ratios = []
+            flow_dv_ratios = []
+
+            for (frame, ci, cj, gt_dv_i, gt_dv_j) in collision_events:
+                if ci == oi:
+                    partner = cj
+                    my_gt_dv, partner_gt_dv = gt_dv_i, gt_dv_j
+                elif cj == oi:
+                    partner = ci
+                    my_gt_dv, partner_gt_dv = gt_dv_j, gt_dv_i
+                else:
+                    continue
+
+                if partner_gt_dv > 1e-8:
+                    gt_dv_ratios.append(my_gt_dv / partner_gt_dv)
+
+                if frame >= 1 and frame < n_frames - 1:
+                    # Flow-based Δv at collision frame
+                    my_flow_v_before = flow_v[frame - 1]
+                    my_flow_v_after = flow_v[frame]
+                    my_flow_dv = (my_flow_v_after - my_flow_v_before).norm().item()
+
+                    p_flow_v = torch.tensor(all_obj_velocities[seq_i][partner], dtype=torch.float32) / S
+                    p_flow_v_before = p_flow_v[frame - 1]
+                    p_flow_v_after = p_flow_v[frame]
+                    p_flow_dv = (p_flow_v_after - p_flow_v_before).norm().item()
+
+                    if p_flow_dv > 1e-8:
+                        flow_dv_ratios.append(my_flow_dv / p_flow_dv)
+
+            gt_avg_dv_ratio = np.mean(gt_dv_ratios) if gt_dv_ratios else 1.0
+            flow_avg_dv_ratio = np.mean(flow_dv_ratios) if flow_dv_ratios else 1.0
+
+            gt_features.append([gt_avg_dv_ratio, gt_avg_dv_coll, gt_max_dv,
+                                gt_avg_speed, gt_speed_var, gt_n_coll / 38.0])
+            flow_features.append([flow_avg_dv_ratio, flow_avg_dv_coll, flow_max_dv,
+                                  flow_avg_speed, flow_speed_var, flow_n_coll / 38.0])
+            labels_list.append(1.0 if obj_info[oi]['mass'] == 3.0 else 0.0)
+
+    gt_features = torch.tensor(gt_features, dtype=torch.float32)
+    flow_features = torch.tensor(flow_features, dtype=torch.float32)
+    labels = torch.tensor(labels_list, dtype=torch.float32)
+
+    feat_names = ['avg_dv_ratio', 'avg_dv_coll', 'max_dv',
+                  'avg_speed', 'speed_var', 'n_coll_norm']
+
+    print(f"│", flush=True)
+    print(f"│  Feature comparison — GT vs Optical Flow:", flush=True)
+    print(f"│  {'Feature':15s}  {'GT light':>10s} {'GT heavy':>10s} {'GT sep':>8s}  "
+          f"{'Flow light':>10s} {'Flow heavy':>10s} {'Flow sep':>8s}", flush=True)
+    print(f"│  {'-'*80}", flush=True)
+    seps = {}
+    for fi, name in enumerate(feat_names):
+        gt_l = gt_features[labels == 0, fi].mean().item()
+        gt_h = gt_features[labels == 1, fi].mean().item()
+        gt_sep = gt_l / gt_h if abs(gt_h) > 1e-8 else float('inf')
+        fl_l = flow_features[labels == 0, fi].mean().item()
+        fl_h = flow_features[labels == 1, fi].mean().item()
+        fl_sep = fl_l / fl_h if abs(fl_h) > 1e-8 else float('inf')
+        seps[name] = {'gt': gt_sep, 'flow': fl_sep}
+        print(f"│  {name:15s}  {gt_l:10.4f} {gt_h:10.4f} {gt_sep:8.2f}  "
+              f"{fl_l:10.4f} {fl_h:10.4f} {fl_sep:8.2f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Train/val split ────────────────────────────────────────
+    n_train = int(0.8 * len(labels))
+    perm = torch.randperm(len(labels))
+
+    train_gt = gt_features[perm[:n_train]]
+    train_flow = flow_features[perm[:n_train]]
+    train_labels = labels[perm[:n_train]]
+    val_gt = gt_features[perm[n_train:]]
+    val_flow = flow_features[perm[n_train:]]
+    val_labels = labels[perm[n_train:]]
+
+    print(f"\n│  Train: {n_train} | Val: {len(labels) - n_train}", flush=True)
+    print(f"│  Light: {int((labels==0).sum())} | Heavy: {int((labels==1).sum())}", flush=True)
+
+    # ── Train classifiers (GT and flow, side by side) ─────────
+    def train_classifier(train_feats, val_feats, train_lbl, val_lbl, name):
+        clf = nn.Sequential(
+            nn.Linear(6, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1),
+        ).to(device)
+        clf_opt = torch.optim.Adam(clf.parameters(), lr=1e-3)
+        clf_sched = torch.optim.lr_scheduler.CosineAnnealingLR(clf_opt, T_max=200, eta_min=1e-5)
+
+        best_val_acc = 0.0
+        best_epoch = 0
+        batch_size = 64
+
+        for epoch in range(200):
+            clf.train()
+            perm_t = torch.randperm(len(train_feats))
+            ep_correct, ep_total = 0, 0
+
+            for i in range(0, len(train_feats), batch_size):
+                idx = perm_t[i:i+batch_size]
+                feat_b = train_feats[idx].to(device)
+                lbl_b = train_lbl[idx].to(device)
+                logits = clf(feat_b).squeeze(-1)
+                loss = F.binary_cross_entropy_with_logits(logits, lbl_b)
+                clf_opt.zero_grad()
+                loss.backward()
+                clf_opt.step()
+                ep_correct += ((logits > 0).float() == lbl_b).sum().item()
+                ep_total += len(lbl_b)
+
+            clf_sched.step()
+            train_acc = ep_correct / ep_total
+
+            if (epoch + 1) % 10 == 0 or epoch == 0:
+                clf.eval()
+                with torch.no_grad():
+                    v_logits = clf(val_feats.to(device)).squeeze(-1)
+                    v_preds = (v_logits > 0).float()
+                    val_acc = (v_preds == val_lbl.to(device)).float().mean().item()
+
+                if val_acc > best_val_acc:
+                    best_val_acc = val_acc
+                    best_epoch = epoch + 1
+
+                elapsed = time.time() - t0
+                if (epoch + 1) % 50 == 0 or epoch == 0:
+                    print(f"│  [{name:4s}] Epoch {epoch+1:3d}: "
+                          f"train={train_acc*100:.1f}% val={val_acc*100:.1f}% "
+                          f"[{elapsed:.0f}s]", flush=True)
+
+        return best_val_acc, best_epoch
+
+    print(f"\n{'=' * 50}", flush=True)
+    print(f"Training classifiers (200 epochs each)", flush=True)
+    print("=" * 50, flush=True)
+
+    print(f"\n--- GT features classifier ---", flush=True)
+    gt_val_acc, gt_best_epoch = train_classifier(
+        train_gt, val_gt, train_labels, val_labels, "GT")
+
+    print(f"\n--- Flow features classifier ---", flush=True)
+    flow_val_acc, flow_best_epoch = train_classifier(
+        train_flow, val_flow, train_labels, val_labels, "Flow")
+
+    # ── Results ────────────────────────────────────────────────
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"RESULTS", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    print(f"  GT features:    val_acc = {gt_val_acc*100:.1f}% (epoch {gt_best_epoch})", flush=True)
+    print(f"  Flow features:  val_acc = {flow_val_acc*100:.1f}% (epoch {flow_best_epoch})", flush=True)
+    print(f"  Gap: {(gt_val_acc - flow_val_acc)*100:.1f}pp", flush=True)
+    print(f"  Velocity error: mean={vel_errors.mean():.3f}px, median={np.median(vel_errors):.3f}px", flush=True)
+
+    # ── Visualization ──────────────────────────────────────────
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    fig.suptitle('Phase 29m: Optical Flow + Hard Slot Masks', fontsize=14, fontweight='bold')
+
+    # 1. Feature comparison bar chart
+    ax = axes[0]
+    x = np.arange(len(feat_names))
+    width = 0.2
+    gt_l_m = [gt_features[labels == 0, fi].mean().item() for fi in range(6)]
+    gt_h_m = [gt_features[labels == 1, fi].mean().item() for fi in range(6)]
+    fl_l_m = [flow_features[labels == 0, fi].mean().item() for fi in range(6)]
+    fl_h_m = [flow_features[labels == 1, fi].mean().item() for fi in range(6)]
+    ax.bar(x - 1.5*width, gt_l_m, width, label='GT light', color='skyblue')
+    ax.bar(x - 0.5*width, gt_h_m, width, label='GT heavy', color='steelblue')
+    ax.bar(x + 0.5*width, fl_l_m, width, label='Flow light', color='lightsalmon')
+    ax.bar(x + 1.5*width, fl_h_m, width, label='Flow heavy', color='firebrick')
+    ax.set_xticks(x)
+    ax.set_xticklabels([n[:8] for n in feat_names], rotation=45, ha='right')
+    ax.legend(fontsize=8)
+    ax.set_title('Feature Means: GT vs Flow')
+    ax.set_ylabel('Mean value')
+
+    # 2. dv_ratio distributions
+    ax = axes[1]
+    gt_ratio_light = gt_features[labels == 0, 0].numpy()
+    gt_ratio_heavy = gt_features[labels == 1, 0].numpy()
+    fl_ratio_light = flow_features[labels == 0, 0].numpy()
+    fl_ratio_heavy = flow_features[labels == 1, 0].numpy()
+    bins = np.linspace(0, 6, 30)
+    ax.hist(gt_ratio_light, bins=bins, alpha=0.5, label='GT light', color='skyblue')
+    ax.hist(gt_ratio_heavy, bins=bins, alpha=0.5, label='GT heavy', color='steelblue')
+    ax.hist(fl_ratio_light, bins=bins, alpha=0.3, label='Flow light', color='lightsalmon')
+    ax.hist(fl_ratio_heavy, bins=bins, alpha=0.3, label='Flow heavy', color='firebrick')
+    ax.legend(fontsize=8)
+    ax.set_title('avg_dv_ratio Distribution')
+
+    # 3. Summary
+    ax = axes[2]
+    ax.axis('off')
+    summary = (
+        f"Phase 29m: Optical Flow\n"
+        f"{'='*35}\n"
+        f"GT features:   {gt_val_acc*100:.1f}% (ep {gt_best_epoch})\n"
+        f"Flow features: {flow_val_acc*100:.1f}% (ep {flow_best_epoch})\n"
+        f"Gap: {(gt_val_acc - flow_val_acc)*100:.1f}pp\n\n"
+        f"dv_ratio sep: GT={seps['avg_dv_ratio']['gt']:.2f}  "
+        f"Flow={seps['avg_dv_ratio']['flow']:.2f}\n\n"
+        f"Vel error: {vel_errors.mean():.2f}px mean\n"
+        f"           {np.median(vel_errors):.2f}px median\n"
+        f"Match dist: {avg_match_dist:.4f}\n"
+        f"Avg coll/seq: {avg_coll:.1f}\n"
+        f"Objects: {n_total_obj}"
+    )
+    ax.text(0.1, 0.5, summary, transform=ax.transAxes, fontsize=10,
+            verticalalignment='center', fontfamily='monospace')
+
+    plt.tight_layout()
+    plt.savefig('results/phase29m_optical_flow.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\nSaved: results/phase29m_optical_flow.png", flush=True)
+
+    verdict = "SUCCESS" if flow_val_acc > 0.80 else "PARTIAL" if flow_val_acc > 0.65 else "FAIL"
+    elapsed = time.time() - t0
+    print(f"\nVerdict: {verdict} (flow_val_acc={flow_val_acc*100:.1f}%, target>65%)", flush=True)
+    print(f"Total time: {elapsed:.0f}s", flush=True)
+
+    return {
+        'gt_val_acc': gt_val_acc,
+        'flow_val_acc': flow_val_acc,
+        'gt_best_epoch': gt_best_epoch,
+        'flow_best_epoch': flow_best_epoch,
+        'avg_match_dist': avg_match_dist,
+        'vel_error_mean': vel_errors.mean(),
+        'vel_error_median': np.median(vel_errors),
+        'feature_seps': seps,
+        'verdict': verdict,
+    }
+
+
 def run_phase29l_motion_energy():
     """Phase 29l: Pixel-space motion energy via slot masks.
 
