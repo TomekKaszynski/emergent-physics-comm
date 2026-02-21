@@ -2605,6 +2605,34 @@ class CommSenderv2(nn.Module):
         return message, logits
 
 
+class SlotRefineNet(nn.Module):
+    """Phase 29n: Coarse-to-fine position refinement for slot attention.
+
+    Takes a 16x16 image crop centered on slot's coarse centroid + the slot's
+    attention mask over that region. Predicts (dx, dy) offset in pixels.
+    Final position = coarse_centroid + predicted_offset.
+
+    Input: [B, 4, 16, 16] (3 RGB channels + 1 mask channel)
+    Output: [B, 2] (dx, dy offset in pixels)
+    ~5K params, shared across slots and frames.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.cnn = nn.Sequential(
+            nn.Conv2d(4, 16, 3, stride=1, padding=1), nn.ReLU(),   # [16, 16, 16]
+            nn.Conv2d(16, 32, 3, stride=2, padding=1), nn.ReLU(),  # [32, 8, 8]
+            nn.Conv2d(32, 32, 3, stride=2, padding=1), nn.ReLU(),  # [32, 4, 4]
+        )
+        self.head = nn.Linear(32 * 4 * 4, 2)
+
+    def forward(self, x):
+        """x: [B, 4, 16, 16] → [B, 2] (dx, dy in pixels)"""
+        h = self.cnn(x)
+        h = h.reshape(h.shape[0], -1)  # [B, 512]
+        return self.head(h)
+
+
 def count_params(model):
     return sum(p.numel() for p in model.parameters())
 

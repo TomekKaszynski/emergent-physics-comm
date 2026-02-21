@@ -37,7 +37,7 @@ from world_model import (
     SlotAttentionAEv3,
     SoftPositionEmbed, SlotAttentionModuleV2, SlotAttentionAEv5,
     SlotAttentionDINO, SlotPredictor, MassClassifier,
-    MassSender, MassReceiver
+    MassSender, MassReceiver, SlotRefineNet
 )
 
 OUTPUT_DIR = Path("results")
@@ -13591,6 +13591,698 @@ def run_phase30_emergent_comm():
         'best_epoch': best_epoch,
         'msgs_used': int((msg_counts > 0).sum()),
         'success': success,
+    }
+
+
+def run_phase29n_position_refinement():
+    """Phase 29n: Slot position refinement — coarse-to-fine localization.
+
+    Slot attention says 'object is roughly here' (8.6px accuracy).
+    A small SlotRefineNet (~5K params) looks at a 16x16 image crop + attention mask
+    centered on the coarse centroid, predicts (dx, dy) offset → <2px accuracy.
+    Then compute collision features with refined positions → mass classification.
+    """
+    import random
+    import math
+
+    print("=" * 60, flush=True)
+    print("PHASE 29n: Slot Position Refinement", flush=True)
+    print("=" * 60, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Generate sequences (same as 29f) ──────────────────────
+    n_sequences = 1000
+    n_frames = 40
+    S = 64
+
+    palette = [
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0],
+    ]
+
+    print(f"\n┌─ Generating {n_sequences} sequences (3 obj, 40 frames, v=±7)", flush=True)
+    all_frames = []
+    all_obj_info = []
+    all_gt_positions = []
+    all_collision_events = []
+    collision_counts = []
+
+    random.seed(42)
+    for seq_i in range(n_sequences):
+        n_obj = random.randint(3, 4)
+        masses = [1.0, 3.0]
+        for _ in range(n_obj - 2):
+            masses.append(random.choice([1.0, 3.0]))
+        random.shuffle(masses)
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(7, 10)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-7.0, 7.0)
+            vy = random.uniform(-7.0, 7.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi], 'color': palette[oi % len(palette)]
+            })
+
+        all_obj_info.append([{
+            'cx0': obj['cx'] / S, 'cy0': obj['cy'] / S,
+            'r': obj['r'], 'mass': obj['mass']
+        } for obj in objects])
+
+        obj_positions = [[None] * n_frames for _ in range(n_obj)]
+        seq_collision_events = []
+        seq_collisions = 0
+
+        frames = []
+        for fi in range(n_frames):
+            for oi in range(n_obj):
+                obj_positions[oi][fi] = [objects[oi]['cx'] / S, objects[oi]['cy'] / S]
+
+            img = np.ones((S, S, 3), dtype=np.float32) * 0.5
+            for obj in objects:
+                r = obj['r']
+                cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+                color = np.array(obj['color'])
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if dx*dx + dy*dy <= r*r:
+                            px, py = cx_i + dx, cy_i + dy
+                            if 0 <= px < S and 0 <= py < S:
+                                img[py, px] = color
+            frames.append(img.transpose(2, 0, 1))
+
+            for i in range(n_obj):
+                for j in range(i + 1, n_obj):
+                    oi_o, oj_o = objects[i], objects[j]
+                    dx_c = oj_o['cx'] - oi_o['cx']
+                    dy_c = oj_o['cy'] - oi_o['cy']
+                    dist = math.hypot(dx_c, dy_c)
+                    min_dist = oi_o['r'] + oj_o['r']
+                    if dist < min_dist and dist > 0.1:
+                        nx, ny = dx_c / dist, dy_c / dist
+                        dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                              (oi_o['vy'] - oj_o['vy']) * ny
+                        if dvn > 0:
+                            seq_collisions += 1
+                            m1, m2 = oi_o['mass'], oj_o['mass']
+                            imp = 2 * dvn / (m1 + m2)
+                            dv_i = imp * m2
+                            dv_j = imp * m1
+                            seq_collision_events.append((fi, i, j, dv_i, dv_j))
+                            oi_o['vx'] -= imp * m2 * nx
+                            oi_o['vy'] -= imp * m2 * ny
+                            oj_o['vx'] += imp * m1 * nx
+                            oj_o['vy'] += imp * m1 * ny
+                            overlap = min_dist - dist
+                            oi_o['cx'] -= overlap * nx * 0.5
+                            oi_o['cy'] -= overlap * ny * 0.5
+                            oj_o['cx'] += overlap * nx * 0.5
+                            oj_o['cy'] += overlap * ny * 0.5
+
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        all_frames.append(np.array(frames))
+        all_gt_positions.append(obj_positions)
+        all_collision_events.append(seq_collision_events)
+        collision_counts.append(seq_collisions)
+
+        if (seq_i + 1) % 200 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    all_frames_np = np.array(all_frames)  # [1000, 40, 3, 64, 64]
+    all_frames_t = torch.tensor(all_frames_np, dtype=torch.float32)
+    avg_coll = np.mean(collision_counts)
+    n_total_obj = sum(len(info) for info in all_obj_info)
+    n_light = sum(1 for info in all_obj_info for o in info if o['mass'] == 1.0)
+    n_heavy = n_total_obj - n_light
+    print(f"│  Objects: {n_total_obj} (light={n_light}, heavy={n_heavy})", flush=True)
+    print(f"│  Avg collisions/seq: {avg_coll:.1f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Encode → slot masks + coarse centroids ────────────────
+    print(f"\n┌─ Loading frozen SlotAttentionDINO", flush=True)
+    ae = SlotAttentionDINO(n_slots=7, slot_dim=64, img_size=64).to(device)
+    state = torch.load(OUTPUT_DIR / "phase27_model.pt", map_location=device)
+    ae.load_state_dict(state)
+    ae.eval()
+    for p in ae.parameters():
+        p.requires_grad = False
+    print("│  Model loaded", flush=True)
+    print("└─ Done", flush=True)
+
+    P = 16
+    xs_grid = torch.linspace(0, 1, P)
+    ys_grid = torch.linspace(0, 1, P)
+    grid_y_16, grid_x_16 = torch.meshgrid(ys_grid, xs_grid, indexing='ij')
+    gx16 = grid_x_16.reshape(-1).to(device)
+    gy16 = grid_y_16.reshape(-1).to(device)
+
+    xs64 = torch.linspace(0, 1, S)
+    ys64 = torch.linspace(0, 1, S)
+    grid_y_64, grid_x_64 = torch.meshgrid(ys64, xs64, indexing='ij')
+    gx64 = grid_x_64  # [64, 64]
+    gy64 = grid_y_64
+
+    print(f"\n┌─ Encoding → slot alpha + soft_com_64x64 coarse centroids", flush=True)
+
+    all_alpha = []  # [1000, 40, 7, 256]
+
+    with torch.no_grad():
+        for seq_i in range(n_sequences):
+            seq_alpha = []
+            for fi in range(0, n_frames, 8):
+                batch = all_frames_t[seq_i, fi:fi+8].to(device)
+                slots, _ = ae.encode(batch)
+                _, alpha = ae.decode(slots)  # [B, 7, 256]
+                seq_alpha.append(alpha.cpu())
+            all_alpha.append(torch.cat(seq_alpha, dim=0))
+
+            if (seq_i + 1) % 200 == 0:
+                print(f"│  Encoded {seq_i+1}/{n_sequences}", flush=True)
+                if device.type == 'mps':
+                    torch.mps.empty_cache()
+
+    all_alpha = torch.stack(all_alpha)  # [1000, 40, 7, 256]
+    print(f"│  Alpha cache: {list(all_alpha.shape)}", flush=True)
+    print("└─ Done", flush=True)
+
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    # ── Match slots to objects (frame-0 centroids) ────────────
+    print(f"\n┌─ Matching slots to objects", flush=True)
+    slot_assignments = []
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        alpha_f0 = all_alpha[seq_i, 0]  # [7, 256]
+        n_obj = len(obj_info)
+
+        ws = alpha_f0.sum(dim=-1, keepdim=True) + 1e-8
+        cx = (alpha_f0 * gx16.cpu()).sum(dim=-1) / ws.squeeze(-1)
+        cy = (alpha_f0 * gy16.cpu()).sum(dim=-1) / ws.squeeze(-1)
+
+        used_slots = set()
+        seq_slots = []
+        for obj in obj_info:
+            best_slot, best_d = -1, float('inf')
+            for si in range(7):
+                if si in used_slots:
+                    continue
+                d = math.hypot(cx[si].item() - obj['cx0'], cy[si].item() - obj['cy0'])
+                if d < best_d:
+                    best_d = d
+                    best_slot = si
+            used_slots.add(best_slot)
+            seq_slots.append(best_slot)
+
+        slot_assignments.append(seq_slots)
+
+    print("└─ Done", flush=True)
+
+    # ── Compute coarse centroids (soft_com_64x64) for all matched objects ─
+    print(f"\n┌─ Computing coarse centroids (soft_com_64x64)", flush=True)
+
+    # coarse_positions[seq_i][oi] = [40, 2] in pixel coords
+    coarse_positions = {}
+    gt_positions_px = {}  # [seq_i][oi] = [40, 2] in pixel coords
+
+    for seq_i in range(n_sequences):
+        coarse_positions[seq_i] = {}
+        gt_positions_px[seq_i] = {}
+        obj_info = all_obj_info[seq_i]
+        n_obj = len(obj_info)
+        seq_slots = slot_assignments[seq_i]
+
+        alpha_2d = all_alpha[seq_i].reshape(n_frames, 7, P, P)
+        alpha_up = F.interpolate(alpha_2d, size=(S, S), mode='bilinear',
+                                 align_corners=False)  # [40, 7, 64, 64]
+
+        for oi in range(n_obj):
+            si = seq_slots[oi]
+            soft_mask = alpha_up[:, si, :, :]  # [40, 64, 64]
+            sm_sum = soft_mask.sum(dim=(-2, -1), keepdim=True) + 1e-8
+            cx_soft = (soft_mask * gx64).sum(dim=(-2, -1)) / sm_sum.squeeze(-1).squeeze(-1)
+            cy_soft = (soft_mask * gy64).sum(dim=(-2, -1)) / sm_sum.squeeze(-1).squeeze(-1)
+            # Convert to pixel coords
+            coarse_positions[seq_i][oi] = torch.stack([cx_soft * S, cy_soft * S], dim=-1)  # [40, 2]
+
+            gt = torch.tensor(all_gt_positions[seq_i][oi], dtype=torch.float32) * S
+            gt_positions_px[seq_i][oi] = gt  # [40, 2]
+
+    coarse_err = []
+    for seq_i in range(n_sequences):
+        for oi in range(len(all_obj_info[seq_i])):
+            err = (coarse_positions[seq_i][oi] - gt_positions_px[seq_i][oi]).norm(dim=-1)
+            coarse_err.extend(err.tolist())
+    coarse_err = np.array(coarse_err)
+    print(f"│  Coarse position error: mean={coarse_err.mean():.2f}px, "
+          f"median={np.median(coarse_err):.2f}px", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Build training data for RefineNet ─────────────────────
+    print(f"\n┌─ Building RefineNet training data", flush=True)
+
+    crop_size = 16
+    half = crop_size // 2
+
+    # Collect all (crop, target_offset) pairs
+    all_crops = []     # [N, 4, 16, 16]
+    all_offsets = []   # [N, 2] (dx, dy in pixels)
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        n_obj = len(obj_info)
+        seq_slots = slot_assignments[seq_i]
+
+        # Alpha masks: [40, 7, 16, 16]
+        alpha_2d = all_alpha[seq_i].reshape(n_frames, 7, P, P)
+
+        for oi in range(n_obj):
+            si = seq_slots[oi]
+            for fi in range(n_frames):
+                # Coarse centroid in pixel coords
+                coarse_cx = coarse_positions[seq_i][oi][fi, 0].item()
+                coarse_cy = coarse_positions[seq_i][oi][fi, 1].item()
+
+                # GT position in pixel coords
+                gt_cx = gt_positions_px[seq_i][oi][fi, 0].item()
+                gt_cy = gt_positions_px[seq_i][oi][fi, 1].item()
+
+                # Target offset
+                dx = gt_cx - coarse_cx
+                dy = gt_cy - coarse_cy
+
+                # Crop 16x16 patch from frame centered on coarse centroid
+                cx_int = int(round(coarse_cx))
+                cy_int = int(round(coarse_cy))
+                # Clamp crop bounds
+                x0 = max(0, cx_int - half)
+                y0 = max(0, cy_int - half)
+                x1 = min(S, x0 + crop_size)
+                y1 = min(S, y0 + crop_size)
+                x0 = x1 - crop_size
+                y0 = y1 - crop_size
+
+                frame_img = all_frames_np[seq_i, fi]  # [3, 64, 64]
+                crop_rgb = frame_img[:, y0:y1, x0:x1]  # [3, 16, 16]
+
+                # Attention mask for this slot: nearest 4x4 patches from 16x16 alpha
+                # Map crop pixel coords to alpha grid coords
+                # Each alpha cell covers S/P = 4 pixels
+                ax0 = max(0, int(x0 * P / S))
+                ay0 = max(0, int(y0 * P / S))
+                ax1 = min(P, ax0 + (crop_size * P // S))
+                ay1 = min(P, ay0 + (crop_size * P // S))
+                # Pad to 4x4 if needed
+                mask_patch = alpha_2d[fi, si, ay0:ay1, ax0:ax1]  # up to [4, 4]
+                # Upsample to 16x16
+                mask_16 = F.interpolate(
+                    mask_patch.unsqueeze(0).unsqueeze(0),
+                    size=(crop_size, crop_size), mode='bilinear',
+                    align_corners=False
+                ).squeeze(0)  # [1, 16, 16]
+
+                crop_t = torch.tensor(crop_rgb, dtype=torch.float32)  # [3, 16, 16]
+                crop_full = torch.cat([crop_t, mask_16], dim=0)  # [4, 16, 16]
+
+                all_crops.append(crop_full)
+                all_offsets.append(torch.tensor([dx, dy], dtype=torch.float32))
+
+    all_crops = torch.stack(all_crops)     # [N, 4, 16, 16]
+    all_offsets = torch.stack(all_offsets)  # [N, 2]
+
+    print(f"│  Training samples: {len(all_crops)}", flush=True)
+    print(f"│  Offset stats: mean_abs={all_offsets.abs().mean():.2f}px, "
+          f"max={all_offsets.abs().max():.2f}px", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Train RefineNet ───────────────────────────────────────
+    print(f"\n{'=' * 50}", flush=True)
+    print(f"Training SlotRefineNet (200 epochs)", flush=True)
+    print("=" * 50, flush=True)
+
+    refine_net = SlotRefineNet().to(device)
+    n_params = sum(p.numel() for p in refine_net.parameters())
+    print(f"│  RefineNet params: {n_params}", flush=True)
+
+    # Train/val split
+    n_train = int(0.8 * len(all_crops))
+    perm = torch.randperm(len(all_crops))
+    train_crops = all_crops[perm[:n_train]]
+    train_offsets = all_offsets[perm[:n_train]]
+    val_crops = all_crops[perm[n_train:]]
+    val_offsets = all_offsets[perm[n_train:]]
+
+    opt = torch.optim.Adam(refine_net.parameters(), lr=1e-3)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=200, eta_min=1e-5)
+    batch_size = 256
+
+    best_val_err = float('inf')
+    best_epoch = 0
+
+    for epoch in range(200):
+        refine_net.train()
+        pt = torch.randperm(n_train)
+        ep_loss = 0
+        ep_count = 0
+
+        for i in range(0, n_train, batch_size):
+            idx = pt[i:i+batch_size]
+            crops_b = train_crops[idx].to(device)
+            offsets_b = train_offsets[idx].to(device)
+            pred = refine_net(crops_b)
+            loss = F.mse_loss(pred, offsets_b)
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+            ep_loss += loss.item() * len(idx)
+            ep_count += len(idx)
+
+        sched.step()
+        train_loss = ep_loss / ep_count
+
+        if (epoch + 1) % 10 == 0 or epoch == 0:
+            refine_net.eval()
+            with torch.no_grad():
+                # Eval in batches to avoid OOM
+                val_preds = []
+                for vi in range(0, len(val_crops), batch_size):
+                    vb = val_crops[vi:vi+batch_size].to(device)
+                    val_preds.append(refine_net(vb).cpu())
+                val_preds = torch.cat(val_preds, dim=0)
+                val_err = (val_preds - val_offsets).norm(dim=-1).mean().item()
+
+            if val_err < best_val_err:
+                best_val_err = val_err
+                best_epoch = epoch + 1
+
+            elapsed = time.time() - t0
+            if (epoch + 1) % 50 == 0 or epoch == 0:
+                print(f"│  Epoch {epoch+1:3d}: train_loss={train_loss:.4f}, "
+                      f"val_offset_err={val_err:.2f}px [{elapsed:.0f}s]", flush=True)
+
+    print(f"│  Best val offset error: {best_val_err:.2f}px (epoch {best_epoch})", flush=True)
+
+    # ── Apply RefineNet to get refined positions ──────────────
+    print(f"\n┌─ Applying RefineNet to all positions", flush=True)
+
+    refine_net.eval()
+    refined_positions = {}  # [seq_i][oi] = [40, 2] normalized coords
+
+    with torch.no_grad():
+        for seq_i in range(n_sequences):
+            refined_positions[seq_i] = {}
+            obj_info = all_obj_info[seq_i]
+            n_obj = len(obj_info)
+            seq_slots = slot_assignments[seq_i]
+            alpha_2d = all_alpha[seq_i].reshape(n_frames, 7, P, P)
+
+            for oi in range(n_obj):
+                si = seq_slots[oi]
+                frame_crops = []
+
+                for fi in range(n_frames):
+                    coarse_cx = coarse_positions[seq_i][oi][fi, 0].item()
+                    coarse_cy = coarse_positions[seq_i][oi][fi, 1].item()
+
+                    cx_int = int(round(coarse_cx))
+                    cy_int = int(round(coarse_cy))
+                    x0 = max(0, cx_int - half)
+                    y0 = max(0, cy_int - half)
+                    x1 = min(S, x0 + crop_size)
+                    y1 = min(S, y0 + crop_size)
+                    x0 = x1 - crop_size
+                    y0 = y1 - crop_size
+
+                    crop_rgb = all_frames_np[seq_i, fi, :, y0:y1, x0:x1]
+                    ax0 = max(0, int(x0 * P / S))
+                    ay0 = max(0, int(y0 * P / S))
+                    ax1 = min(P, ax0 + (crop_size * P // S))
+                    ay1 = min(P, ay0 + (crop_size * P // S))
+                    mask_patch = alpha_2d[fi, si, ay0:ay1, ax0:ax1]
+                    mask_16 = F.interpolate(
+                        mask_patch.unsqueeze(0).unsqueeze(0),
+                        size=(crop_size, crop_size), mode='bilinear',
+                        align_corners=False
+                    ).squeeze(0)
+
+                    crop_t = torch.tensor(crop_rgb, dtype=torch.float32)
+                    crop_full = torch.cat([crop_t, mask_16], dim=0)
+                    frame_crops.append(crop_full)
+
+                crops_batch = torch.stack(frame_crops).to(device)  # [40, 4, 16, 16]
+                offsets = refine_net(crops_batch).cpu()  # [40, 2]
+
+                # Refined = coarse + offset, in normalized coords
+                coarse_norm = coarse_positions[seq_i][oi] / S  # [40, 2]
+                refined = coarse_norm + offsets / S
+                refined_positions[seq_i][oi] = refined
+
+            if (seq_i + 1) % 200 == 0:
+                print(f"│  Refined {seq_i+1}/{n_sequences}", flush=True)
+
+    print("└─ Done", flush=True)
+
+    # ── Measure refined position error ────────────────────────
+    print(f"\n┌─ Position error comparison", flush=True)
+
+    refined_err = []
+    for seq_i in range(n_sequences):
+        for oi in range(len(all_obj_info[seq_i])):
+            gt_norm = gt_positions_px[seq_i][oi] / S
+            pred_norm = refined_positions[seq_i][oi]
+            err_px = (pred_norm - gt_norm).norm(dim=-1) * S
+            refined_err.extend(err_px.tolist())
+    refined_err = np.array(refined_err)
+
+    print(f"│  {'Method':20s}  {'Mean':>8s}  {'Median':>8s}  {'90th':>8s}", flush=True)
+    print(f"│  {'-'*50}", flush=True)
+    print(f"│  {'Coarse (SA)':20s}  {coarse_err.mean():8.2f}  {np.median(coarse_err):8.2f}  "
+          f"{np.percentile(coarse_err, 90):8.2f}", flush=True)
+    print(f"│  {'Refined (29n)':20s}  {refined_err.mean():8.2f}  {np.median(refined_err):8.2f}  "
+          f"{np.percentile(refined_err, 90):8.2f}", flush=True)
+    print(f"│  Improvement: {coarse_err.mean():.2f} → {refined_err.mean():.2f}px "
+          f"({(1 - refined_err.mean()/coarse_err.mean())*100:.1f}% reduction)", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── If refined error is good enough, compute collision features ─
+    gt_pos_dict_norm = {}
+    for seq_i in range(n_sequences):
+        gt_pos_dict_norm[seq_i] = {}
+        for oi in range(len(all_obj_info[seq_i])):
+            gt_pos_dict_norm[seq_i][oi] = gt_positions_px[seq_i][oi] / S
+
+    dv_threshold = 0.02
+    feat_names = ['avg_dv_ratio', 'avg_dv_coll', 'max_dv',
+                  'avg_speed', 'speed_var', 'n_coll_norm']
+
+    def compute_features_and_classify(pos_dict, name):
+        features = []
+        labels = []
+        for seq_i in range(n_sequences):
+            obj_info = all_obj_info[seq_i]
+            n_obj = len(obj_info)
+            collision_events = all_collision_events[seq_i]
+
+            for oi in range(n_obj):
+                pos = pos_dict[seq_i][oi]
+                v = pos[1:] - pos[:-1]
+                speed = v.norm(dim=-1)
+                dv = v[1:] - v[:-1]
+                dv_mag = dv.norm(dim=-1)
+
+                coll_mask = dv_mag > dv_threshold
+                n_coll = coll_mask.float().sum().item()
+                avg_dv_coll = dv_mag[coll_mask].mean().item() if n_coll > 0 else 0.0
+                max_dv = dv_mag.max().item()
+                avg_speed = speed.mean().item()
+                speed_var = speed.var().item()
+
+                dv_ratios = []
+                for (frame, ci, cj, gt_dv_i, gt_dv_j) in collision_events:
+                    if ci == oi:
+                        partner = cj
+                    elif cj == oi:
+                        partner = ci
+                    else:
+                        continue
+                    if frame >= 1 and frame < n_frames - 1:
+                        my_v_b = pos[frame] - pos[frame - 1]
+                        my_v_a = pos[frame + 1] - pos[frame]
+                        my_dv = (my_v_a - my_v_b).norm().item()
+                        p_pos = pos_dict[seq_i][partner]
+                        p_v_b = p_pos[frame] - p_pos[frame - 1]
+                        p_v_a = p_pos[frame + 1] - p_pos[frame]
+                        p_dv = (p_v_a - p_v_b).norm().item()
+                        if p_dv > 1e-8:
+                            dv_ratios.append(my_dv / p_dv)
+
+                avg_dv_ratio = np.mean(dv_ratios) if dv_ratios else 1.0
+                features.append([avg_dv_ratio, avg_dv_coll, max_dv,
+                                 avg_speed, speed_var, n_coll / 38.0])
+                labels.append(1.0 if obj_info[oi]['mass'] == 3.0 else 0.0)
+
+        features = torch.tensor(features, dtype=torch.float32)
+        labels = torch.tensor(labels, dtype=torch.float32)
+
+        dv_l = features[labels == 0, 0].mean().item()
+        dv_h = features[labels == 1, 0].mean().item()
+        dv_sep = dv_l / dv_h if abs(dv_h) > 1e-8 else float('inf')
+
+        # Train classifier
+        n_t = int(0.8 * len(labels))
+        p = torch.randperm(len(labels))
+        clf = nn.Sequential(nn.Linear(6, 32), nn.ReLU(), nn.Linear(32, 1)).to(device)
+        clf_opt = torch.optim.Adam(clf.parameters(), lr=1e-3)
+        clf_sched = torch.optim.lr_scheduler.CosineAnnealingLR(clf_opt, T_max=200, eta_min=1e-5)
+        best_val = 0.0
+        for epoch in range(200):
+            clf.train()
+            pt2 = torch.randperm(n_t)
+            for bi in range(0, n_t, 64):
+                idx = p[pt2[bi:bi+64]]
+                logits = clf(features[idx].to(device)).squeeze(-1)
+                loss = F.binary_cross_entropy_with_logits(logits, labels[idx].to(device))
+                clf_opt.zero_grad(); loss.backward(); clf_opt.step()
+            clf_sched.step()
+            if (epoch + 1) % 10 == 0:
+                clf.eval()
+                with torch.no_grad():
+                    vl = clf(features[p[n_t:]].to(device)).squeeze(-1)
+                    va = ((vl > 0).float() == labels[p[n_t:]].to(device)).float().mean().item()
+                if va > best_val: best_val = va
+        return best_val, dv_sep
+
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"Feature Separation + Classifier", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    # Coarse positions (normalized)
+    coarse_pos_norm = {}
+    for seq_i in range(n_sequences):
+        coarse_pos_norm[seq_i] = {}
+        for oi in range(len(all_obj_info[seq_i])):
+            coarse_pos_norm[seq_i][oi] = coarse_positions[seq_i][oi] / S
+
+    gt_acc, gt_sep = compute_features_and_classify(gt_pos_dict_norm, "GT")
+    print(f"│  GT:      dv_sep={gt_sep:.2f}x, val_acc={gt_acc*100:.1f}%", flush=True)
+
+    coarse_acc, coarse_sep = compute_features_and_classify(coarse_pos_norm, "Coarse")
+    print(f"│  Coarse:  dv_sep={coarse_sep:.2f}x, val_acc={coarse_acc*100:.1f}%", flush=True)
+
+    refined_acc, refined_sep = compute_features_and_classify(refined_positions, "Refined")
+    print(f"│  Refined: dv_sep={refined_sep:.2f}x, val_acc={refined_acc*100:.1f}%", flush=True)
+
+    # ── Final comparison ──────────────────────────────────────
+    print(f"\n{'=' * 70}", flush=True)
+    print(f"FINAL COMPARISON", flush=True)
+    print(f"{'=' * 70}", flush=True)
+    print(f"{'Method':15s} │ {'Pos err(px)':>11s} │ {'dv_ratio sep':>12s} │ {'Val acc':>8s}", flush=True)
+    print(f"{'-'*52}", flush=True)
+    print(f"{'GT':15s} │ {'0.00':>11s} │ {gt_sep:11.2f}x │ {gt_acc*100:7.1f}%", flush=True)
+    print(f"{'Coarse (SA)':15s} │ {coarse_err.mean():11.2f} │ {coarse_sep:11.2f}x │ {coarse_acc*100:7.1f}%", flush=True)
+    print(f"{'Refined (29n)':15s} │ {refined_err.mean():11.2f} │ {refined_sep:11.2f}x │ {refined_acc*100:7.1f}%", flush=True)
+
+    # ── Visualization ──────────────────────────────────────────
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    fig.suptitle('Phase 29n: Slot Position Refinement', fontsize=14, fontweight='bold')
+
+    # 1. Position error distribution
+    ax = axes[0]
+    bins = np.linspace(0, 50, 40)
+    ax.hist(coarse_err, bins=bins, alpha=0.5, label=f'Coarse ({coarse_err.mean():.1f}px)', color='firebrick')
+    ax.hist(refined_err, bins=bins, alpha=0.5, label=f'Refined ({refined_err.mean():.1f}px)', color='steelblue')
+    ax.axvline(x=2, color='green', linestyle='--', alpha=0.7, label='2px target')
+    ax.axvline(x=4, color='orange', linestyle='--', alpha=0.7, label='4px target')
+    ax.set_xlabel('Position error (px)')
+    ax.set_ylabel('Count')
+    ax.set_title('Position Error Distribution')
+    ax.legend(fontsize=8)
+
+    # 2. Accuracy comparison
+    ax = axes[1]
+    methods = ['GT', 'Coarse', 'Refined']
+    accs = [gt_acc * 100, coarse_acc * 100, refined_acc * 100]
+    colors = ['green', 'firebrick', 'steelblue']
+    bars = ax.bar(methods, accs, color=colors)
+    ax.axhline(y=65, color='orange', linestyle='--', alpha=0.5)
+    ax.axhline(y=80, color='green', linestyle='--', alpha=0.5)
+    ax.axhline(y=50, color='red', linestyle='--', alpha=0.5)
+    ax.set_ylabel('Val accuracy (%)')
+    ax.set_title('Mass Classification Accuracy')
+    ax.set_ylim(40, 105)
+    for bar, acc in zip(bars, accs):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                f'{acc:.1f}%', ha='center', fontsize=10)
+
+    # 3. Summary
+    ax = axes[2]
+    ax.axis('off')
+    summary = (
+        f"Phase 29n: Position Refinement\n"
+        f"{'='*35}\n"
+        f"RefineNet: {n_params} params\n"
+        f"Best offset err: {best_val_err:.2f}px (ep {best_epoch})\n\n"
+        f"Position error:\n"
+        f"  Coarse:  {coarse_err.mean():.1f}px\n"
+        f"  Refined: {refined_err.mean():.1f}px\n\n"
+        f"dv_ratio sep:\n"
+        f"  GT:      {gt_sep:.2f}x\n"
+        f"  Coarse:  {coarse_sep:.2f}x\n"
+        f"  Refined: {refined_sep:.2f}x\n\n"
+        f"Val acc:\n"
+        f"  GT:      {gt_acc*100:.1f}%\n"
+        f"  Coarse:  {coarse_acc*100:.1f}%\n"
+        f"  Refined: {refined_acc*100:.1f}%"
+    )
+    ax.text(0.1, 0.5, summary, transform=ax.transAxes, fontsize=10,
+            verticalalignment='center', fontfamily='monospace')
+
+    plt.tight_layout()
+    plt.savefig('results/phase29n_position_refinement.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\nSaved: results/phase29n_position_refinement.png", flush=True)
+
+    verdict = "SUCCESS" if refined_acc > 0.80 else "PARTIAL" if refined_acc > 0.65 else "FAIL"
+    elapsed = time.time() - t0
+    print(f"\nVerdict: {verdict} (refined_acc={refined_acc*100:.1f}%, "
+          f"pos_err={refined_err.mean():.2f}px, target: <2px, >80%)", flush=True)
+    print(f"Total time: {elapsed:.0f}s", flush=True)
+
+    return {
+        'coarse_err': coarse_err.mean(),
+        'refined_err': refined_err.mean(),
+        'gt_acc': gt_acc,
+        'coarse_acc': coarse_acc,
+        'refined_acc': refined_acc,
+        'gt_sep': gt_sep,
+        'coarse_sep': coarse_sep,
+        'refined_sep': refined_sep,
+        'refine_params': n_params,
+        'verdict': verdict,
     }
 
 

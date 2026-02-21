@@ -860,7 +860,20 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Interpretation:** Even at t=0 (the matching frame), error is 8.6px — already above the 4px threshold for >65% accuracy. This is the baseline slot-to-object assignment error: the initial centroid match is imprecise because slot attention masks don't tightly wrap single objects. The additional drift from 8.6→22px (frames 0-10) reflects slot swaps and tracking failures as objects move. After t=10 the error saturates — it's essentially random which slot tracks which object at that point.
 - **Key insight:** The 8.6px t=0 error means even perfect temporal tracking wouldn't be enough — the initial object localization through slot attention is already 2× above the 4px threshold. The problem is slot attention's spatial precision, not temporal drift.
 
-## Current State (Feb 21)
+### Phase 29n — Slot position refinement (Feb 22)
+- **Goal:** SlotRefineNet (~15K params) takes 16×16 crop centered on coarse centroid + slot mask, predicts (dx, dy) offset to refine position. Target: <2px error, >80% mass acc.
+- **Results:**
+  ```
+  Method          Pos err(px)  dv_ratio sep  Val acc
+  GT                    0.00        2.55x     92.2%
+  Coarse (SA)          20.10        1.02x     52.9%
+  Refined (29n)        17.92        1.08x     50.9%
+  ```
+  RefineNet offset error: 18.33px (barely below coarse error of 20.1px).
+- **Diagnosis:** When the coarse centroid is 20px off, the 16×16 crop (covering 25% of the 64×64 canvas) often doesn't contain the actual object center. The refinement net can't find what isn't in its field of view. The 10.8% position improvement (20.1→17.9px) doesn't meaningfully change the dv_ratio separation (1.02→1.08×). The fundamental issue is that slot attention assigns the wrong region to objects — refinement within that wrong region can't recover the true position.
+- **Verdict:** FAIL — 50.9% val, 17.9px position error (target <2px). Local refinement can't fix global slot assignment errors.
+
+## Current State (Feb 22)
 
 **Validated pipeline:**
 - DINOv2 + SlotAttention (5 iters, 7 slots, 64-dim): entropy 0.170 on CLEVR, 0.429 complex CLEVR, 0.293 real photos, 90.2% video consistency
@@ -868,9 +881,10 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Mass inference from dynamics: 98.6%** with pairwise collision features on GT positions (Phase 29f)
 - **Emergent communication: 98.5%** with physics features → Gumbel-softmax → receiver (Phase 30c)
 
-**Mass inference from vision (Phase 29g-m + diagnostics):**
+**Mass inference from vision (Phase 29g-n + diagnostics):**
 - 29g-m: Eight approaches FAILED (54.9% → 50.0%). See individual entries above.
-- **29 Diagnostics: Root cause identified.** SA position error is 20px mean. Need <4px for >65% accuracy, <2px for >80%. The 16×16 DINOv2 patch grid fundamentally limits precision to ~2px/patch, and slot attention noise adds another ~18px on top. No position extraction method (centroid, hard COM, soft COM) can fix this — they're all equivalent at ~20px.
+- 29n: position refinement (SlotRefineNet) → **50.9%** (FAIL). Local crop refinement can't fix global slot assignment errors (20→17.9px, still 5× above threshold).
+- **29 Diagnostics: Root cause identified.** SA position error is 20px mean. Need <4px for >65% accuracy, <2px for >80%. The 16×16 DINOv2 patch grid fundamentally limits precision to ~2px/patch, and slot attention noise adds another ~18px on top. No position extraction method or local refinement can fix this.
 - **The gap is structural:** 20px error vs 2-4px required = 5-10× too imprecise.
 
 **Emergent communication (Phase 30 series):**
