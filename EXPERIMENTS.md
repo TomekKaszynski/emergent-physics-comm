@@ -649,20 +649,42 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Key insight:** Emergent communication requires the sender to independently discover that collision velocity ratios matter — which took us 6 phases of careful feature engineering (Phase 29→29f). Expecting a neural network to discover Newton's third law AND encode it in 8 dims from 240 raw coordinates is too much. The sender needs either (a) physics-informed input features, or (b) a much stronger inductive bias toward collision detection.
 - **Verdict:** FAIL — overfitting without generalization (val 41%, target >60%).
 
+### Phase 30c: Staged Communication — Physics Features → Discrete Message (Feb 21)
+- **Goal:** Separate perception from communication. Pre-compute 6 physics features per object (same as 29f), then learn emergent language for "which object is heavy." Input: [3, 6] = 18 numbers instead of 240 raw coordinates. Target: >75%.
+- **Architecture:** FeatureSender (872 params): Linear(18,32)+ReLU+Linear(32,8)+Gumbel-softmax. MassReceiver (387 params): Linear(8,32)+ReLU+Linear(32,3). Total: 1259 params.
+- **Training:** 300 epochs (early stopped at 20), Adam lr=3e-4, τ: 2.0→0.3 cosine.
+- **Feature separation:** avg_dv_ratio light=1.93 vs heavy=0.33 (5.8× ratio). All 6 features separate light from heavy.
+- **Result:**
+  ```
+  Ep   1: train=31.8% val=34.7% tokens=5
+  Ep  10: train=41.4% val=65.2% tokens=5
+  Ep  20: train=69.6% val=98.5% tokens=3  ← EARLY STOP
+  ```
+  **98.5% val accuracy in 20 epochs.** Only 6 errors in 400 val samples.
+- **Emergent language:** 3 tokens used, one per heavy-object index:
+  ```
+  Token 7 → "object 0 is heavy" (n=150, purity=96%)
+  Token 5 → "object 1 is heavy" (n=115, purity=100%)
+  Token 1 → "object 2 is heavy" (n=135, purity=100%)
+  ```
+  The sender discovered that avg_dv_ratio separates heavy from light, identified WHICH object has the lowest ratio, and encoded the answer as a discrete token. The receiver learned the token→label mapping. Nobody told them which token means what — the language emerged end-to-end through Gumbel-softmax.
+- **Verdict:** SUCCESS — 98.5% val acc (target was >75%). Emergent communication works when perception is handled. The sender only needs to compare 18 numbers and pick one of 3 objects, not discover physics from 240 raw coordinates.
+
 ## Current State (Feb 21)
 
 **Validated pipeline:**
 - DINOv2 + SlotAttention (5 iters, 7 slots, 64-dim): entropy 0.170 on CLEVR, 0.429 complex CLEVR, 0.293 real photos, 90.2% video consistency
 - Slot JEPA predictor: beats copy baseline by 20.5% (v=±5.0, Δ=3)
 - **Mass inference from dynamics: 98.6%** with pairwise collision features on GT positions (Phase 29f)
+- **Emergent communication: 98.5%** with physics features → Gumbel-softmax → receiver (Phase 30c)
 
 **Mass inference (Phase 29 series):**
 - Phase 29–29f: progressed from 53% to **98.6%** by isolating bottlenecks (slot features → GT positions → dense collisions → physics features → pairwise ratios)
 - Key insight: mass lives in pairwise collision ratios (Newton's 3rd law)
 
 **Emergent communication (Phase 30 series):**
-- Phase 30: mode collapse (33% = chance). Gumbel-softmax gradients too noisy for transformer.
-- Phase 30b: continuous warmup → still FAIL (41%). Sender memorizes training sequences instead of extracting mass signal. The 8-dim bottleneck is simultaneously too narrow for mass features and too wide for memorization.
-- Core problem: expecting sender to independently discover Newton's 3rd law from raw trajectories is too much. Need physics-informed input or stronger inductive bias.
+- Phase 30: mode collapse (33%). Phase 30b: overfitting (41%). Both failed trying to learn perception + communication jointly.
+- Phase 30c: **98.5%** — separated perception (frozen physics features) from communication (learned Gumbel-softmax). 3-token emergent language with near-perfect purity. Solved in 20 epochs with 1259 params.
+- Key insight: communication is easy once perception is solved. The bottleneck was never the discrete channel — it was expecting the sender to discover physics from raw trajectories.
 
-**Next steps:** (1) Try physics-informed sender input (feed collision features from 29f instead of raw trajectories), (2) bridge mass inference to slot centroids, (3) transformer slot predictor.
+**Next steps:** (1) Bridge slot centroids → collision features → emergent communication (full vision pipeline), (2) multi-agent JEPA with communication, (3) transformer slot predictor.

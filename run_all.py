@@ -12411,6 +12411,414 @@ def run_phase29c_gt_diagnostic():
     }
 
 
+def run_phase30c_staged_comm():
+    """Phase 30c: Staged communication — pre-trained perception, learned language.
+
+    Perception (frozen): Compute 6 collision features per object from GT positions
+      (same as Phase 29f: avg_dv_ratio, avg_dv_coll, max_dv, avg_speed, speed_var, n_coll).
+    Communication (learned): Sender takes [3, 6] features → MLP → Gumbel-softmax
+      discrete message (vocab=8). Receiver takes message → predicts heavy object index.
+
+    Input: 18 numbers (3×6) instead of 240 (3×40×2). Hard perception handled.
+    The interesting communication problem remains — emergent language about mass.
+    """
+    import time
+    import random
+    import math
+    import numpy as np
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    from world_model import MassReceiver
+
+    device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+    print(f"Phase 30c: Staged communication — physics features → discrete message", flush=True)
+    print(f"Device: {device}", flush=True)
+
+    # === Data generation (same dense physics as 29f, but per-sequence) ===
+    print("\n--- Generating data: 2000 sequences, 3 objects, 1 heavy, 40 frames ---", flush=True)
+    random.seed(42)
+    np.random.seed(42)
+
+    n_sequences = 2000
+    n_obj = 3
+    n_frames = 40
+    S = 64
+
+    all_features = []   # [n_seq, n_obj, 6]
+    all_labels = []     # [n_seq] — which object index is heavy
+    collision_counts = []
+
+    for seq_i in range(n_sequences):
+        heavy_idx = random.randint(0, n_obj - 1)
+        masses = [1.0] * n_obj
+        masses[heavy_idx] = 3.0
+
+        # Init objects
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(7, 10)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-7.0, 7.0)
+            vy = random.uniform(-7.0, 7.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi],
+            })
+
+        # Simulate and track per-object collision dvs
+        obj_positions = [[None] * n_frames for _ in range(n_obj)]
+        obj_collision_dvs = [[] for _ in range(n_obj)]
+        seq_collisions = 0
+
+        for fi in range(n_frames):
+            for oi in range(n_obj):
+                obj_positions[oi][fi] = [objects[oi]['cx'] / S, objects[oi]['cy'] / S]
+
+            # Object-object elastic collisions
+            for i in range(n_obj):
+                for j in range(i + 1, n_obj):
+                    dx = objects[j]['cx'] - objects[i]['cx']
+                    dy = objects[j]['cy'] - objects[i]['cy']
+                    dist = math.hypot(dx, dy)
+                    min_dist = objects[i]['r'] + objects[j]['r']
+                    if dist < min_dist and dist > 0.1:
+                        nx, ny = dx / dist, dy / dist
+                        dvn = (objects[i]['vx'] - objects[j]['vx']) * nx + \
+                              (objects[i]['vy'] - objects[j]['vy']) * ny
+                        if dvn > 0:
+                            seq_collisions += 1
+                            m1, m2 = objects[i]['mass'], objects[j]['mass']
+                            imp = 2 * dvn / (m1 + m2)
+                            dv_i = imp * m2
+                            dv_j = imp * m1
+                            obj_collision_dvs[i].append((dv_i, dv_j))
+                            obj_collision_dvs[j].append((dv_j, dv_i))
+                            objects[i]['vx'] -= imp * m2 * nx
+                            objects[i]['vy'] -= imp * m2 * ny
+                            objects[j]['vx'] += imp * m1 * nx
+                            objects[j]['vy'] += imp * m1 * ny
+                            overlap = min_dist - dist
+                            objects[i]['cx'] -= overlap * nx * 0.5
+                            objects[i]['cy'] -= overlap * ny * 0.5
+                            objects[j]['cx'] += overlap * nx * 0.5
+                            objects[j]['cy'] += overlap * ny * 0.5
+
+            # Update positions + wall bounces
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        collision_counts.append(seq_collisions)
+
+        # Compute 6 features per object
+        seq_features = []
+        for oi in range(n_obj):
+            pos = torch.tensor(obj_positions[oi], dtype=torch.float32)  # [40, 2]
+            v = pos[1:] - pos[:-1]       # [39, 2]
+            speed = v.norm(dim=-1)        # [39]
+            dv = v[1:] - v[:-1]           # [38, 2]
+            dv_mag = dv.norm(dim=-1)      # [38]
+
+            dv_threshold = 0.02
+            coll_mask = dv_mag > dv_threshold
+            n_coll = coll_mask.float().sum().item()
+
+            avg_dv_coll = dv_mag[coll_mask].mean().item() if n_coll > 0 else 0.0
+            max_dv = dv_mag.max().item()
+            avg_speed = speed.mean().item()
+            speed_var = speed.var().item()
+
+            coll_dvs = obj_collision_dvs[oi]
+            if len(coll_dvs) > 0:
+                ratios = [my / partner for my, partner in coll_dvs if partner > 1e-8]
+                avg_dv_ratio = np.mean(ratios) if ratios else 1.0
+            else:
+                avg_dv_ratio = 1.0
+
+            seq_features.append([avg_dv_ratio, avg_dv_coll, max_dv,
+                                 avg_speed, speed_var, n_coll / 38.0])
+
+        all_features.append(seq_features)
+        all_labels.append(heavy_idx)
+
+        if (seq_i + 1) % 500 == 0:
+            print(f"  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    features_np = np.array(all_features, dtype=np.float32)  # [2000, 3, 6]
+    labels_np = np.array(all_labels, dtype=np.int64)          # [2000]
+
+    avg_coll = np.mean(collision_counts)
+    n_with_coll = sum(1 for c in collision_counts if c > 0)
+    print(f"  Avg collisions/seq: {avg_coll:.1f}, with ≥1: {n_with_coll}/{n_sequences}", flush=True)
+    print(f"  Label distribution: {[(labels_np == i).sum() for i in range(3)]}", flush=True)
+
+    # Feature stats
+    feat_names = ['avg_dv_ratio', 'avg_dv_coll', 'max_dv', 'avg_speed', 'speed_var', 'n_coll_norm']
+    heavy_feats = []
+    light_feats = []
+    for si in range(n_sequences):
+        for oi in range(n_obj):
+            if oi == labels_np[si]:
+                heavy_feats.append(features_np[si, oi])
+            else:
+                light_feats.append(features_np[si, oi])
+    heavy_feats = np.array(heavy_feats)
+    light_feats = np.array(light_feats)
+    print(f"  Feature means (light vs heavy):", flush=True)
+    for fi, name in enumerate(feat_names):
+        lm = light_feats[:, fi].mean()
+        hm = heavy_feats[:, fi].mean()
+        ratio_str = f"ratio={lm/hm:.2f}" if abs(hm) > 1e-8 else "ratio=inf"
+        print(f"    {name:15s}: light={lm:.4f}  heavy={hm:.4f}  {ratio_str}", flush=True)
+
+    # Train/val split
+    n_train = 1600
+    train_feats = torch.tensor(features_np[:n_train], dtype=torch.float32).to(device)   # [1600, 3, 6]
+    train_labels = torch.tensor(labels_np[:n_train], dtype=torch.long).to(device)
+    val_feats = torch.tensor(features_np[n_train:], dtype=torch.float32).to(device)     # [400, 3, 6]
+    val_labels = torch.tensor(labels_np[n_train:], dtype=torch.long).to(device)
+
+    # === FeatureSender ===
+    class FeatureSender(nn.Module):
+        """MLP sender: [B, 3, 6] physics features → discrete message (vocab=8)."""
+        def __init__(self, n_obj=3, n_features=6, vocab_size=8):
+            super().__init__()
+            self.vocab_size = vocab_size
+            self.net = nn.Sequential(
+                nn.Linear(n_obj * n_features, 32),
+                nn.ReLU(),
+                nn.Linear(32, vocab_size),
+            )
+
+        def forward(self, features, tau=1.0, hard=False):
+            B = features.shape[0]
+            x = features.reshape(B, -1)  # [B, 18]
+            logits = self.net(x)          # [B, 8]
+            if hard:
+                idx = logits.argmax(dim=-1)
+                return F.one_hot(idx, self.vocab_size).float()
+            return F.gumbel_softmax(logits, tau=tau, hard=True)
+
+    sender = FeatureSender(n_obj=3, n_features=6, vocab_size=8).to(device)
+    receiver = MassReceiver(vocab_size=8, d_model=32, n_obj=3).to(device)
+
+    sender_params = sum(p.numel() for p in sender.parameters())
+    receiver_params = sum(p.numel() for p in receiver.parameters())
+    print(f"\n  Sender: {sender_params} params, Receiver: {receiver_params} params", flush=True)
+    print(f"  Total through bottleneck: {sender_params + receiver_params} params", flush=True)
+
+    # === Training ===
+    n_epochs = 300
+    batch_size = 64
+    opt = torch.optim.Adam(list(sender.parameters()) + list(receiver.parameters()), lr=3e-4)
+    best_val_acc = 0.0
+    best_state = None
+    t0 = time.time()
+    history = {'train_acc': [], 'val_acc': [], 'tau': [], 'epoch': []}
+
+    print(f"\n{'='*60}", flush=True)
+    print(f"Training: {n_epochs} epochs, batch={batch_size}, τ: 2.0→0.3 cosine", flush=True)
+    print(f"{'='*60}", flush=True)
+
+    for epoch in range(1, n_epochs + 1):
+        sender.train()
+        receiver.train()
+
+        # Cosine tau annealing: 2.0 → 0.3
+        progress = (epoch - 1) / (n_epochs - 1)
+        tau = 0.3 + (2.0 - 0.3) * 0.5 * (1 + math.cos(math.pi * progress))
+
+        perm = torch.randperm(n_train, device=device)
+        epoch_loss = 0.0
+        epoch_correct = 0
+        n_batches = 0
+
+        for start in range(0, n_train, batch_size):
+            idx = perm[start:start + batch_size]
+            feat_batch = train_feats[idx]     # [B, 3, 6]
+            label_batch = train_labels[idx]   # [B]
+
+            messages = sender(feat_batch, tau=tau)  # [B, 8] Gumbel-softmax
+            logits = receiver(messages)              # [B, 3]
+            loss = F.cross_entropy(logits, label_batch)
+
+            opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                list(sender.parameters()) + list(receiver.parameters()), 1.0)
+            opt.step()
+
+            epoch_loss += loss.item()
+            epoch_correct += (logits.argmax(dim=-1) == label_batch).sum().item()
+            n_batches += 1
+
+        train_acc = epoch_correct / n_train
+
+        # Validation every 10 epochs
+        if epoch % 10 == 0 or epoch == 1:
+            sender.eval()
+            receiver.eval()
+            with torch.no_grad():
+                val_msgs = sender(val_feats, hard=True)
+                val_logits = receiver(val_msgs)
+                val_acc = (val_logits.argmax(dim=-1) == val_labels).float().mean().item()
+                val_loss = F.cross_entropy(val_logits, val_labels).item()
+
+                # Message analysis
+                msg_tokens = val_msgs.argmax(dim=-1)
+                unique_tokens = msg_tokens.unique().tolist()
+
+            elapsed = time.time() - t0
+            print(f"  Epoch {epoch:3d} | τ={tau:.2f} | loss={epoch_loss/n_batches:.4f} | "
+                  f"train={train_acc:.3f} | val={val_acc:.3f} | "
+                  f"tokens={len(unique_tokens)} | elapsed={elapsed:.0f}s", flush=True)
+
+            # Detailed message breakdown every 50 epochs
+            if epoch % 50 == 0 or epoch == 1:
+                with torch.no_grad():
+                    for lbl in range(3):
+                        mask = val_labels == lbl
+                        if mask.sum() > 0:
+                            tokens_for_label = msg_tokens[mask]
+                            token_counts = [(t, (tokens_for_label == t).sum().item()) for t in range(8)]
+                            token_counts.sort(key=lambda x: -x[1])
+                            top3 = token_counts[:3]
+                            print(f"    heavy={lbl}: top tokens = {top3}", flush=True)
+
+            history['train_acc'].append(train_acc)
+            history['val_acc'].append(val_acc)
+            history['tau'].append(tau)
+            history['epoch'].append(epoch)
+
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_state = {
+                    'sender': {k: v.cpu().clone() for k, v in sender.state_dict().items()},
+                    'receiver': {k: v.cpu().clone() for k, v in receiver.state_dict().items()},
+                    'epoch': epoch,
+                    'val_acc': val_acc,
+                }
+
+            # Early success
+            if val_acc > 0.90:
+                print(f"\n  Early stop: val_acc={val_acc:.3f} > 90%", flush=True)
+                break
+
+    print(f"\n  Best val_acc = {best_val_acc:.3f} at epoch {best_state['epoch']}", flush=True)
+
+    # === Final evaluation with best model ===
+    sender.load_state_dict({k: v.to(device) for k, v in best_state['sender'].items()})
+    receiver.load_state_dict({k: v.to(device) for k, v in best_state['receiver'].items()})
+    sender.eval()
+    receiver.eval()
+
+    with torch.no_grad():
+        val_msgs = sender(val_feats, hard=True)
+        val_preds = receiver(val_msgs).argmax(dim=-1)
+        msg_tokens = val_msgs.argmax(dim=-1)
+        unique_tokens = msg_tokens.unique().tolist()
+
+    # Confusion matrix
+    conf = torch.zeros(3, 3, dtype=torch.long)
+    for true, pred in zip(val_labels, val_preds):
+        conf[true.item()][pred.item()] += 1
+
+    print(f"\n  Confusion matrix:", flush=True)
+    print(f"           Pred 0  Pred 1  Pred 2", flush=True)
+    for i in range(3):
+        row = "  ".join(f"{conf[i][j].item():6d}" for j in range(3))
+        print(f"  True {i}:  {row}", flush=True)
+
+    # Message-label mapping
+    print(f"\n  Message token → label mapping:", flush=True)
+    for tok in sorted(unique_tokens):
+        tok_mask = msg_tokens == tok
+        n_tok = tok_mask.sum().item()
+        if n_tok > 0:
+            labels_for_tok = val_labels[tok_mask]
+            counts = [(lbl, (labels_for_tok == lbl).sum().item()) for lbl in range(3)]
+            counts.sort(key=lambda x: -x[1])
+            purity = counts[0][1] / n_tok
+            print(f"    Token {tok}: n={n_tok}, labels={counts}, purity={purity:.2f}", flush=True)
+
+    # === Visualization ===
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+    # 1. Training curves
+    ax = axes[0]
+    ax.plot(history['epoch'], history['train_acc'], 'b-', label='Train')
+    ax.plot(history['epoch'], history['val_acc'], 'r-', label='Val')
+    ax.axhline(y=0.333, color='gray', linestyle='--', alpha=0.5, label='Chance')
+    ax.axhline(y=0.75, color='green', linestyle='--', alpha=0.5, label='Target')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Accuracy')
+    ax.set_title('Training Curves')
+    ax.legend()
+    ax.set_ylim(0, 1)
+
+    # 2. Confusion matrix
+    ax = axes[1]
+    im = ax.imshow(conf.numpy(), cmap='Blues')
+    for i in range(3):
+        for j in range(3):
+            ax.text(j, i, str(conf[i][j].item()), ha='center', va='center', fontsize=14)
+    ax.set_xlabel('Predicted')
+    ax.set_ylabel('True')
+    ax.set_title(f'Confusion Matrix\nval_acc={best_val_acc:.3f}')
+    ax.set_xticks(range(3))
+    ax.set_yticks(range(3))
+    fig.colorbar(im, ax=ax)
+
+    # 3. Message distribution per label
+    ax = axes[2]
+    width = 0.25
+    for lbl in range(3):
+        mask = val_labels == lbl
+        tokens = msg_tokens[mask].cpu().numpy()
+        counts = np.bincount(tokens, minlength=8)
+        ax.bar(np.arange(8) + lbl * width - width, counts, width=width,
+               label=f'Heavy={lbl}')
+    ax.set_xlabel('Message Token')
+    ax.set_ylabel('Count')
+    ax.set_title('Message Distribution by Heavy Object')
+    ax.legend()
+    ax.set_xticks(range(8))
+
+    plt.tight_layout()
+    plt.savefig('results/phase30c_staged_comm.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\nSaved: results/phase30c_staged_comm.png", flush=True)
+
+    torch.save(best_state, 'results/phase30c_model.pt')
+    print(f"Saved: results/phase30c_model.pt", flush=True)
+
+    verdict = "SUCCESS" if best_val_acc > 0.75 else "PARTIAL" if best_val_acc > 0.50 else "FAIL"
+    print(f"\nVerdict: {verdict} (val_acc={best_val_acc:.3f}, target>75%)", flush=True)
+
+    return {
+        'val_acc': best_val_acc,
+        'best_epoch': best_state['epoch'],
+        'unique_tokens': unique_tokens,
+        'verdict': verdict,
+    }
+
+
 def run_phase30b_continuous_warmup():
     """Phase 30b: Fix mode collapse — continuous warmup then discretize.
 
