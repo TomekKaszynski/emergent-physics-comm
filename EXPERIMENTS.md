@@ -393,11 +393,37 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
   Eval: entropy=0.313, 7/7 active, max_cov=18.2%
 - **Verdict:** SUCCESS — entropy 0.293 on real photos, well below any reasonable threshold. Nearly ideal even coverage (17-18% max_cov vs 14.3% ideal for 7 slots). All 7 slots active. Recon loss much higher than CLEVR (2.76 vs 0.85) as expected — real images have far more complex features — but slot specialization is strong. DINOv2+SA locked config works on real-world images.
 
+### Phase 28: JEPA Dynamics in Slot Space
+**Date:** Feb 21
+
+- **Goal:** Train predictor: slots(t) → slots(t+1) in frozen slot representation space.
+- **Architecture:** SlotPredictor MLP — flatten all 7 slots [B, 448] → Linear(448,256)+LN+ReLU → Linear(256,256)+ReLU → Linear(256,448) → reshape [B, 7, 64]. 296K params.
+- **Data:** 1000 sequences × 20 frames (bouncing circles, 2-4 objects). Frozen SlotAttentionDINO encodes all frames → cached [1000, 20, 7, 64]. 15,200 train pairs, 3,800 val pairs.
+- **Config:** 200 epochs, batch=64, Adam lr=1e-3, cosine schedule to 1e-5
+- **Baseline:** Copy-previous MSE = 0.02265 (consecutive frames are very similar)
+- **Training result:**
+  ```
+  Ep   1: train=0.4078 val=0.0830
+  Ep  50: train=0.0261 val=0.0274
+  Ep 100: train=0.0231 val=0.0258
+  Ep 150: train=0.0209 val=0.0248
+  Ep 200: train=0.0200 val=0.0247  ← best val=0.0247 at ep 190
+  ```
+  Slot variance: 5.54, slot mean L2 norm: 18.84
+- **Autoregressive rollout (predict frames 6-10 from context 1-5):**
+  ```
+  Step 1 (f6):  MSE=0.0241  cosine=0.9975
+  Step 2 (f7):  MSE=0.0430  cosine=0.9955
+  Step 3 (f8):  MSE=0.0610  cosine=0.9936
+  Step 4 (f9):  MSE=0.0854  cosine=0.9910
+  Step 5 (f10): MSE=0.1146  cosine=0.9879
+  ```
+- **Success criteria:**
+  - 1-step < 0.1×variance (0.554): **YES** (0.024 ≪ 0.554)
+  - 5-step < 2× 1-step: **NO** (4.76×, error accumulates)
+  - Better than copy baseline: **NO** (0.024 vs 0.023, 6% worse)
+- **Verdict:** PARTIAL — predictor learns meaningful dynamics (0.024 MSE, cosine 0.998), but doesn't beat copy-previous baseline because consecutive frames are nearly identical (objects move ~1.5 px/frame). The predictor is essentially correct but the task is too easy for copy to be a strong baseline. Error accumulates during autoregressive rollout (4.76× at step 5). **Next steps:** (1) increase object velocities to widen copy baseline gap, (2) try predicting multiple steps ahead (Δ=3 or Δ=5), (3) add residual connection (predict delta instead of absolute).
+
 ## Current State (Feb 21)
 
-DINOv2 + 5 SA iters locked config validated across four tests:
-- Simple CLEVR: entropy 0.170 (ep 70, early stop)
-- Complex CLEVR: entropy 0.374 best (ep 90), 0.429 final (ep 200)
-- Video consistency: 90.2% avg (inference only, no temporal training)
-- Real images (Flowers102): entropy 0.293 (ep 200), 7/7 slots, 18.2% max_cov
-Ready for next phase.
+Phase 28 baseline established. SlotPredictor MLP learns slot dynamics (cosine 0.998, MSE 0.024) but copy-previous is nearly as good (0.023) due to slow object motion. Need harder prediction task or architectural improvements to demonstrate value over copy baseline.

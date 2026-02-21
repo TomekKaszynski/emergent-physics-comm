@@ -36,7 +36,7 @@ from world_model import (
     SlotAttentionAutoencoder, SlotJEPAPredictor, SlotAttentionAEv2,
     SlotAttentionAEv3,
     SoftPositionEmbed, SlotAttentionModuleV2, SlotAttentionAEv5,
-    SlotAttentionDINO
+    SlotAttentionDINO, SlotPredictor
 )
 
 OUTPUT_DIR = Path("results")
@@ -11328,6 +11328,395 @@ def run_phase27b_voc():
     print(f"│  → results/phase27b_voc_model.pt", flush=True)
 
     return norm_ent
+
+
+def run_phase28_slot_jepa():
+    """Phase 28: JEPA dynamics in slot space.
+
+    Frozen SlotAttentionDINO encodes physics sequences into slot vectors.
+    SlotPredictor MLP learns: slots(t) → slots(t+1).
+    Evaluation: autoregressive rollout over 5 steps.
+    """
+    import random
+
+    print("=" * 60, flush=True)
+    print("PHASE 28: JEPA Dynamics in Slot Space", flush=True)
+    print("=" * 60, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Load frozen SlotAttentionDINO ─────────────────────────
+    print("\n┌─ Loading frozen SlotAttentionDINO", flush=True)
+    ae = SlotAttentionDINO(n_slots=7, slot_dim=64, img_size=64).to(device)
+    state = torch.load(OUTPUT_DIR / "phase27_model.pt", map_location=device)
+    ae.load_state_dict(state)
+    ae.eval()
+    for p in ae.parameters():
+        p.requires_grad = False
+    print("│  Model loaded and frozen", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Generate physics sequences ────────────────────────────
+    n_sequences = 1000
+    n_frames = 20
+    img_size = 64
+
+    palette = [
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0],
+    ]
+
+    print(f"\n┌─ Generating {n_sequences} sequences × {n_frames} frames", flush=True)
+    all_frames = []  # will become [n_sequences, n_frames, 3, H, W]
+
+    for seq_i in range(n_sequences):
+        n_obj = random.randint(2, 4)
+        S = img_size
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(5, 10)
+            cx = random.uniform(r + 2, S - r - 3)
+            cy = random.uniform(r + 2, S - r - 3)
+            vx = random.uniform(-1.5, 1.5)
+            vy = random.uniform(-1.5, 1.5)
+            objects.append({'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy, 'r': r,
+                            'color': palette[oi % len(palette)]})
+
+        frames = []
+        for fi in range(n_frames):
+            img = np.ones((S, S, 3), dtype=np.float32) * 0.5
+            for obj in objects:
+                r = obj['r']
+                cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+                color = np.array(obj['color'])
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if dx*dx + dy*dy <= r*r:
+                            px, py = cx_i + dx, cy_i + dy
+                            if 0 <= px < S and 0 <= py < S:
+                                img[py, px] = color
+            frames.append(img.transpose(2, 0, 1))
+
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        all_frames.append(np.array(frames))
+
+        if (seq_i + 1) % 200 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences} sequences", flush=True)
+
+    all_frames = torch.tensor(np.array(all_frames), dtype=torch.float32)
+    # [1000, 20, 3, 64, 64]
+    print(f"│  Shape: {list(all_frames.shape)}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Encode all frames with frozen SA ──────────────────────
+    print(f"\n┌─ Encoding {n_sequences * n_frames} frames → slot vectors", flush=True)
+    all_slots = []  # will become [1000, 20, 7, 64]
+
+    with torch.no_grad():
+        for seq_i in range(n_sequences):
+            seq_slots = []
+            for fi in range(0, n_frames, 8):  # batch 8 frames at a time
+                batch = all_frames[seq_i, fi:fi+8].to(device)
+                slots, _ = ae.encode(batch)  # [B, 7, 64]
+                seq_slots.append(slots.cpu())
+            all_slots.append(torch.cat(seq_slots, dim=0))  # [20, 7, 64]
+
+            if (seq_i + 1) % 200 == 0:
+                print(f"│  Encoded {seq_i+1}/{n_sequences} sequences", flush=True)
+                if device.type == 'mps':
+                    torch.mps.empty_cache()
+
+    all_slots = torch.stack(all_slots)  # [1000, 20, 7, 64]
+    print(f"│  Slot cache shape: {list(all_slots.shape)}", flush=True)
+
+    # Compute slot vector statistics for reference
+    slot_var = all_slots.var().item()
+    slot_mean_norm = all_slots.reshape(-1, 64).norm(dim=-1).mean().item()
+    print(f"│  Slot variance: {slot_var:.4f}", flush=True)
+    print(f"│  Slot mean L2 norm: {slot_mean_norm:.4f}", flush=True)
+    print("└─ Done", flush=True)
+
+    # Free frame memory
+    del all_frames
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    # ── Build training pairs ──────────────────────────────────
+    n_train_seq = 800
+    n_val_seq = 200
+
+    # slots_t → slots_t+1 pairs: [n_seq * 19, 7, 64]
+    train_slots_t = all_slots[:n_train_seq, :-1].reshape(-1, 7, 64)  # [15200, 7, 64]
+    train_slots_tp1 = all_slots[:n_train_seq, 1:].reshape(-1, 7, 64)
+    val_slots_t = all_slots[n_train_seq:, :-1].reshape(-1, 7, 64)    # [3800, 7, 64]
+    val_slots_tp1 = all_slots[n_train_seq:, 1:].reshape(-1, 7, 64)
+
+    print(f"\n│  Train pairs: {len(train_slots_t)}", flush=True)
+    print(f"│  Val pairs: {len(val_slots_t)}", flush=True)
+
+    # Baseline: copy-previous MSE (predicting slots_t = slots_t+1)
+    copy_mse = F.mse_loss(val_slots_t, val_slots_tp1).item()
+    print(f"│  Copy-previous baseline MSE: {copy_mse:.6f}", flush=True)
+
+    # ── Train SlotPredictor ───────────────────────────────────
+    n_slots = 7
+    slot_dim = 64
+    pred_epochs = 200
+    batch_size = 64
+    lr = 1e-3
+
+    print(f"\n{'=' * 50}", flush=True)
+    print(f"Training SlotPredictor ({pred_epochs} epochs, lr={lr})", flush=True)
+    print("=" * 50, flush=True)
+
+    predictor = SlotPredictor(n_slots=n_slots, slot_dim=slot_dim, hidden_dim=256).to(device)
+    pred_params = sum(p.numel() for p in predictor.parameters())
+    print(f"│  Predictor params: {pred_params:,}", flush=True)
+
+    pred_opt = torch.optim.Adam(predictor.parameters(), lr=lr)
+    pred_sched = torch.optim.lr_scheduler.CosineAnnealingLR(pred_opt, T_max=pred_epochs, eta_min=1e-5)
+
+    best_val_loss = float('inf')
+    best_epoch = 0
+    patience_counter = 0
+    t_train = time.time()
+
+    for epoch in range(pred_epochs):
+        predictor.train()
+        perm = torch.randperm(len(train_slots_t))
+        ep_loss, nb = 0, 0
+
+        for i in range(0, len(train_slots_t), batch_size):
+            idx = perm[i:i+batch_size]
+            st = train_slots_t[idx].to(device)
+            st1 = train_slots_tp1[idx].to(device)
+
+            pred = predictor(st)
+            loss = F.mse_loss(pred, st1)
+
+            pred_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(predictor.parameters(), 1.0)
+            pred_opt.step()
+            ep_loss += loss.item(); nb += 1
+
+        pred_sched.step()
+
+        # Validation every 10 epochs + epoch 1
+        should_print = (epoch + 1) == 1 or (epoch + 1) % 10 == 0
+        if should_print:
+            predictor.eval()
+            with torch.no_grad():
+                val_preds = []
+                for vi in range(0, len(val_slots_t), 256):
+                    vb = val_slots_t[vi:vi+256].to(device)
+                    vp = predictor(vb)
+                    val_preds.append(vp.cpu())
+                val_preds = torch.cat(val_preds, dim=0)
+                val_loss = F.mse_loss(val_preds, val_slots_tp1).item()
+
+            improvement = (1 - val_loss / copy_mse) * 100
+            elapsed = time.time() - t_train
+            elapsed_ep = elapsed / (epoch + 1)
+            eta = elapsed_ep * (pred_epochs - epoch - 1)
+            print(f"│  Epoch {epoch+1:3d}/{pred_epochs}: "
+                  f"train={ep_loss/nb:.6f} val={val_loss:.6f} "
+                  f"vs_copy={improvement:.1f}% better "
+                  f"[{elapsed:.0f}s] ETA={eta:.0f}s ({eta/60:.0f}min)", flush=True)
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_epoch = epoch + 1
+                patience_counter = 0
+                torch.save(predictor.state_dict(), OUTPUT_DIR / "phase28_predictor.pt")
+            else:
+                patience_counter += 10  # increments by print interval
+
+            # Early stop on plateau
+            if patience_counter >= 30:
+                print(f"│  Early stop: no improvement for {patience_counter} epochs", flush=True)
+                break
+
+    print(f"│  Best val loss: {best_val_loss:.6f} at epoch {best_epoch}", flush=True)
+
+    # Load best model
+    predictor.load_state_dict(
+        torch.load(OUTPUT_DIR / "phase28_predictor.pt", map_location=device))
+    predictor.eval()
+
+    # ── Autoregressive evaluation ─────────────────────────────
+    print(f"\n┌─ Autoregressive Rollout Evaluation", flush=True)
+    print(f"│  Given frames 1-5, predict frames 6-10", flush=True)
+
+    val_seqs = all_slots[n_train_seq:]  # [200, 20, 7, 64]
+    n_context = 5
+    n_predict = 5
+
+    step_mses = []  # MSE at each prediction step
+    step_cosines = []  # cosine similarity at each step
+
+    with torch.no_grad():
+        for pred_step in range(n_predict):
+            if pred_step == 0:
+                # First prediction: use last context frame
+                input_slots = val_seqs[:, n_context - 1].to(device)  # [200, 7, 64]
+            else:
+                input_slots = pred_slots  # use previous prediction
+
+            pred_slots = predictor(input_slots)  # [200, 7, 64]
+            target_slots = val_seqs[:, n_context + pred_step].to(device)
+
+            mse = F.mse_loss(pred_slots, target_slots).item()
+            # Cosine similarity per slot, averaged
+            cos = F.cosine_similarity(
+                pred_slots.reshape(-1, slot_dim),
+                target_slots.reshape(-1, slot_dim), dim=-1).mean().item()
+
+            step_mses.append(mse)
+            step_cosines.append(cos)
+
+            print(f"│  Step {pred_step+1} (frame {n_context+pred_step+1}): "
+                  f"MSE={mse:.6f} cosine={cos:.4f}", flush=True)
+
+    print(f"│", flush=True)
+    print(f"│  1-step MSE: {step_mses[0]:.6f} (copy baseline: {copy_mse:.6f}, "
+          f"{(1-step_mses[0]/copy_mse)*100:.1f}% better)", flush=True)
+    print(f"│  5-step MSE: {step_mses[4]:.6f} "
+          f"(ratio to 1-step: {step_mses[4]/step_mses[0]:.2f}x)", flush=True)
+
+    # Success criteria
+    success_1step = step_mses[0] < 0.1 * slot_var
+    success_rollout = step_mses[4] < 2.0 * step_mses[0]
+    success_vs_copy = step_mses[0] < copy_mse
+
+    print(f"│", flush=True)
+    print(f"│  1-step < 0.1×variance ({0.1*slot_var:.6f}): "
+          f"{'YES' if success_1step else 'NO'}", flush=True)
+    print(f"│  5-step < 2× 1-step: "
+          f"{'YES' if success_rollout else 'NO'}", flush=True)
+    print(f"│  Better than copy: "
+          f"{'YES' if success_vs_copy else 'NO'}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Visualization ─────────────────────────────────────────
+    print(f"\n┌─ Generating visualizations", flush=True)
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    vis_seqs = [0, 1]
+    vis_frames = [0, 4, 5, 7, 9]  # frames 1,5,6,8,10
+    labels = ['f1', 'f5\n(last ctx)', 'f6\n(pred 1)', 'f8\n(pred 3)', 'f10\n(pred 5)']
+
+    fig, axes = plt.subplots(len(vis_seqs) * 2, len(vis_frames),
+                              figsize=(3 * len(vis_frames), 3 * len(vis_seqs) * 2))
+
+    with torch.no_grad():
+        for si_idx, si in enumerate(vis_seqs):
+            seq_slots = val_seqs[si]  # [20, 7, 64]
+
+            # Ground truth alpha masks for all frames
+            gt_alphas = {}
+            for fi in vis_frames:
+                slots_fi = seq_slots[fi:fi+1].to(device)
+                _, alpha = ae.decode(slots_fi)  # [1, 7, 256]
+                gt_alphas[fi] = alpha[0].cpu()
+
+            # Predicted alpha masks for frames 6-10
+            pred_alphas = {}
+            cur = seq_slots[n_context - 1:n_context].to(device)
+            for ps in range(n_predict):
+                cur = predictor(cur)
+                _, alpha = ae.decode(cur)
+                pred_alphas[n_context + ps] = alpha[0].cpu()
+
+            slot_colors = plt.cm.tab10(np.linspace(0, 1, 10))[:7, :3]
+            P = 16
+
+            for fi_idx, fi in enumerate(vis_frames):
+                # Row 1: ground truth slot masks
+                ax = axes[si_idx * 2, fi_idx]
+                alpha = gt_alphas[fi]  # [7, 256]
+                owner = alpha.argmax(dim=0).numpy().reshape(P, P)
+                owner_rgb = np.zeros((P, P, 3))
+                for s in range(7):
+                    owner_rgb[owner == s] = slot_colors[s]
+                owner_up = np.repeat(np.repeat(owner_rgb, 4, axis=0), 4, axis=1)
+                ax.imshow(owner_up)
+                ax.set_title(f"GT {labels[fi_idx]}", fontsize=8)
+                ax.axis('off')
+
+                # Row 2: predicted slot masks (use GT for context frames)
+                ax = axes[si_idx * 2 + 1, fi_idx]
+                if fi < n_context:
+                    alpha_p = gt_alphas[fi]
+                    title = f"(ctx) {labels[fi_idx]}"
+                else:
+                    alpha_p = pred_alphas[fi]
+                    title = f"Pred {labels[fi_idx]}"
+                owner_p = alpha_p.argmax(dim=0).numpy().reshape(P, P)
+                owner_rgb_p = np.zeros((P, P, 3))
+                for s in range(7):
+                    owner_rgb_p[owner_p == s] = slot_colors[s]
+                owner_up_p = np.repeat(np.repeat(owner_rgb_p, 4, axis=0), 4, axis=1)
+                ax.imshow(owner_up_p)
+                ax.set_title(title, fontsize=8)
+                ax.axis('off')
+
+    fig.suptitle(f"Phase 28: Slot JEPA — GT (top) vs Predicted (bottom)\n"
+                 f"1-step MSE={step_mses[0]:.6f}, 5-step MSE={step_mses[4]:.6f}",
+                 fontsize=11, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / "phase28_slot_jepa.png", dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"│  → results/phase28_slot_jepa.png", flush=True)
+
+    # Step-wise error plot
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+    steps = list(range(1, n_predict + 1))
+    ax1.plot(steps, step_mses, 'bo-', label='Predictor')
+    ax1.axhline(y=copy_mse, color='r', linestyle='--', label='Copy baseline')
+    ax1.set_xlabel('Prediction step')
+    ax1.set_ylabel('MSE')
+    ax1.set_title('Autoregressive MSE')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    ax2.plot(steps, step_cosines, 'go-')
+    ax2.set_xlabel('Prediction step')
+    ax2.set_ylabel('Cosine similarity')
+    ax2.set_title('Slot Cosine Similarity')
+    ax2.set_ylim(0, 1)
+    ax2.grid(True, alpha=0.3)
+
+    plt.suptitle('Phase 28: Autoregressive Rollout', fontsize=12, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / "phase28_rollout_error.png", dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"│  → results/phase28_rollout_error.png", flush=True)
+    print("└─ Done", flush=True)
+
+    elapsed = time.time() - t0
+    print(f"\n│  Total time: {elapsed:.0f}s ({elapsed/60:.1f}min)", flush=True)
+
+    return {
+        'best_val_loss': best_val_loss,
+        'copy_mse': copy_mse,
+        'step_mses': step_mses,
+        'step_cosines': step_cosines,
+        'slot_var': slot_var,
+        'success': success_1step and success_vs_copy,
+    }
 
 
 def run_phase27b_video_consistency():

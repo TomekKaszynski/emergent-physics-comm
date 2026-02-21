@@ -2208,6 +2208,46 @@ class SlotAttentionDINO(nn.Module):
         return total_loss, recon_loss, entropy_reg, recon_features, slots, alpha
 
 
+class SlotPredictor(nn.Module):
+    """Phase 28: Slot dynamics predictor (JEPA in slot space).
+
+    Takes all slots at time t (flattened) and predicts all slots at time t+1.
+    Joint prediction allows modeling inter-object interactions.
+
+    Architecture: MLP with LayerNorm, ~226K params.
+    Input: [B, n_slots * slot_dim] = [B, 448]
+    Output: [B, n_slots * slot_dim] = [B, 448]
+    """
+
+    def __init__(self, n_slots=7, slot_dim=64, hidden_dim=256):
+        super().__init__()
+        self.n_slots = n_slots
+        self.slot_dim = slot_dim
+        total_dim = n_slots * slot_dim  # 448
+
+        self.net = nn.Sequential(
+            nn.Linear(total_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, total_dim),
+        )
+
+    def forward(self, slots_t):
+        """Predict slots at t+1 from slots at t.
+
+        Args:
+            slots_t: [B, n_slots, slot_dim]
+        Returns:
+            slots_pred: [B, n_slots, slot_dim]
+        """
+        B = slots_t.shape[0]
+        flat = slots_t.reshape(B, -1)  # [B, n_slots * slot_dim]
+        pred_flat = self.net(flat)      # [B, n_slots * slot_dim]
+        return pred_flat.reshape(B, self.n_slots, self.slot_dim)
+
+
 def count_params(model):
     return sum(p.numel() for p in model.parameters())
 
