@@ -11088,6 +11088,256 @@ def run_phase27_dino_clevr():
     return norm_ent < 0.2
 
 
+def run_phase27b_video_consistency():
+    """Phase 27b Test 2: Video frame consistency (inference only).
+
+    Load saved SlotAttentionDINO model, generate physics sequences with
+    moving bouncing circles, encode every frame, track slot-object
+    assignments across frames via Hungarian matching on slot attention masks.
+    """
+    import time
+    import random
+    import numpy as np
+    import torch
+    import torch.nn.functional as F
+    from scipy.optimize import linear_sum_assignment
+
+    t0 = time.time()
+    print("=" * 60, flush=True)
+    print("PHASE 27b TEST 2: Video Frame Consistency (Inference Only)", flush=True)
+    print("=" * 60, flush=True)
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ── Load saved model ──────────────────────────────────────
+    print("\n┌─ Loading SlotAttentionDINO from results/phase27_model.pt", flush=True)
+    ae = SlotAttentionDINO(n_slots=7, slot_dim=64, img_size=64).to(device)
+    state = torch.load(OUTPUT_DIR / "phase27_model.pt", map_location=device)
+    ae.load_state_dict(state)
+    ae.eval()
+    print("│  Model loaded", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Generate physics sequences ────────────────────────────
+    n_sequences = 10
+    n_frames = 20
+    img_size = 64
+
+    palette = [
+        [1.0, 0.0, 0.0],    # red
+        [0.0, 1.0, 0.0],    # green
+        [0.0, 0.0, 1.0],    # blue
+        [1.0, 1.0, 0.0],    # yellow
+        [0.0, 1.0, 1.0],    # cyan
+        [1.0, 0.0, 1.0],    # magenta
+    ]
+
+    print(f"\n┌─ Generating {n_sequences} sequences, {n_frames} frames each", flush=True)
+    sequences = []  # list of [n_frames, 3, H, W] tensors
+    seq_objects = []  # list of object info per sequence
+
+    for seq_i in range(n_sequences):
+        n_obj = random.randint(2, 4)
+        S = img_size
+
+        # Initialize objects: position, velocity, radius, color
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(5, 10)
+            cx = random.uniform(r + 2, S - r - 3)
+            cy = random.uniform(r + 2, S - r - 3)
+            vx = random.uniform(-1.5, 1.5)
+            vy = random.uniform(-1.5, 1.5)
+            color = palette[oi % len(palette)]
+            objects.append({'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy, 'r': r, 'color': color})
+
+        frames = []
+        for fi in range(n_frames):
+            # Render frame
+            img = np.ones((S, S, 3), dtype=np.float32) * 0.5  # gray bg
+            for obj in objects:
+                r = obj['r']
+                cx, cy = int(round(obj['cx'])), int(round(obj['cy']))
+                color = np.array(obj['color'])
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if dx*dx + dy*dy <= r*r:
+                            px, py = cx + dx, cy + dy
+                            if 0 <= px < S and 0 <= py < S:
+                                img[py, px] = color
+
+            frames.append(img.transpose(2, 0, 1))  # CHW
+
+            # Physics step: linear motion + wall bounce
+            for obj in objects:
+                obj['cx'] += obj['vx']
+                obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0:
+                    obj['cx'] = r
+                    obj['vx'] *= -1
+                if obj['cx'] + r >= S:
+                    obj['cx'] = S - r - 1
+                    obj['vx'] *= -1
+                if obj['cy'] - r < 0:
+                    obj['cy'] = r
+                    obj['vy'] *= -1
+                if obj['cy'] + r >= S:
+                    obj['cy'] = S - r - 1
+                    obj['vy'] *= -1
+
+        sequences.append(torch.tensor(np.array(frames), dtype=torch.float32))
+        seq_objects.append(n_obj)
+
+    print(f"│  Objects per sequence: {seq_objects}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Encode all frames and extract slot masks ──────────────
+    print(f"\n┌─ Encoding frames with SlotAttentionDINO", flush=True)
+    all_seq_alphas = []  # [n_seq][n_frames] of [K, 256] alpha masks
+
+    with torch.no_grad():
+        for seq_i, seq_frames in enumerate(sequences):
+            seq_alphas = []
+            # Process frames one at a time (inference)
+            for fi in range(n_frames):
+                frame = seq_frames[fi:fi+1].to(device)  # [1, 3, H, W]
+                _, _, _, _, _, alpha = ae(frame, training=False)
+                # alpha: [1, K, 256]
+                seq_alphas.append(alpha[0].cpu())  # [K, 256]
+            all_seq_alphas.append(seq_alphas)
+            if device.type == 'mps':
+                torch.mps.empty_cache()
+
+    print(f"│  Encoded {n_sequences * n_frames} frames", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Track consistency via Hungarian matching ──────────────
+    print(f"\n┌─ Computing slot-object consistency", flush=True)
+
+    consistency_scores = []
+
+    for seq_i in range(n_sequences):
+        alphas = all_seq_alphas[seq_i]  # list of [K, 256]
+        n_frames_seq = len(alphas)
+
+        # Use frame 0 as reference assignment
+        ref_alpha = alphas[0]  # [K, 256]
+
+        # For each subsequent frame, find best slot permutation via Hungarian
+        # matching (maximize IoU between reference and current slot masks)
+        frame_matches = []  # list of permutation arrays
+
+        for fi in range(1, n_frames_seq):
+            cur_alpha = alphas[fi]  # [K, 256]
+
+            # Compute cost matrix: negative IoU between ref slot i and cur slot j
+            # Use hard assignments for IoU
+            ref_assign = ref_alpha.argmax(dim=0)  # [256]
+            cur_assign = cur_alpha.argmax(dim=0)  # [256]
+
+            K = ref_alpha.shape[0]
+            cost = np.zeros((K, K))
+            for si in range(K):
+                ref_mask = (ref_assign == si)
+                for sj in range(K):
+                    cur_mask = (cur_assign == sj)
+                    intersection = (ref_mask & cur_mask).float().sum().item()
+                    union = (ref_mask | cur_mask).float().sum().item()
+                    iou = intersection / (union + 1e-8)
+                    cost[si, sj] = -iou  # negative for minimization
+
+            row_ind, col_ind = linear_sum_assignment(cost)
+            frame_matches.append(col_ind)
+
+        # Consistency: for each frame, check if the permutation is identity
+        # (same slot tracks same region across frames)
+        # More nuanced: track which slots are "active" (cover >2% of patches)
+        ref_assign = alphas[0].argmax(dim=0)  # [256]
+        active_slots = []
+        for s in range(alphas[0].shape[0]):
+            if (ref_assign == s).float().mean().item() > 0.02:
+                active_slots.append(s)
+
+        n_consistent = 0
+        n_total = 0
+        for fi, perm in enumerate(frame_matches):
+            for s in active_slots:
+                n_total += 1
+                if perm[s] == s:
+                    n_consistent += 1
+
+        consistency = n_consistent / max(n_total, 1)
+        consistency_scores.append(consistency)
+        print(f"│  Seq {seq_i}: {consistency*100:.1f}% consistent "
+              f"({len(active_slots)} active slots, {seq_objects[seq_i]} objects)",
+              flush=True)
+
+    avg_consistency = np.mean(consistency_scores)
+    print(f"│")
+    print(f"│  Average consistency: {avg_consistency*100:.1f}%", flush=True)
+    print(f"│  Target: 80%+", flush=True)
+    print(f"│  {'SUCCESS' if avg_consistency >= 0.8 else 'BELOW TARGET'}", flush=True)
+    print("└─ Done", flush=True)
+
+    # ── Visualize 2 sequences ─────────────────────────────────
+    print(f"\n┌─ Generating visualizations", flush=True)
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    vis_frames = [0, 4, 9, 14, 19]  # frames 1, 5, 10, 15, 20
+    vis_seqs = [0, 1]
+
+    fig, axes = plt.subplots(
+        len(vis_seqs) * 2, len(vis_frames),
+        figsize=(3 * len(vis_frames), 3 * len(vis_seqs) * 2))
+
+    for si_idx, si in enumerate(vis_seqs):
+        alphas = all_seq_alphas[si]
+        seq_frames = sequences[si]
+
+        for fi_idx, fi in enumerate(vis_frames):
+            # Row 1: original frame
+            ax = axes[si_idx * 2, fi_idx]
+            frame_img = seq_frames[fi].permute(1, 2, 0).numpy()
+            ax.imshow(frame_img)
+            ax.set_title(f"Seq {si} Frame {fi+1}", fontsize=8)
+            ax.axis('off')
+
+            # Row 2: slot mask visualization (argmax ownership, colored)
+            ax = axes[si_idx * 2 + 1, fi_idx]
+            alpha = alphas[fi]  # [K, 256]
+            ownership = alpha.argmax(dim=0)  # [256]
+            # Reshape to 16x16 and upscale to 64x64
+            mask_16 = ownership.reshape(16, 16).numpy()
+            # Create RGB visualization
+            slot_colors = plt.cm.tab10(np.linspace(0, 1, 10))[:7, :3]
+            mask_rgb = np.zeros((16, 16, 3))
+            for s in range(7):
+                mask_rgb[mask_16 == s] = slot_colors[s]
+            # Nearest-neighbor upscale to 64x64
+            mask_rgb_up = np.repeat(np.repeat(mask_rgb, 4, axis=0), 4, axis=1)
+            ax.imshow(mask_rgb_up)
+            ax.set_title(f"Slots f{fi+1}", fontsize=8)
+            ax.axis('off')
+
+    plt.suptitle(f"Phase 27b Test 2: Video Consistency — Avg {avg_consistency*100:.1f}%",
+                 fontsize=12, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / "phase27b_video_consistency.png", dpi=150,
+                bbox_inches='tight')
+    plt.close()
+    print(f"│  → results/phase27b_video_consistency.png", flush=True)
+    print("└─ Done", flush=True)
+
+    elapsed = time.time() - t0
+    print(f"\n│  Total time: {elapsed:.0f}s", flush=True)
+
+    return avg_consistency >= 0.8
+
+
 def run_phase26f():
     """Phase 26f: Match Original Slot Attention (Research-Informed).
 
