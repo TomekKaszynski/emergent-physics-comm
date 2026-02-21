@@ -264,6 +264,55 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
   Eval: entropy=0.232, 7/7 active, max_cov=29.6%
 - **Verdict:** 5 iters significantly better than 3 (0.232 vs 0.362). Improvement of 0.130 — well above 0.03 threshold. Near-perfect even distribution (29% max_cov with 7 slots = 1/7 = 14% ideal). Still dropping at epoch 100, not fully plateaued. Next: try 7 iters.
 
+### Phase 27b Test 1: SA iterations ablation (7 iters)
+**Date:** Feb 21
+
+- **Change:** SA iterations 5→7 in SlotAttentionDINO. Everything else identical.
+- **Config:** 100 epochs, batch=32, 7 slots, constant LR 4e-4, warmup 30
+- **Result:**
+  ```
+  Ep   1: recon=6.6824 entropy=1.000 active=5/7
+  Ep   5: recon=2.7099 entropy=1.000 active=1/7 max_cov=99.2%  ← winner-take-all
+  Ep  10: recon=2.5086 entropy=1.000 active=2/7 max_cov=95.3%
+  Ep  15: recon=1.7693 entropy=0.967 active=7/7 max_cov=19.3%  ← recovered
+  Ep  25: recon=1.5159 entropy=0.559 active=7/7
+  Ep  50: recon=1.2849 entropy=0.323 active=7/7
+  Ep 100: recon=1.0752 entropy=0.268 active=7/7 max_cov=30.0%
+  ```
+  Eval: entropy=0.266, 7/7 active, max_cov=30.0%
+- **Verdict:** 7 iters worse than 5 (0.266 vs 0.232). Early winner-take-all collapse (epochs 5-10, 1-2 slots grabbed 95-99% coverage) before recovering at epoch 15. Too many iterations over-sharpens attention early, causing one slot to dominate before others can differentiate.
+
+### Phase 27b Test 2: SA iterations ablation (6 iters)
+**Date:** Feb 21
+
+- **Change:** SA iterations 7→6 in SlotAttentionDINO. Only 50 epochs (enough to compare trajectory).
+- **Config:** 50 epochs, batch=32, 7 slots, constant LR 4e-4, warmup 30
+- **Result:**
+  ```
+  Ep   1: recon=6.6766 entropy=1.000 active=5/7
+  Ep   5: recon=2.6107 entropy=1.000 active=2/7 max_cov=95.3%  ← similar early collapse
+  Ep  10: recon=2.2732 entropy=0.996 active=7/7 max_cov=27.4%
+  Ep  15: recon=1.6965 entropy=0.753 active=7/7
+  Ep  20: recon=1.5407 entropy=0.717 active=7/7
+  Ep  25: recon=1.4697 entropy=0.676 active=7/7
+  Ep  30: recon=1.4021 entropy=0.546 active=7/7
+  Ep  40: recon=1.2737 entropy=0.452 active=7/7
+  Ep  50: recon=1.2116 entropy=0.402 active=7/7 max_cov=31.7%
+  ```
+  Eval: entropy=0.405, 7/7 active, max_cov=33.0%
+- **Verdict:** 6 iters at epoch 50 (0.402) is worse than 5 iters at epoch 50 (0.255). Also shows early winner-take-all tendency (epoch 5: 95.3% max_cov), similar to 7 iters. Confirms 5 iters is the sweet spot.
+
+### SA Iterations Comparison Summary
+
+| Iters | Entropy@50ep | Entropy@100ep | Early collapse? | Winner-take-all? |
+|-------|-------------|---------------|-----------------|------------------|
+| 3     | 0.365       | 0.368         | No              | No               |
+| **5** | **0.255**   | **0.232**     | **No**          | **No**           |
+| 6     | 0.402       | —             | Yes (ep 5)      | Mild             |
+| 7     | 0.323       | 0.266         | Yes (ep 5)      | Severe           |
+
+**Finding:** 5 iterations is optimal. More iterations (6, 7) cause early winner-take-all collapse where 1-2 slots grab >95% coverage before recovering. While 7 iters eventually reaches 0.266, it never catches up to 5 iters (0.232). The over-sharpening from extra iterations is counterproductive with per-slot learnable init.
+
 ## Current State (Feb 21)
 
-DINOv2 + 5 SA iters: entropy 0.232, 7/7 slots, 29% max_cov. Best result yet. Testing 7 iters next.
+DINOv2 + 5 SA iters: entropy 0.232, 7/7 slots, 29% max_cov. Best result yet. n_iters=5 confirmed as optimal via ablation (tested 3/5/6/7). Ready for next phase.
