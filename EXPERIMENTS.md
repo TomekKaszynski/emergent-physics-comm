@@ -1355,3 +1355,38 @@ Position decoder: Linear(64→2), trained on slot→(cx,cy) pairs. Decode error:
 - Remaining 15.5% mass errors likely from: (a) noisy perceived velocities making DV ratios imprecise, (b) collisions too brief or mild to detect with threshold, (c) some scenarios with few/no detectable collisions
 - Gap analysis: 15.5% wrong mass × ~100% failure ≈ 15.5pp potential loss, close to observed 11.5pp gap
 - **Next steps:** Lower collision detection thresholds, or use larger observation windows (more frames = more collisions), or combine collision DV ratios with trajectory features in a learned classifier
+
+---
+
+## Phase 37c: Matched-Distribution Mass Classifier
+**Date:** Feb 22 | **Duration:** 805s (~13 min) | **Verdict:** PARTIAL
+
+**Setup:** Same as 37b except: train mass classifier on perceived features (from rendered training sequences) instead of GT collision features. Render all 2000 training sequences as pixels, perceive them with the same pipeline (corner BG, hue COM, collision detection), extract noisy collision features, train classifier on those. Classifier learns what noisy DV ratios look like for heavy vs light objects. JEPA still trained on GT states. Same test pipeline.
+
+**Classifier training on perceived features:**
+- Val accuracy: 88.3% (vs 99.8% when trained on GT features in 37b)
+- Lower ceiling but matched to test distribution
+
+**Perception quality:**
+- Position error: **0.41px** (unchanged)
+- Mass inference (perceived features, matched clf): **89.5%** (target >92%) — improved from 84.5% in 37b (+5pp)
+- Mass inference (GT features, matched clf): 100.0%
+
+**Results:**
+| Planner | Success (10px) | Mean dist | Median dist |
+|---|---|---|---|
+| **Pixel pipeline** | **74.5%** | 7.57px | 4.65px |
+| GT state (36f) | 83.5% | 5.31px | 3.19px |
+| Oracle closed-loop | 94.5% | 2.87px | 0.59px |
+| Random | 11.5% | 22.26px | 21.28px |
+
+- Pixel vs GT gap: **9.0pp** (74.5% vs 83.5%) — narrowed from 11.5pp in 37b, 18.5pp in 37
+- Planning improved +2.5pp (72% → 74.5%), mass improved +5pp (84.5% → 89.5%)
+
+**Key insights:**
+- Training classifier on matched noisy features **works** — mass accuracy 84.5% → 89.5%
+- The idea is sound: classifier now expects noisy DV ratios, missed collisions, proximity artifacts
+- Still 10.5% mass errors — some scenarios genuinely hard (few collisions, similar speeds)
+- Rendering 2000 training sequences took ~690s (CPU-heavy perception pipeline)
+- Gap closing steadily: 18.5pp (37) → 11.5pp (37b) → 9.0pp (37c)
+- Remaining gap (9pp) approaches the theoretical minimum given ~10% mass error rate
