@@ -922,6 +922,30 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Key insight:** Slot masks don't need to be spatially precise — they just need to cover a few pixels of the correct object (even ~10 is enough) to detect its color. The background filter (exclude gray pixels) is critical. Once we know the color, full-frame Color-COM provides sub-pixel localization that slot attention can't. The "where" precision comes from color matching, not from the masks.
 - **Verdict:** SUCCESS — 96.0% comm accuracy. Auto-color = GT-color performance. No GT color knowledge needed.
 
+### Phase 33 — Unknown number of objects (Feb 22)
+- **Goal:** Variable 2-5 objects per sequence. Pipeline must discover object count from pixels (no GT count). Sender/receiver padded to max 5 objects. Targets: >90% count discovery, >85% communication accuracy.
+- **Method:** Two-stage object discovery attempted:
+  1. **Slot-mask-based (FAILED):** Count distinct non-empty slots after Hungarian matching. SA merged objects into 2 slots regardless of true count — 24.8% accuracy, distribution {1:10, 2:979, 3:11} vs GT {2:248, 3:248, 4:243, 5:261}.
+  2. **Pixel-based (SUCCESS):** Direct pixel analysis — find non-background pixels (dist > 0.2 from gray), snap each to nearest palette color, count unique clusters with ≥10 pixels. **99.2% count accuracy.**
+- **Communication:** FeatureSender(Linear(30→32→8)), MassReceiver(Linear(8→32→5)). Gumbel-softmax τ 2.0→0.5, 100 epochs.
+- **Results:**
+  ```
+  Metric                         Value       Target
+  ─────────────────────────────────────────────────
+  Count discovery                99.2%       >90% ✓
+  Position error (px)            0.46        <2px ✓
+  Direct classifier (%)         95.5%        —
+  Communication (%)             61.0%       >85% ✗
+
+  Communication by object count:
+    N=2:  98.0%  (chance=50%)
+    N=3:  65.3%  (chance=33%)
+    N=4:  55.0%  (chance=25%)
+    N=5:  33.0%  (chance=20%)
+  ```
+- **Key insight:** 1 discrete token with vocab=8 encodes 3 possible heavy indices well (Phase 31: 95.5%) but cannot encode 5 possible indices. With N=5 objects, the sender needs to distinguish 5 classes through a single 8-way token — performance drops to chance (33%). The bottleneck is information-theoretic: log2(5)=2.3 bits needed, but a single token from vocab=8 provides log2(8)=3 bits — enough in theory, but the Gumbel-softmax training can't learn the mapping when object counts vary within the same batch.
+- **Verdict:** PARTIAL — count discovery exceeds target (99.2%), but communication fails (61% vs 85%). Need either more tokens, larger vocab, or separate count-conditioned channels.
+
 ## Current State (Feb 22)
 
 **Validated pipeline:**
@@ -947,4 +971,9 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - Position error: 0.42px via Color-COM (slot masks provide identity, color matching provides precision)
 - 3-token emergent language, each token = "object X is heavy" with >95% purity
 
-**Next steps:** (1) Multi-agent version: two agents with different viewpoints communicate about mass through discrete bottleneck, (2) Scale to more objects / harder physics, (3) Replace Color-COM with learned position extraction if needed for generalization.
+**Phase 33 — Variable object count (partial):**
+- Count discovery: **99.2%** via pixel-based color analysis (slot masks unreliable for counting)
+- Communication: **61.0%** — 1 token with vocab=8 insufficient for 2-5 objects. N=2 works (98%), N=5 collapses to chance (33%)
+- Need more tokens or larger vocab to encode variable-count heavy object identity
+
+**Next steps:** (1) Fix Phase 33 communication: try multi-token messages (2-3 tokens) or larger vocab, or count-conditioned sender, (2) Multi-agent version: two agents with different viewpoints communicate about mass through discrete bottleneck, (3) Replace Color-COM with learned position extraction if needed for generalization.

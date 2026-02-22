@@ -2633,6 +2633,49 @@ class SlotRefineNet(nn.Module):
         return self.head(h)
 
 
+class SlotPositionNet(nn.Module):
+    """Phase 29o: 'Where' pathway — full-frame position estimation per slot.
+
+    Shared conv backbone processes entire frame + all slot masks [10, 64, 64].
+    Per-slot readout uses downsampled mask as spatial attention over conv features
+    to predict (x, y) position in [0, 1] normalized coordinates.
+
+    Input: [B, 10, 64, 64] (3 RGB + 7 slot masks)
+    Output: [B, n_slots, 2] (x, y per slot)
+    """
+
+    def __init__(self, n_slots=7):
+        super().__init__()
+        self.n_slots = n_slots
+        self.backbone = nn.Sequential(
+            nn.Conv2d(3 + n_slots, 32, 5, stride=2, padding=2), nn.ReLU(),  # [32, 32, 32]
+            nn.Conv2d(32, 64, 3, stride=2, padding=1), nn.ReLU(),           # [64, 16, 16]
+            nn.Conv2d(64, 64, 3, stride=2, padding=1), nn.ReLU(),           # [64, 8, 8]
+        )
+        self.head = nn.Linear(64, 2)
+
+    def forward(self, x):
+        """x: [B, 10, 64, 64] → [B, n_slots, 2]"""
+        B = x.shape[0]
+        masks = x[:, 3:, :, :]  # [B, 7, 64, 64]
+        features = self.backbone(x)  # [B, 64, 8, 8]
+
+        # Downsample masks to 8×8
+        masks_down = F.interpolate(masks, size=(8, 8), mode='bilinear',
+                                   align_corners=False)  # [B, 7, 8, 8]
+
+        positions = []
+        for s in range(self.n_slots):
+            mask_s = masks_down[:, s:s+1, :, :]  # [B, 1, 8, 8]
+            weighted = features * mask_s  # [B, 64, 8, 8]
+            mask_sum = mask_s.sum(dim=(-2, -1), keepdim=True) + 1e-8  # [B, 1, 1, 1]
+            pooled = weighted.sum(dim=(-2, -1)) / mask_sum.squeeze(-1).squeeze(-1)  # [B, 64]
+            pos = torch.sigmoid(self.head(pooled))  # [B, 2] in [0, 1]
+            positions.append(pos)
+
+        return torch.stack(positions, dim=1)  # [B, n_slots, 2]
+
+
 def count_params(model):
     return sum(p.numel() for p in model.parameters())
 
