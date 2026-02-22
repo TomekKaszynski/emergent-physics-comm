@@ -15793,6 +15793,808 @@ def run_phase33c_comparative_comm():
     print(f"{'=' * 70}", flush=True)
 
 
+def run_phase36f_closed_loop():
+    """Phase 36f: Closed-loop replanning — replan at every step using 1-step JEPA.
+
+    Same setup as 36e except: at each of K=5 steps, observe actual state,
+    CEM plan best single force (2D, 128 cand, 3 rounds) using 1-step JEPA,
+    execute in real physics, repeat. No autoregressive error accumulation.
+    Target: >70% full pipeline, oracle >85%.
+    """
+    import random
+    import math
+    import copy
+
+    print("=" * 70, flush=True)
+    print("PHASE 36f: Closed-Loop Replanning — 1-step JEPA at each step", flush=True)
+    print("  observe → infer mass → [replan + act] × K=5 → measure", flush=True)
+    print("=" * 70, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    n_obj = 3
+    slot_dim = 64
+    S = 64
+    vmax = 10.0
+    K = 5
+    n_candidates = 128
+    n_elite = 16
+    n_rounds = 3
+    force_range = 0.5
+    success_thresh = 10.0
+
+    # ══════════════════════════════════════════════════════════
+    # Physics helpers (same as 36c-36e)
+    # ══════════════════════════════════════════════════════════
+    def physics_step(objects, track_collisions=False):
+        n = len(objects)
+        collisions = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                oi_o, oj_o = objects[i], objects[j]
+                dx_c = oj_o['cx'] - oi_o['cx']
+                dy_c = oj_o['cy'] - oi_o['cy']
+                dist = math.hypot(dx_c, dy_c)
+                min_dist = oi_o['r'] + oj_o['r']
+                if dist < min_dist and dist > 0.1:
+                    nx, ny = dx_c / dist, dy_c / dist
+                    dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                          (oi_o['vy'] - oj_o['vy']) * ny
+                    if dvn > 0:
+                        m1, m2 = oi_o['mass'], oj_o['mass']
+                        imp = 2 * dvn / (m1 + m2)
+                        dv_i = imp * m2
+                        dv_j = imp * m1
+                        if track_collisions:
+                            collisions.append((i, j, dv_i, dv_j))
+                        oi_o['vx'] -= imp * m2 * nx
+                        oi_o['vy'] -= imp * m2 * ny
+                        oj_o['vx'] += imp * m1 * nx
+                        oj_o['vy'] += imp * m1 * ny
+                        overlap = min_dist - dist
+                        oi_o['cx'] -= overlap * nx * 0.5
+                        oi_o['cy'] -= overlap * ny * 0.5
+                        oj_o['cx'] += overlap * nx * 0.5
+                        oj_o['cy'] += overlap * ny * 0.5
+        for obj in objects:
+            obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+            r = obj['r']
+            if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+            if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+            if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+            if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+        return collisions if track_collisions else None
+
+    def objects_to_state(objects):
+        state = np.zeros((len(objects), 6), dtype=np.float32)
+        for oi, obj in enumerate(objects):
+            state[oi] = [
+                obj['cx'] / S, obj['cy'] / S,
+                obj['vx'] / vmax, obj['vy'] / vmax,
+                obj['r'] / S, obj['mass'] / 3.0,
+            ]
+        return state
+
+    def extract_collision_features(positions, collision_dvs):
+        pos = torch.tensor(positions, dtype=torch.float32)
+        v = pos[1:] - pos[:-1]
+        speed = v.norm(dim=-1)
+        dv = v[1:] - v[:-1]
+        dv_mag = dv.norm(dim=-1)
+        dv_threshold = 0.02
+        coll_mask = dv_mag > dv_threshold
+        n_coll = coll_mask.float().sum().item()
+        avg_dv_coll = dv_mag[coll_mask].mean().item() if n_coll > 0 else 0.0
+        max_dv = dv_mag.max().item()
+        avg_speed = speed.mean().item()
+        speed_var = speed.var().item()
+        if len(collision_dvs) > 0:
+            ratios = [my / partner for my, partner in collision_dvs if partner > 1e-8]
+            avg_dv_ratio = np.mean(ratios) if ratios else 1.0
+        else:
+            avg_dv_ratio = 1.0
+        n_frames = len(positions)
+        return [avg_dv_ratio, avg_dv_coll, max_dv,
+                avg_speed, speed_var, n_coll / max(n_frames - 2, 1)]
+
+    def generate_sequences(n_sequences, n_frames, seed, with_interventions=False):
+        random.seed(seed)
+        np.random.seed(seed)
+        all_states, all_actions, all_positions = [], [], []
+        all_collision_dvs, all_masses, all_heavy_idx = [], [], []
+        for seq_i in range(n_sequences):
+            masses = [1.0, 1.0, 1.0]
+            heavy_idx = random.randint(0, n_obj - 1)
+            masses[heavy_idx] = 3.0
+            objects = []
+            for oi in range(n_obj):
+                r = random.randint(6, 9)
+                for _attempt in range(100):
+                    cx = random.uniform(r + 3, S - r - 4)
+                    cy = random.uniform(r + 3, S - r - 4)
+                    ok = True
+                    for prev in objects:
+                        if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                            ok = False; break
+                    if ok: break
+                vx = random.uniform(-5.0, 5.0)
+                vy = random.uniform(-5.0, 5.0)
+                objects.append({'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                                'r': r, 'mass': masses[oi]})
+            intervention_plan = {}
+            if with_interventions:
+                n_interventions = random.randint(2, 4)
+                intervention_frames = sorted(random.sample(range(5, n_frames - 5), n_interventions))
+                for fi in intervention_frames:
+                    target_obj = random.randint(0, n_obj - 1)
+                    mag = random.uniform(2.0, 6.0)
+                    angle = random.uniform(0, 2 * math.pi)
+                    intervention_plan[fi] = (target_obj, mag * math.cos(angle), mag * math.sin(angle))
+            seq_states, seq_actions = [], {}
+            obj_positions = [[None] * n_frames for _ in range(n_obj)]
+            obj_collision_dvs = [[] for _ in range(n_obj)]
+            for fi in range(n_frames):
+                seq_states.append(objects_to_state(objects))
+                for oi in range(n_obj):
+                    obj_positions[oi][fi] = [objects[oi]['cx'] / S, objects[oi]['cy'] / S]
+                if fi in intervention_plan:
+                    target_obj, fx, fy = intervention_plan[fi]
+                    objects[target_obj]['vx'] += fx
+                    objects[target_obj]['vy'] += fy
+                    seq_actions[fi] = (target_obj, fx / vmax, fy / vmax)
+                collisions = physics_step(objects, track_collisions=True)
+                for (ci, cj, dv_i, dv_j) in collisions:
+                    obj_collision_dvs[ci].append((dv_i, dv_j))
+                    obj_collision_dvs[cj].append((dv_j, dv_i))
+            all_states.append(np.array(seq_states))
+            all_actions.append(seq_actions)
+            all_positions.append(obj_positions)
+            all_collision_dvs.append(obj_collision_dvs)
+            all_masses.append(masses)
+            all_heavy_idx.append(heavy_idx)
+            if (seq_i + 1) % 500 == 0:
+                print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+        return (all_states, all_actions, all_positions,
+                all_collision_dvs, all_masses, all_heavy_idx)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 1: Generate training + test data
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 1: Generate training (2000) + test (200) sequences", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t1 = time.time()
+
+    n_train_seq = 2000
+    n_test_seq = 200
+    n_frames = 40
+
+    (train_states, train_actions, train_positions,
+     train_collision_dvs, train_masses, train_heavy_idx) = \
+        generate_sequences(n_train_seq, n_frames, seed=42, with_interventions=True)
+    (test_states, test_actions, test_positions,
+     test_collision_dvs, test_masses, test_heavy_idx) = \
+        generate_sequences(n_test_seq, n_frames, seed=999, with_interventions=False)
+
+    test_coll_counts = []
+    for seq_i in range(n_test_seq):
+        n_colls = sum(len(dvs) for dvs in test_collision_dvs[seq_i])
+        test_coll_counts.append(n_colls)
+    avg_test_coll = np.mean(test_coll_counts)
+    no_coll = sum(1 for c in test_coll_counts if c == 0)
+    print(f"│  Test sequences: avg collisions={avg_test_coll:.1f}, "
+          f"no collisions={no_coll}/{n_test_seq}", flush=True)
+    print(f"└─ Stage 1 done [{time.time()-t1:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 2: Train JEPA
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 2: Train JEPA on training data", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t2 = time.time()
+
+    states_t_list, states_tp1_list, actions_list = [], [], []
+    for seq_i in range(n_train_seq):
+        states = train_states[seq_i]
+        actions = train_actions[seq_i]
+        for fi in range(n_frames - 1):
+            states_t_list.append(states[fi])
+            states_tp1_list.append(states[fi + 1])
+            if fi in actions:
+                obj_idx, fx, fy = actions[fi]
+                action_vec = np.zeros(n_obj + 2, dtype=np.float32)
+                action_vec[obj_idx] = 1.0
+                action_vec[n_obj] = fx
+                action_vec[n_obj + 1] = fy
+                actions_list.append(action_vec)
+            else:
+                actions_list.append(np.zeros(n_obj + 2, dtype=np.float32))
+
+    states_t_np = np.array(states_t_list)
+    states_tp1_np = np.array(states_tp1_list)
+    actions_np = np.array(actions_list)
+
+    torch.manual_seed(42)
+    state_proj = nn.Linear(6, slot_dim, bias=False)
+    nn.init.orthogonal_(state_proj.weight)
+    state_proj = state_proj.to(device)
+    for p in state_proj.parameters():
+        p.requires_grad = False
+
+    states_t_raw = torch.tensor(states_t_np, dtype=torch.float32).to(device)
+    states_tp1_raw = torch.tensor(states_tp1_np, dtype=torch.float32).to(device)
+    with torch.no_grad():
+        slots_t = state_proj(states_t_raw)
+        slots_tp1 = state_proj(states_tp1_raw)
+    actions_t = torch.tensor(actions_np, dtype=torch.float32).to(device)
+
+    N = len(states_t_np)
+    n_train = int(0.8 * N)
+    perm = torch.randperm(N)
+    tr_slots_t = slots_t[perm[:n_train]]
+    tr_slots_tp1 = slots_tp1[perm[:n_train]]
+    tr_actions = actions_t[perm[:n_train]]
+
+    from world_model import ActionConditionedPredictor
+
+    torch.manual_seed(42)
+    jepa = ActionConditionedPredictor(
+        n_slots=n_obj, slot_dim=slot_dim, action_dim=64, hidden_dim=256).to(device)
+    jepa_opt = torch.optim.Adam(jepa.parameters(), lr=3e-4)
+
+    jepa_params = sum(p.numel() for p in jepa.parameters())
+    print(f"│  JEPA: {jepa_params:,} params", flush=True)
+    print(f"│  Training: 100 epochs, {N} pairs ({n_train} train)", flush=True)
+
+    batch_size = 256
+    for epoch in range(1, 101):
+        jepa.train()
+        ep_perm = torch.randperm(n_train, device=device)
+        ep_loss = 0.0
+        for start in range(0, n_train, batch_size):
+            idx = ep_perm[start:start + batch_size]
+            pred = jepa(tr_slots_t[idx], tr_actions[idx])
+            loss = F.mse_loss(pred, tr_slots_tp1[idx])
+            jepa_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(jepa.parameters(), 1.0)
+            jepa_opt.step()
+            ep_loss += loss.item() * len(idx)
+        if epoch % 25 == 0 or epoch == 1:
+            print(f"│    JEPA Epoch {epoch:3d}: loss={ep_loss/n_train:.6f}", flush=True)
+
+    print(f"└─ Stage 2 done [{time.time()-t2:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 3: Train Position Decoder
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 3: Train Position Decoder (slot → xy)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t3 = time.time()
+
+    gt_pos = states_t_raw[:, :, :2]
+    all_slots_flat = slots_t.reshape(-1, slot_dim)
+    all_pos_flat = gt_pos.reshape(-1, 2)
+
+    n_dec_train = int(0.8 * len(all_slots_flat))
+    dec_perm = torch.randperm(len(all_slots_flat))
+    tr_dec_slots = all_slots_flat[dec_perm[:n_dec_train]]
+    tr_dec_pos = all_pos_flat[dec_perm[:n_dec_train]]
+    vl_dec_slots = all_slots_flat[dec_perm[n_dec_train:]]
+    vl_dec_pos = all_pos_flat[dec_perm[n_dec_train:]]
+
+    pos_decoder = nn.Linear(slot_dim, 2).to(device)
+    dec_opt = torch.optim.Adam(pos_decoder.parameters(), lr=1e-3)
+
+    for epoch in range(1, 51):
+        pos_decoder.train()
+        ep_perm = torch.randperm(n_dec_train, device=device)
+        for start in range(0, n_dec_train, 1024):
+            idx = ep_perm[start:start + 1024]
+            pred = pos_decoder(tr_dec_slots[idx])
+            loss = F.mse_loss(pred, tr_dec_pos[idx])
+            dec_opt.zero_grad()
+            loss.backward()
+            dec_opt.step()
+
+    pos_decoder.eval()
+    with torch.no_grad():
+        vl_pred = pos_decoder(vl_dec_slots)
+        dec_err = ((vl_pred - vl_dec_pos) * S).norm(dim=-1)
+        dec_mean = dec_err.mean().item()
+    print(f"│  Decoder val error: mean={dec_mean:.3f}px", flush=True)
+    print(f"└─ Stage 3 done [{time.time()-t3:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 4: Train Mass Classifier
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 4: Train Mass Classifier", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t4 = time.time()
+
+    clf_features = []
+    clf_labels = []
+    for seq_i in range(n_train_seq):
+        for oi in range(n_obj):
+            feat = extract_collision_features(
+                train_positions[seq_i][oi],
+                train_collision_dvs[seq_i][oi])
+            clf_features.append(feat)
+            clf_labels.append(1.0 if train_masses[seq_i][oi] == 3.0 else 0.0)
+
+    clf_features = torch.tensor(clf_features, dtype=torch.float32)
+    clf_labels = torch.tensor(clf_labels, dtype=torch.float32)
+
+    n_clf_train = int(0.8 * len(clf_labels))
+    clf_perm = torch.randperm(len(clf_labels))
+    tr_clf_feats = clf_features[clf_perm[:n_clf_train]].to(device)
+    tr_clf_labels = clf_labels[clf_perm[:n_clf_train]].to(device)
+    vl_clf_feats = clf_features[clf_perm[n_clf_train:]].to(device)
+    vl_clf_labels = clf_labels[clf_perm[n_clf_train:]].to(device)
+
+    n_heavy = int(clf_labels.sum().item())
+    n_light = len(clf_labels) - n_heavy
+    print(f"│  Classifier data: {len(clf_labels)} samples (light={n_light}, heavy={n_heavy})", flush=True)
+
+    clf = nn.Sequential(
+        nn.Linear(6, 32),
+        nn.ReLU(),
+        nn.Linear(32, 1),
+    ).to(device)
+    clf_params = sum(p.numel() for p in clf.parameters())
+    print(f"│  Classifier: {clf_params} params", flush=True)
+
+    clf_opt = torch.optim.Adam(clf.parameters(), lr=1e-3)
+    clf_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+        clf_opt, T_max=200, eta_min=1e-5)
+
+    best_val_acc = 0.0
+    best_clf_state = None
+
+    for epoch in range(200):
+        clf.train()
+        ep_perm = torch.randperm(n_clf_train, device=device)
+        for start in range(0, n_clf_train, 64):
+            idx = ep_perm[start:start + 64]
+            logits = clf(tr_clf_feats[idx]).squeeze(-1)
+            loss = F.binary_cross_entropy_with_logits(logits, tr_clf_labels[idx])
+            clf_opt.zero_grad()
+            loss.backward()
+            clf_opt.step()
+        clf_sched.step()
+
+        if (epoch + 1) % 50 == 0 or epoch == 0:
+            clf.eval()
+            with torch.no_grad():
+                vl_logits = clf(vl_clf_feats).squeeze(-1)
+                vl_preds = (vl_logits > 0).float()
+                val_acc = (vl_preds == vl_clf_labels).float().mean().item()
+            print(f"│    Clf Epoch {epoch+1:3d}: val_acc={val_acc*100:.1f}%", flush=True)
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_clf_state = {k: v.cpu().clone() for k, v in clf.state_dict().items()}
+
+    clf.load_state_dict(best_clf_state)
+    clf.to(device).eval()
+    print(f"│  Best val acc: {best_val_acc*100:.1f}%", flush=True)
+    print(f"└─ Stage 4 done [{time.time()-t4:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 5: Full Pipeline — Closed-Loop Replanning
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 5: Full Pipeline — Closed-Loop Replanning", flush=True)
+    print(f"  K={K} steps, replan each step: CEM 2D, "
+          f"{n_candidates} cand, {n_elite} elite, {n_rounds} rounds", flush=True)
+    print(f"  JEPA predicts 1 step ahead only (no autoregressive accumulation)", flush=True)
+    print(f"  force ∈ [-{force_range}, {force_range}], thresh={success_thresh}px", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t5 = time.time()
+
+    # Free training tensors
+    del states_t_raw, states_tp1_raw, slots_t, slots_tp1, actions_t
+    del tr_slots_t, tr_slots_tp1, tr_actions
+    del all_slots_flat, all_pos_flat, gt_pos
+    del tr_dec_slots, tr_dec_pos, vl_dec_slots, vl_dec_pos
+    del tr_clf_feats, tr_clf_labels, vl_clf_feats, vl_clf_labels, clf_features
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    # Move models to CPU for planning
+    cpu = torch.device('cpu')
+    jepa.to(cpu).eval()
+    pos_decoder.to(cpu).eval()
+    clf.to(cpu).eval()
+    state_proj = state_proj.to(cpu)
+
+    # Generate target positions (same seed as 36c-36e)
+    random.seed(777)
+    np.random.seed(777)
+    test_targets = []
+    for si in range(n_test_seq):
+        test_targets.append(np.array([
+            random.uniform(0.2, 0.8),
+            random.uniform(0.2, 0.8),
+        ], dtype=np.float32))
+
+    # Results
+    mass_correct = 0
+    mass_total = 0
+    closed_dists = []       # closed-loop replanning
+    openloop_dists = []     # open-loop multi-step CEM (36e baseline)
+    oracle_cl_dists = []    # oracle closed-loop (GT physics 1-step)
+    random_dists = []
+
+    def cem_1step_plan(current_state, target_obj_idx, target_pos_norm, steps_remaining):
+        """CEM planner using 1-step JEPA prediction.
+        Scores by predicted distance to target after this 1 step."""
+        cur_slots = state_proj(
+            torch.tensor(current_state, dtype=torch.float32).unsqueeze(0))
+        target_t = torch.tensor(target_pos_norm, dtype=torch.float32)
+
+        mu = torch.zeros(2)
+        sigma = torch.ones(2) * 0.3
+
+        for round_i in range(n_rounds):
+            forces = mu + sigma * torch.randn(n_candidates, 2)
+            forces = forces.clamp(-force_range, force_range)
+
+            with torch.no_grad():
+                cand_actions = torch.zeros(n_candidates, n_obj + 2)
+                cand_actions[:, target_obj_idx] = 1.0
+                cand_actions[:, n_obj] = forces[:, 0]
+                cand_actions[:, n_obj + 1] = forces[:, 1]
+
+                # 1-step JEPA prediction only
+                pred_slots = jepa(cur_slots.expand(n_candidates, -1, -1).clone(),
+                                  cand_actions)
+
+                target_slots = pred_slots[:, target_obj_idx, :]
+                pred_pos = pos_decoder(target_slots)
+                scores = -((pred_pos - target_t) ** 2).sum(dim=-1)
+
+            elite_idx = torch.topk(scores, n_elite).indices
+            elite_forces = forces[elite_idx]
+            mu = elite_forces.mean(dim=0)
+            sigma = elite_forces.std(dim=0).clamp(min=0.01)
+
+        return mu[0].item(), mu[1].item()
+
+    def oracle_1step_plan(objects, target_obj_idx, target_pos_norm):
+        """Oracle CEM using GT physics for 1 step."""
+        target_t = np.array(target_pos_norm)
+
+        mu = np.zeros(2)
+        sigma = np.ones(2) * 0.3
+
+        for round_i in range(n_rounds):
+            forces = mu + sigma * np.random.randn(n_candidates, 2)
+            forces = np.clip(forces, -force_range, force_range)
+
+            scores = np.zeros(n_candidates)
+            for ci in range(n_candidates):
+                objs = copy.deepcopy(objects)
+                objs[target_obj_idx]['vx'] += forces[ci, 0] * vmax
+                objs[target_obj_idx]['vy'] += forces[ci, 1] * vmax
+                physics_step(objs)
+                final_pos = np.array([objs[target_obj_idx]['cx'] / S,
+                                      objs[target_obj_idx]['cy'] / S])
+                scores[ci] = -np.sum((final_pos - target_t) ** 2)
+
+            elite_idx = np.argsort(scores)[-n_elite:]
+            elite_forces = forces[elite_idx]
+            mu = elite_forces.mean(axis=0)
+            sigma = elite_forces.std(axis=0).clip(min=0.01)
+
+        return mu[0], mu[1]
+
+    def openloop_multistep_cem(init_state, target_obj_idx, target_pos_norm):
+        """Open-loop multi-step CEM (36e baseline) for comparison."""
+        init_slots = state_proj(
+            torch.tensor(init_state, dtype=torch.float32).unsqueeze(0))
+        target_t = torch.tensor(target_pos_norm, dtype=torch.float32)
+
+        n_cand_ol = 256
+        n_elite_ol = 32
+        mu = torch.zeros(K * 2)
+        sigma = torch.ones(K * 2) * 0.3
+
+        for round_i in range(n_rounds):
+            action_seqs = mu + sigma * torch.randn(n_cand_ol, K * 2)
+            action_seqs = action_seqs.clamp(-force_range, force_range)
+
+            with torch.no_grad():
+                slots_cur = init_slots.expand(n_cand_ol, -1, -1).clone()
+                for step in range(K):
+                    step_actions = torch.zeros(n_cand_ol, n_obj + 2)
+                    step_actions[:, target_obj_idx] = 1.0
+                    step_actions[:, n_obj] = action_seqs[:, step * 2]
+                    step_actions[:, n_obj + 1] = action_seqs[:, step * 2 + 1]
+                    slots_cur = jepa(slots_cur, step_actions)
+
+                target_slots = slots_cur[:, target_obj_idx, :]
+                pred_pos = pos_decoder(target_slots)
+                scores = -((pred_pos - target_t) ** 2).sum(dim=-1)
+
+            elite_idx = torch.topk(scores, n_elite_ol).indices
+            elite_seqs = action_seqs[elite_idx]
+            mu = elite_seqs.mean(dim=0)
+            sigma = elite_seqs.std(dim=0).clamp(min=0.01)
+
+        force_seq = []
+        for step in range(K):
+            force_seq.append((mu[step * 2].item(), mu[step * 2 + 1].item()))
+        return force_seq
+
+    for si in range(n_test_seq):
+        gt_heavy = test_heavy_idx[si]
+        target_pos = test_targets[si]
+
+        final_state = test_states[si][-1]
+        final_objects = []
+        for oi in range(n_obj):
+            final_objects.append({
+                'cx': final_state[oi, 0] * S,
+                'cy': final_state[oi, 1] * S,
+                'vx': final_state[oi, 2] * vmax,
+                'vy': final_state[oi, 3] * vmax,
+                'r': final_state[oi, 4] * S,
+                'mass': test_masses[si][oi],
+            })
+
+        # ── Perceive ──
+        obj_features = []
+        for oi in range(n_obj):
+            feat = extract_collision_features(
+                test_positions[si][oi],
+                test_collision_dvs[si][oi])
+            obj_features.append(feat)
+
+        obj_feat_tensor = torch.tensor(obj_features, dtype=torch.float32)
+        with torch.no_grad():
+            logits = clf(obj_feat_tensor).squeeze(-1)
+            probs = torch.sigmoid(logits)
+            inferred_heavy = probs.argmax().item()
+
+        mass_correct_this = (inferred_heavy == gt_heavy)
+        mass_correct += int(mass_correct_this)
+        mass_total += 1
+
+        # ── Closed-loop replanning (inferred mass) ──
+        cl_objects = copy.deepcopy(final_objects)
+        for step in range(K):
+            cur_state = objects_to_state(cl_objects)
+            fx, fy = cem_1step_plan(cur_state, inferred_heavy, target_pos, K - step)
+            cl_objects[inferred_heavy]['vx'] += fx * vmax
+            cl_objects[inferred_heavy]['vy'] += fy * vmax
+            physics_step(cl_objects)
+        cl_x = cl_objects[gt_heavy]['cx'] / S
+        cl_y = cl_objects[gt_heavy]['cy'] / S
+        cl_dist = math.hypot(cl_x - target_pos[0], cl_y - target_pos[1]) * S
+        closed_dists.append(cl_dist)
+
+        # ── Open-loop multi-step CEM (36e baseline) ──
+        force_seq = openloop_multistep_cem(final_state, inferred_heavy, target_pos)
+        ol_objects = copy.deepcopy(final_objects)
+        for step in range(K):
+            fx_ol, fy_ol = force_seq[step]
+            ol_objects[inferred_heavy]['vx'] += fx_ol * vmax
+            ol_objects[inferred_heavy]['vy'] += fy_ol * vmax
+            physics_step(ol_objects)
+        ol_x = ol_objects[gt_heavy]['cx'] / S
+        ol_y = ol_objects[gt_heavy]['cy'] / S
+        ol_dist = math.hypot(ol_x - target_pos[0], ol_y - target_pos[1]) * S
+        openloop_dists.append(ol_dist)
+
+        # ── Oracle closed-loop (GT physics 1-step) ──
+        orcl_objects = copy.deepcopy(final_objects)
+        for step in range(K):
+            fx_o, fy_o = oracle_1step_plan(orcl_objects, gt_heavy, target_pos)
+            orcl_objects[gt_heavy]['vx'] += fx_o * vmax
+            orcl_objects[gt_heavy]['vy'] += fy_o * vmax
+            physics_step(orcl_objects)
+        o_x = orcl_objects[gt_heavy]['cx'] / S
+        o_y = orcl_objects[gt_heavy]['cy'] / S
+        o_dist = math.hypot(o_x - target_pos[0], o_y - target_pos[1]) * S
+        oracle_cl_dists.append(o_dist)
+
+        # ── Random baseline ──
+        rand_obj = random.randint(0, n_obj - 1)
+        rand_objects = copy.deepcopy(final_objects)
+        rand_fx = random.uniform(-force_range, force_range)
+        rand_fy = random.uniform(-force_range, force_range)
+        rand_objects[rand_obj]['vx'] += rand_fx * vmax
+        rand_objects[rand_obj]['vy'] += rand_fy * vmax
+        for step in range(K):
+            physics_step(rand_objects)
+        r_x = rand_objects[gt_heavy]['cx'] / S
+        r_y = rand_objects[gt_heavy]['cy'] / S
+        r_dist = math.hypot(r_x - target_pos[0], r_y - target_pos[1]) * S
+        random_dists.append(r_dist)
+
+        if (si + 1) % 50 == 0:
+            cl_succ = sum(1 for d in closed_dists if d < success_thresh) / len(closed_dists) * 100
+            ol_succ = sum(1 for d in openloop_dists if d < success_thresh) / len(openloop_dists) * 100
+            o_succ = sum(1 for d in oracle_cl_dists if d < success_thresh) / len(oracle_cl_dists) * 100
+            r_succ = sum(1 for d in random_dists if d < success_thresh) / len(random_dists) * 100
+            m_acc = mass_correct / mass_total * 100
+            print(f"│    {si+1}/{n_test_seq}: mass={m_acc:.0f}%, "
+                  f"closed={cl_succ:.0f}%, open={ol_succ:.0f}%, "
+                  f"oracle={o_succ:.0f}%, rand={r_succ:.0f}%", flush=True)
+
+    print(f"└─ Stage 5 done [{time.time()-t5:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 6: Final Evaluation + Visualization
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 6: Final Evaluation", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    cl_np = np.array(closed_dists)
+    ol_np = np.array(openloop_dists)
+    oracle_np = np.array(oracle_cl_dists)
+    random_np = np.array(random_dists)
+
+    mass_acc = mass_correct / mass_total * 100
+    cl_success = (cl_np < success_thresh).mean() * 100
+    ol_success = (ol_np < success_thresh).mean() * 100
+    oracle_success = (oracle_np < success_thresh).mean() * 100
+    random_success = (random_np < success_thresh).mean() * 100
+
+    print(f"\n│  Mass inference accuracy: {mass_acc:.1f}% ({mass_correct}/{mass_total})", flush=True)
+    print(f"\n│  Success rate (within {success_thresh}px):", flush=True)
+    print(f"│    Closed-loop JEPA:    {cl_success:.1f}%  (target >70%)", flush=True)
+    print(f"│    Open-loop CEM (36e): {ol_success:.1f}%  (baseline)", flush=True)
+    print(f"│    Oracle closed-loop:  {oracle_success:.1f}%  (target >85%)", flush=True)
+    print(f"│    Random:              {random_success:.1f}%", flush=True)
+    print(f"\n│  Closed vs open improvement: {cl_success - ol_success:+.1f}pp", flush=True)
+    print(f"\n│  Mean distance to target (px):", flush=True)
+    print(f"│    Closed-loop JEPA:    {cl_np.mean():.2f}px "
+          f"(median {np.median(cl_np):.2f})", flush=True)
+    print(f"│    Open-loop CEM:       {ol_np.mean():.2f}px "
+          f"(median {np.median(ol_np):.2f})", flush=True)
+    print(f"│    Oracle closed-loop:  {oracle_np.mean():.2f}px "
+          f"(median {np.median(oracle_np):.2f})", flush=True)
+    print(f"│    Random:              {random_np.mean():.2f}px "
+          f"(median {np.median(random_np):.2f})", flush=True)
+
+    elapsed = time.time() - t0
+    print(f"\n│  Total time: {elapsed:.0f}s", flush=True)
+
+    # ── Visualization ──
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle('Phase 36f: Closed-Loop Replanning — 1-step JEPA at each step\n'
+                 f'K={K} steps, replan each: CEM 2D, {n_candidates} cand, '
+                 f'{n_elite} elite, {n_rounds} rounds, thresh={success_thresh}px',
+                 fontsize=12, fontweight='bold')
+
+    # Panel 1: Success rate comparison
+    ax = axes[0, 0]
+    planners = ['Closed-Loop\nJEPA', 'Open-Loop\nCEM (36e)', 'Oracle\nClosed-Loop', 'Random']
+    success_rates = [cl_success, ol_success, oracle_success, random_success]
+    colors = ['steelblue', 'mediumpurple', 'seagreen', 'lightcoral']
+    bars = ax.bar(planners, success_rates, color=colors, alpha=0.8, edgecolor='black')
+    ax.axhline(y=70, color='blue', linestyle='--', alpha=0.5, label='Target (70%)')
+    ax.axhline(y=85, color='green', linestyle='--', alpha=0.5, label='Oracle target (85%)')
+    ax.set_ylabel('Success Rate (%)')
+    ax.set_title(f'Success Rate (within {success_thresh}px)')
+    ax.set_ylim(0, max(max(success_rates) * 1.2, 95))
+    for bar, val in zip(bars, success_rates):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                f'{val:.1f}%', ha='center', va='bottom', fontsize=11, fontweight='bold')
+    ax.legend(fontsize=8)
+
+    # Panel 2: Closed vs Open improvement
+    ax = axes[0, 1]
+    improvement = cl_success - ol_success
+    bars = ax.bar(['Closed-Loop\n(1-step JEPA)', 'Open-Loop\n(5-step JEPA)'],
+                  [cl_success, ol_success],
+                  color=['steelblue', 'mediumpurple'], alpha=0.8, edgecolor='black')
+    ax.set_ylabel('Success Rate (%)')
+    ax.set_title(f'Closed vs Open Loop ({improvement:+.1f}pp)')
+    ax.set_ylim(0, max(cl_success, ol_success) * 1.4)
+    ax.text(0, cl_success + 1, f'{cl_success:.1f}%', ha='center', fontsize=12, fontweight='bold')
+    ax.text(1, ol_success + 1, f'{ol_success:.1f}%', ha='center', fontsize=12, fontweight='bold')
+    if improvement > 0:
+        ax.annotate(f'+{improvement:.1f}pp', xy=(0.5, max(cl_success, ol_success) * 1.15),
+                    fontsize=14, fontweight='bold', color='green', ha='center')
+
+    # Panel 3: Mass inference
+    ax = axes[0, 2]
+    labels_pie = [f'Correct\n({mass_correct})', f'Wrong\n({mass_total - mass_correct})']
+    sizes = [mass_correct, mass_total - mass_correct]
+    colors_pie = ['seagreen', 'lightcoral']
+    if sizes[1] == 0:
+        sizes = [mass_correct]
+        labels_pie = [labels_pie[0]]
+        colors_pie = ['seagreen']
+    ax.pie(sizes, labels=labels_pie, colors=colors_pie, autopct='%1.1f%%',
+           startangle=90, textprops={'fontsize': 11})
+    ax.set_title(f'Mass Inference: {mass_acc:.1f}%')
+
+    # Panel 4: Distance distributions
+    ax = axes[1, 0]
+    bins = np.linspace(0, min(50, max(np.percentile(random_np, 98), 30)), 40)
+    ax.hist(cl_np, bins=bins, alpha=0.6, label='Closed-Loop', color='steelblue')
+    ax.hist(ol_np, bins=bins, alpha=0.4, label='Open-Loop', color='mediumpurple')
+    ax.hist(random_np, bins=bins, alpha=0.3, label='Random', color='lightcoral')
+    ax.axvline(x=success_thresh, color='red', linestyle='--',
+               label=f'{success_thresh}px threshold')
+    ax.set_xlabel('Distance to target (px)')
+    ax.set_ylabel('Count')
+    ax.set_title('Distance Distribution')
+    ax.legend(fontsize=8)
+
+    # Panel 5: CDF
+    ax = axes[1, 1]
+    for dists, label, color in [
+        (oracle_np, 'Oracle Closed-Loop', 'seagreen'),
+        (cl_np, 'Closed-Loop JEPA', 'steelblue'),
+        (ol_np, 'Open-Loop CEM', 'mediumpurple'),
+        (random_np, 'Random', 'lightcoral'),
+    ]:
+        sorted_d = np.sort(dists)
+        cdf = np.arange(1, len(sorted_d) + 1) / len(sorted_d)
+        ax.plot(sorted_d, cdf * 100, label=label, color=color, linewidth=2)
+    ax.axvline(x=success_thresh, color='red', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Distance to target (px)')
+    ax.set_ylabel('Cumulative %')
+    ax.set_title('CDF of Distance to Target')
+    ax.legend(fontsize=8)
+    ax.set_xlim(0, 40)
+
+    # Panel 6: Mean/Median comparison
+    ax = axes[1, 2]
+    planners_full = ['Closed-Loop', 'Open-Loop', 'Oracle CL', 'Random']
+    means = [cl_np.mean(), ol_np.mean(), oracle_np.mean(), random_np.mean()]
+    medians = [np.median(cl_np), np.median(ol_np), np.median(oracle_np), np.median(random_np)]
+    x = np.arange(len(planners_full))
+    w = 0.3
+    ax.bar(x - w/2, means, w, label='Mean', color='steelblue', alpha=0.7)
+    ax.bar(x + w/2, medians, w, label='Median', color='orange', alpha=0.7)
+    ax.set_xticks(x)
+    ax.set_xticklabels(planners_full, fontsize=9)
+    ax.set_ylabel('Distance to target (px)')
+    ax.set_title('Mean vs Median Distance')
+    ax.legend()
+    for i, (m, md) in enumerate(zip(means, medians)):
+        ax.text(x[i] - w/2, m + 0.3, f'{m:.1f}', ha='center', fontsize=8)
+        ax.text(x[i] + w/2, md + 0.3, f'{md:.1f}', ha='center', fontsize=8)
+
+    plt.tight_layout()
+    plt.savefig('results/phase36f_closed_loop.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\n│  Saved results/phase36f_closed_loop.png", flush=True)
+
+    # Verdict
+    print(f"\n{'=' * 70}", flush=True)
+    if cl_success > 70 and oracle_success > 85:
+        verdict = "SUCCESS"
+    elif cl_success > 60 or (cl_success > ol_success + 5):
+        verdict = "PARTIAL"
+    else:
+        verdict = "FAIL"
+    print(f"VERDICT: {verdict}", flush=True)
+    print(f"  Mass inference:       {mass_acc:.1f}%", flush=True)
+    print(f"  Closed-loop JEPA:    {cl_success:.1f}% (target >70%)", flush=True)
+    print(f"  Open-loop CEM:       {ol_success:.1f}% (36e baseline)", flush=True)
+    print(f"  Closed vs open:      {cl_success - ol_success:+.1f}pp", flush=True)
+    print(f"  Oracle closed-loop:  {oracle_success:.1f}% (target >85%)", flush=True)
+    print(f"  Random:              {random_success:.1f}%", flush=True)
+    print(f"  Total time:          {elapsed:.0f}s", flush=True)
+    print(f"{'=' * 70}", flush=True)
+
+
 def run_phase36e_multistep_planning():
     """Phase 36e: Multi-step planning — CEM over K=5 force sequences (10D).
 

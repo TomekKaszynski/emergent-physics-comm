@@ -1266,3 +1266,28 @@ Position decoder: Linear(64→2), trained on slot→(cx,cy) pairs. Decode error:
 - Oracle ceiling jumped from 52% (single-step) to 76% (multi-step) — confirms multi-step planning is fundamentally more capable
 - JEPA gap to oracle: 18.5pp (57.5% vs 76.0%). The JEPA's autoregressive rollout accumulates error, but still captures most of the benefit
 - Missed 65% target by 7.5pp — could likely close with more candidates, more CEM rounds, or better JEPA training
+
+### Phase 36f: Closed-Loop Replanning
+**Date:** Feb 22 | **Duration:** 80s | **Verdict:** SUCCESS
+
+**Setup:** Same JEPA and mass classifier as 36c-36e, but closed-loop: at each of K=5 steps, observe actual state, CEM plan best single force (2D, 128 candidates, 16 elite, 3 rounds) using **1-step JEPA prediction only**, execute in real physics, repeat. No autoregressive error accumulation — JEPA always predicts from ground-truth current state. Baselines: open-loop multi-step CEM (36e's 10D approach), oracle closed-loop (GT physics), random.
+
+**Results:**
+| Planner | Success (10px) | Mean dist | Median dist |
+|---|---|---|---|
+| **Closed-loop JEPA** | **81.5%** | **5.73px** | **4.62px** |
+| Open-loop CEM (36e) | 59.0% | 9.98px | 8.91px |
+| Oracle closed-loop | **92.5%** | 2.84px | 0.49px |
+| Random | 15.0% | 22.62px | 22.80px |
+
+- Closed-loop improvement over open-loop: **+22.5pp** (81.5% vs 59.0%)
+- Oracle closed-loop: 92.5% (target >85%) — near-perfect with GT physics
+- JEPA captures 81.5/92.5 = **88%** of oracle capability (up from 76% in 36e)
+- Mass inference: 99.5% (unchanged)
+
+**Key insights:**
+- **Closed-loop replanning is the single biggest improvement in the 36 series** (+22.5pp over 36e, +30pp over 36c's 51%)
+- 1-step JEPA prediction is where the model is most accurate (+45% from 36a). By replanning every step from actual state, we avoid autoregressive error accumulation entirely
+- Oracle median distance 0.49px (!!) — closed-loop with perfect physics converges almost exactly to target
+- JEPA median 4.62px — well within 10px threshold, with room to spare
+- The remaining 11pp gap to oracle (81.5% vs 92.5%) is the JEPA's per-step prediction error, which is small but compounds slightly across 5 replan steps
