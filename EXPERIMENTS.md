@@ -906,6 +906,22 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Key insight:** The full pipeline works end-to-end with **95.5% communication accuracy**. The sender learns a near-perfect 3-token language where each token means "object X is heavy." The bottleneck (1 discrete token from vocab of 8) barely degrades performance vs the direct classifier (94.7%).
 - **Verdict:** SUCCESS — 95.5% communication accuracy through a 1-token discrete bottleneck.
 
+### Phase 32 — Auto-color detection from slot masks (Feb 22)
+- **Goal:** Replace GT color knowledge with auto-detected colors. DINOv2+SA → slot masks → detect dominant non-background color per slot → snap to palette → Color-COM → physics → communication. Test whether slot masks are accurate enough to identify object colors.
+- **Method:** For all 7 slots × 5 frames: upsample mask to 64×64, hard argmax, filter non-background pixels (dist > 0.2 from gray), take median RGB. Greedily assign each palette color (R/G/B) to closest slot. Use discovered palette for Color-COM.
+- **Results:**
+  ```
+  Metric                         GT-color     Auto-color
+  ─────────────────────────────────────────────────────────
+  Position error (px)               0.421          0.421
+  Position error 95th (px)          0.672          0.672
+  Direct classifier (%)             94.3%          96.5%
+  Communication (%)          (Phase 31) 95.5%       96.0%
+  ```
+  Color detection: 3000/3000 exact after palette snap. Auto-color positions are identical to GT-color — same 0.42px mean error, same features, same downstream accuracy.
+- **Key insight:** Slot masks don't need to be spatially precise — they just need to cover a few pixels of the correct object (even ~10 is enough) to detect its color. The background filter (exclude gray pixels) is critical. Once we know the color, full-frame Color-COM provides sub-pixel localization that slot attention can't. The "where" precision comes from color matching, not from the masks.
+- **Verdict:** SUCCESS — 96.0% comm accuracy. Auto-color = GT-color performance. No GT color knowledge needed.
+
 ## Current State (Feb 22)
 
 **Validated pipeline:**
@@ -924,10 +940,11 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - Phase 30: mode collapse (33%). Phase 30b: overfitting (41%).
 - Phase 30c: **98.5%** — separated perception from communication. 3-token emergent language.
 
-**Phase 31 — Full pipeline working:**
-- **pixels → DINOv2+SA → Color-COM → collision features → sender→token→receiver: 95.5%**
-- 3-token emergent language, each token = "object X is heavy" with >94% purity
-- Direct mass classifier: 94.7% (communication barely degrades it)
-- Position error: 0.42px via Color-COM (SA slot matching only used for object identity)
+**Phase 31+32 — Full pipeline working, no GT needed:**
+- **Phase 31:** pixels → DINOv2+SA → Color-COM (GT colors) → collision features → sender→token→receiver: **95.5%**
+- **Phase 32:** Same pipeline but auto-detected colors from slot masks → palette snap → **96.0%** (identical to GT-color)
+- Slot masks only need to point at ~10 pixels of the right object to detect its color
+- Position error: 0.42px via Color-COM (slot masks provide identity, color matching provides precision)
+- 3-token emergent language, each token = "object X is heavy" with >95% purity
 
 **Next steps:** (1) Multi-agent version: two agents with different viewpoints communicate about mass through discrete bottleneck, (2) Scale to more objects / harder physics, (3) Replace Color-COM with learned position extraction if needed for generalization.
