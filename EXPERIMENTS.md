@@ -1479,3 +1479,39 @@ Position decoder: Linear(64→2), trained on slot→(cx,cy) pairs. Decode error:
 - 4-token utilization (vs 2 in Phase 38) suggests the wider sender can represent finer mass distinctions
 - Gap to oracle: 10.5pp (70.0% vs 80.5%) — still driven by ~14% comm errors
 - Still short of targets (comm >86%, full >72%) by small margins
+
+---
+
+## Phase 38d: More Observation + Longer Training
+**Date:** Feb 22 | **Duration:** 242s | **Verdict:** SUCCESS
+
+**Setup:** Same as Phase 38c except: (1) 80 observation frames instead of 40 — more collisions observed, richer trajectory data. (2) 400 communication training epochs instead of 200. Training sequences also 80 frames. JEPA trained on 80-frame sequences (2× more transition pairs → lower final loss 0.000613 vs 0.000956).
+
+**Architecture:**
+- PerObjectSender (wider): 356 params (6→32→4, Gumbel-softmax)
+- ComparativeReceiver: 1,747 params
+- Trained jointly on perceived features from 2000 rendered 80-frame training sequences
+- Communication val accuracy: **96.5%** (uses all 4 tokens at peak, collapsed to 1 token at low τ — best checkpoint at epoch ~300)
+
+**Results:**
+| Planner | Success (10px) | Mean dist | Median dist |
+|---|---|---|---|
+| **Full pipeline (A→B)** | **75.0%** | 6.72px | 4.40px |
+| Oracle comm (GT heavy) | 80.0% | 5.75px | 4.34px |
+| No communication | 29.0% | 18.90px | 18.73px |
+| Random | 12.0% | 24.33px | 24.32px |
+
+**Progression 38 → 38c → 38d:**
+| Metric | 38 (base) | 38c (smoothed) | 38d (80 frames) |
+|---|---|---|---|
+| Comm accuracy | 82.2% | 86.0% | **95.0%** |
+| Full pipeline | 67.5% | 70.0% | **75.0%** |
+| Gap to oracle | 14.0pp | 10.5pp | **5.0pp** |
+
+**Key insights:**
+- **Doubling observation frames was the biggest single improvement**: +9pp comm accuracy (86→95%), +5pp full pipeline (70→75%)
+- More collisions observed = stronger mass signal in features = easier classification
+- Gap to oracle narrowed to just 5pp (75% vs 80%) — communication is nearly solved
+- Gumbel-softmax collapsed at low τ (~epoch 340): train/val accuracy dropped to 33.3% (random). But best checkpoint from epoch ~300 retained 96.5% accuracy — early stopping was critical
+- JEPA also benefited from 2× data: final loss 0.000613 vs 0.000956 (38c), though oracle planning stayed ~80%
+- **Milestone:** Full perception→communication→planning pipeline at 75% success, within 5pp of oracle ceiling
