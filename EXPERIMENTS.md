@@ -1041,6 +1041,26 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Key insight:** Connected components fail catastrophically when objects overlap — and with circles of radius 7-10 in 64×64, objects overlap in **42% of frames**, not "rarely during collisions" as hypothesized. When objects merge into one component, both the COM and tracking break down. Position error (17.72px) is as bad as raw slot attention centroids. The approach fundamentally requires non-overlapping objects.
 - **Verdict:** FAIL — position error 17.72px (target <2px), communication 32.5% (chance). Connected components don't work for overlapping objects.
 
+### Phase 34b — Hue-based localization for textured objects (Feb 22)
+- **Goal:** Replace connected components (34a FAIL) with hue-based pixel clustering. Objects have well-separated hues (evenly spaced). Foreground pixels → RGB→HSV → cluster by hue → COM per cluster. Works even when objects overlap spatially (different hues separate them). Target: <2px position error, >85% communication.
+- **Results:**
+  ```
+  Metric                         Value       Target
+  ─────────────────────────────────────────────────
+  Count discovery                98.9%       >90% ✓
+  Position error (px)            0.46        <2px ✓
+  Hue detection error            1.2°        —
+  Missed frames                  0.33%       —
+  Direct classifier (%)         95.5%        —
+  Communication (seq-lvl)       88.0%       >85% ✓
+
+  Communication by object count:
+    N=2: 100.0%    N=3: 86.5%    N=4: 87.2%    N=5: 81.7%
+  ```
+  3017 params (180 sender + 2837 receiver). 58s total.
+- **Key insight:** Hue-based localization achieves **0.46px** position error on textured objects — identical to Color-COM on solid objects. Hue is invariant to texture patterns (checkerboard, stripes, noise etc. only modulate brightness, not hue). Objects with well-separated hues can be localized even when overlapping spatially, solving the 42%-overlap problem that killed connected components. The pipeline generalizes from "objects must be solid colors" to "objects must have distinct hues" — a much weaker assumption.
+- **Verdict:** SUCCESS — 0.46px position error, 88.0% communication. Textured objects work with hue-based localization.
+
 ## Current State (Feb 22)
 
 **Validated pipeline:**
@@ -1074,9 +1094,8 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - Phase 33d: **89.5%** — vocab=8 didn't help (slightly worse). Binary language is the ceiling for per-object sender
 - Emergent language: binary "heavy/light" (2 tokens used regardless of vocab size), comparative receiver does the ranking
 
-**Phase 34a — Textured objects (FAIL):**
-- Connected components fail when objects overlap (42% of frames at these sizes/speeds)
-- Position error 17.72px — as bad as raw SA centroids
-- Need a different approach for textured objects: either reduce overlap (smaller objects, bigger grid) or use learned segmentation (slot attention masks)
+**Phase 34 — Textured objects:**
+- 34a: Connected components FAIL (42% overlap, 17.72px error)
+- **34b: Hue-based localization SUCCESS** — 0.46px error, 88.0% comm. Hue invariant to texture patterns (brightness modulation doesn't change hue). Works even during overlap. Requires well-separated hues.
 
-**Next steps:** (1) Multi-agent version: two agents with different viewpoints communicate about mass through discrete bottleneck, (2) Try textured objects with reduced overlap (smaller radii or bigger grid) or slot-attention-based segmentation.
+**Next steps:** (1) Multi-agent version: two agents with different viewpoints communicate about mass through discrete bottleneck, (2) Non-black background (34b requires foreground detection against bg).
