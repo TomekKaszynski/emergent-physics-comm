@@ -1324,3 +1324,34 @@ Position decoder: Linear(64→2), trained on slot→(cx,cy) pairs. Decode error:
 - When mass is wrong (24.5% of cases), the agent pushes the wrong object → guaranteed failure
 - The 18.5pp gap is ~entirely explained by mass errors: 24.5% wrong mass × ~100% failure rate = ~24.5pp loss, close to the observed 18.5pp gap
 - **Fix needed:** Detect pairwise collisions from perceived trajectories (proximity + sudden velocity change) and estimate DV ratios from position data. This would restore the key feature that makes mass inference work
+
+---
+
+## Phase 37b: Collision Detection from Pixels
+**Date:** Feb 22 | **Duration:** 98s | **Verdict:** PARTIAL
+
+**Setup:** Same as Phase 37 except: add collision detection from perceived trajectories between perception and mass inference. For each pair of objects (i,j) at each frame, check if distance < (r_i + r_j) × 1.2. If close and both |Δv| > 0.3, record DV ratio (Newton's 3rd → inversely proportional to mass). This restores the avg_dv_ratio feature that was missing in Phase 37.
+
+**Perception quality:**
+- Position error: **0.41px** (unchanged from 37)
+- Mass inference (perceived + collision detect): **84.5%** (target >95%) — improved from 75.5% (+9pp)
+- Mass inference (GT collision features): 100.0%
+
+**Results:**
+| Planner | Success (10px) | Mean dist | Median dist |
+|---|---|---|---|
+| **Pixel pipeline** | **72.0%** | 7.79px | 5.15px |
+| GT state (36f) | 83.5% | 5.31px | 3.19px |
+| Oracle closed-loop | 94.5% | 2.87px | 0.59px |
+| Random | 13.5% | 22.84px | 22.36px |
+
+- Pixel vs GT gap: **11.5pp** (72.0% vs 83.5%) — narrowed from 18.5pp in Phase 37
+- Planning improved +7pp (65% → 72%), mass improved +9pp (75.5% → 84.5%)
+
+**Key insights:**
+- Collision detection from perceived trajectories **works** — DV ratios are recoverable from pixel-derived positions
+- Mass accuracy improved 75.5% → 84.5%, but still short of 95% target
+- Planning improved 65% → 72%, crossing the 70% mark but short of 75% target
+- Remaining 15.5% mass errors likely from: (a) noisy perceived velocities making DV ratios imprecise, (b) collisions too brief or mild to detect with threshold, (c) some scenarios with few/no detectable collisions
+- Gap analysis: 15.5% wrong mass × ~100% failure ≈ 15.5pp potential loss, close to observed 11.5pp gap
+- **Next steps:** Lower collision detection thresholds, or use larger observation windows (more frames = more collisions), or combine collision DV ratios with trajectory features in a learned classifier

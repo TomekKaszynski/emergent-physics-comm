@@ -15793,23 +15793,21 @@ def run_phase33c_comparative_comm():
     print(f"{'=' * 70}", flush=True)
 
 
-def run_phase37_pixel_planning():
-    """Phase 37: Planning from pixels — full pixels→perception→planning→action.
+def run_phase37b_collision_detection():
+    """Phase 37b: Pixel planning with collision detection from perceived trajectories.
 
-    Closes the gap between 35c (pixels→perception) and 36f (GT state→planning).
-    Train JEPA/classifier/decoder on GT state vectors (same as 36f).
-    Test pipeline: render textured objects on colored bg → corner BG subtraction
-    → hue COM → finite-diff velocities → area-based radii → collision features
-    → mass inference → build state vector → closed-loop JEPA planning.
-    Target: >70% success, mass inference >95%.
+    Same as Phase 37 except: detect collisions between perceived object pairs
+    (proximity + velocity change) and estimate DV ratios. This restores the
+    avg_dv_ratio feature that was missing in 37, fixing mass inference.
+    Target: mass >95%, planning >75%.
     """
     import random
     import math
     import copy
 
     print("=" * 70, flush=True)
-    print("PHASE 37: Planning from Pixels — Full Visual Pipeline", flush=True)
-    print("  pixels → perceive → infer mass → JEPA closed-loop plan → act", flush=True)
+    print("PHASE 37b: Pixel Planning + Collision Detection", flush=True)
+    print("  pixels → perceive → detect collisions → infer mass → plan → act", flush=True)
     print("=" * 70, flush=True)
     t0 = time.time()
 
@@ -16451,12 +16449,29 @@ def run_phase37_pixel_planning():
         for oi in range(n_obj):
             mean_radii[oi] = np.mean(perceived_radii[oi])
 
-        # Step 5: Mass inference from perceived trajectories
-        # Use collision features from perceived positions (not GT collision DVs)
-        # We don't have GT collision DVs from perception, so use trajectory-only features
+        # Step 5: Collision detection from perceived trajectories
+        # For each pair, check proximity and estimate DV ratios from velocity changes
         obj_coll_dvs_perceived = [[] for _ in range(n_obj)]
-        # Detect collisions from perceived position changes
-        # (we can't get true dv ratios from pixels, but the trajectory features still work)
+        for oi in range(n_obj):
+            for oj in range(oi + 1, n_obj):
+                ri = mean_radii[oi]  # pixels
+                rj = mean_radii[oj]  # pixels
+                threshold = (ri + rj) * 1.2 / S  # normalized distance
+                pos_i = np.array(perceived_positions[oi])  # [n_frames, 2] normalized
+                pos_j = np.array(perceived_positions[oj])
+                vel_i = perceived_velocities[oi]  # [n_frames-1, 2] pixels/frame
+                vel_j = perceived_velocities[oj]
+                for t in range(len(vel_i) - 1):
+                    dist = np.linalg.norm(pos_i[t] - pos_j[t])
+                    if dist < threshold:
+                        dv_i = vel_i[t + 1] - vel_i[t]  # acceleration
+                        dv_j = vel_j[t + 1] - vel_j[t]
+                        dv_i_mag = np.linalg.norm(dv_i)
+                        dv_j_mag = np.linalg.norm(dv_j)
+                        if dv_i_mag > 0.3 and dv_j_mag > 0.3:  # meaningful collision
+                            # Newton's 3rd: dv_ratio ∝ m_partner/m_self
+                            obj_coll_dvs_perceived[oi].append((dv_i_mag, dv_j_mag))
+                            obj_coll_dvs_perceived[oj].append((dv_j_mag, dv_i_mag))
 
         obj_feats = []
         for oi in range(n_obj):
@@ -16726,9 +16741,9 @@ def run_phase37_pixel_planning():
     import matplotlib.pyplot as plt
 
     fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-    fig.suptitle('Phase 37: Planning from Pixels — Full Visual Pipeline\n'
+    fig.suptitle('Phase 37b: Pixel Planning + Collision Detection\n'
                  f'pixels → perception (pos err {mean_pos_err:.2f}px) → '
-                 f'closed-loop JEPA planning, thresh={success_thresh}px',
+                 f'collision detect → mass infer → plan, thresh={success_thresh}px',
                  fontsize=12, fontweight='bold')
 
     # Panel 1: Success rate comparison
@@ -16820,15 +16835,15 @@ def run_phase37_pixel_planning():
         ax.text(x[i] + w/2, md + 0.3, f'{md:.1f}', ha='center', fontsize=8)
 
     plt.tight_layout()
-    plt.savefig('results/phase37_pixel_planning.png', dpi=150, bbox_inches='tight')
+    plt.savefig('results/phase37b_collision_detection.png', dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"\n│  Saved results/phase37_pixel_planning.png", flush=True)
+    print(f"\n│  Saved results/phase37b_collision_detection.png", flush=True)
 
     # Verdict
     print(f"\n{'=' * 70}", flush=True)
-    if p_success > 70 and mass_acc_p > 95:
+    if p_success > 75 and mass_acc_p > 95:
         verdict = "SUCCESS"
-    elif p_success > 60 or (p_success > 50 and mass_acc_p > 90):
+    elif p_success > 65 or (p_success > 55 and mass_acc_p > 85):
         verdict = "PARTIAL"
     else:
         verdict = "FAIL"
@@ -16836,7 +16851,7 @@ def run_phase37_pixel_planning():
     print(f"  Position error:       {mean_pos_err:.2f}px", flush=True)
     print(f"  Mass (perceived):     {mass_acc_p:.1f}% (target >95%)", flush=True)
     print(f"  Mass (GT features):   {mass_acc_gt:.1f}%", flush=True)
-    print(f"  Pixel pipeline:       {p_success:.1f}% (target >70%)", flush=True)
+    print(f"  Pixel pipeline:       {p_success:.1f}% (target >75%)", flush=True)
     print(f"  GT state (36f):       {g_success:.1f}%", flush=True)
     print(f"  Pixel vs GT gap:      {g_success - p_success:.1f}pp", flush=True)
     print(f"  Oracle closed-loop:   {o_success:.1f}%", flush=True)
