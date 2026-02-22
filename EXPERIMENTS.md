@@ -1098,4 +1098,14 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - 34a: Connected components FAIL (42% overlap, 17.72px error)
 - **34b: Hue-based localization SUCCESS** — 0.46px error, 88.0% comm. Hue invariant to texture patterns (brightness modulation doesn't change hue). Works even during overlap. Requires well-separated hues.
 
-**Next steps:** (1) Multi-agent version: two agents with different viewpoints communicate about mass through discrete bottleneck, (2) Non-black background (34b requires foreground detection against bg).
+**Phase 35 — Non-trivial (colored) backgrounds:**
+- Pipeline: DINOv2+SA → slot masks → bg slot (corner color match) → fg mask → hue COM → physics → comm
+- Colored backgrounds: each RGB channel uniform in [0.2, 0.6]
+- SA training: 50 epochs, 3000 frames, entropy 1.00 → 0.27 (slots differentiate)
+- **FAIL: 38.5% communication (target >80%), 10.35px position error (target <3px)**
+- Root cause: FG coverage 93.6% — SA doesn't cleanly separate figure/ground. BG slot only gets ~6% of pixels
+- Count discovery 43.3% — bg color leaks into hue histogram, creates spurious peaks
+- SA is learning to reconstruct DINOv2 features (loss drops 3.6→1.7) but attention maps are too diffuse for binary fg/bg
+- Need: either (a) dedicated fg/bg classifier instead of SA-based separation, or (b) much sharper SA training (more epochs, stronger entropy penalty), or (c) combine SA with hue-saturation thresholding (objects are saturated, bg is desaturated)
+
+**Next steps:** (1) Phase 35b: try saturation-based fg detection (objects have high saturation from hue_to_rgb, bg has low saturation from uniform RGB), (2) Multi-agent version with different viewpoints.
