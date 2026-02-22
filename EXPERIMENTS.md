@@ -1420,3 +1420,29 @@ Position decoder: Linear(64→2), trained on slot→(cx,cy) pairs. Decode error:
 - Sender learned binary code (2 of 4 tokens used) — heavy objects get one token, light objects get another
 - The full pipeline runs in 122s — fast because Stage 4 perception of training data was only 40s (vs 690s in 37c — likely due to the perceive_sequence function being more efficient)
 - **Milestone:** First end-to-end demonstration of perception → communication → planning → action, all from pixels
+
+---
+
+## Phase 38b: Trajectory-Based Sender
+**Date:** Feb 22 | **Duration:** 131s | **Verdict:** FAIL
+
+**Setup:** Same as Phase 38 except: replace handcrafted 6-feature sender (PerObjectSender: 180 params) with trajectory sender (TrajectorySender: 2,724 params) that sees raw per-object trajectory [40 frames × 2 xy = 80 values]. Architecture: Linear(80,32)→ReLU→Linear(32,4)→Gumbel-softmax. No collision detection, no DV ratio extraction. Network must learn to detect collisions and infer mass from raw motion.
+
+**Results:**
+| Planner | Success (10px) | Mean dist | Median dist |
+|---|---|---|---|
+| **Full pipeline** | **33.0%** | 17.68px | 16.48px |
+| Oracle comm | 82.5% | 5.47px | 3.49px |
+| No communication | 29.5% | 17.46px | 16.45px |
+| Random | 11.0% | 22.27px | 19.90px |
+
+- Comm accuracy: **34.5%** ≈ random chance (33.3% for 3 objects)
+- Full pipeline 33.0% ≈ no-comm 29.5% — communication learned nothing
+- **-34.5pp** vs Phase 38's feature-based sender (67.5%)
+
+**Key insights:**
+- Trajectory sender **completely failed** — 34.5% accuracy ≈ random guessing
+- The 80-dim raw trajectory is too high-dimensional for Linear(80,32) to extract mass from
+- Mass signal in trajectories is subtle: heavy objects bounce less in collisions, but this requires detecting collision events and comparing velocity changes — exactly what the handcrafted features do
+- The feature-engineering in 37b (collision detection + DV ratios) is doing crucial work that a small linear network cannot replicate
+- **Lesson:** Domain-specific feature engineering > raw input with insufficient model capacity. The 6 collision features compress 80 raw values into the right representation for mass discrimination

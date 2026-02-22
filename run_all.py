@@ -15793,6 +15793,1128 @@ def run_phase33c_comparative_comm():
     print(f"{'=' * 70}", flush=True)
 
 
+def run_phase38b_trajectory_sender():
+    """Phase 38b: Trajectory-based sender replaces handcrafted collision features.
+    Sender sees raw per-object trajectory [40×2=80 values] instead of 6 collision features.
+    Linear(80,32)→ReLU→Linear(32,4)→Gumbel-softmax. No collision detection needed.
+    Target: comm >88%, full pipeline >72%."""
+    import random
+    import math
+    import copy
+
+    print("=" * 70, flush=True)
+    print("PHASE 38b: Trajectory-Based Sender", flush=True)
+    print("  raw trajectory [40×2] → sender → token → receiver → plan", flush=True)
+    print("=" * 70, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    n_obj = 3
+    slot_dim = 64
+    S = 64
+    vmax = 10.0
+    K = 5
+    n_candidates = 128
+    n_elite = 16
+    n_rounds = 3
+    force_range = 0.5
+    success_thresh = 10.0
+    n_frames = 40
+    vocab_size = 4
+    traj_dim = n_frames * 2  # 80
+    texture_types = ['checkerboard', 'stripes', 'gradient', 'noise', 'dots']
+
+    # ══════════════════════════════════════════════════════════
+    # Rendering + perception helpers
+    # ══════════════════════════════════════════════════════════
+    def hue_to_rgb(h):
+        h6 = h * 6.0
+        sector = int(h6) % 6
+        frac = h6 - int(h6)
+        if sector == 0: base = np.array([1.0, frac, 0.0])
+        elif sector == 1: base = np.array([1.0 - frac, 1.0, 0.0])
+        elif sector == 2: base = np.array([0.0, 1.0, frac])
+        elif sector == 3: base = np.array([0.0, 1.0 - frac, 1.0])
+        elif sector == 4: base = np.array([frac, 0.0, 1.0])
+        else: base = np.array([1.0, 0.0, 1.0 - frac])
+        return np.clip(base * 0.7 + 0.3, 0.15, 1.0)
+
+    def generate_texture(radius, texture_type, base_hue):
+        d = 2 * radius + 1
+        base = hue_to_rgb(base_hue)
+        yy, xx = np.mgrid[:d, :d]
+        cy_t, cx_t = radius, radius
+        if texture_type == 'checkerboard':
+            freq = random.choice([3, 4, 5])
+            pattern = ((xx // freq + yy // freq) % 2).astype(np.float32) * 0.6 + 0.4
+        elif texture_type == 'stripes':
+            freq = random.choice([3, 4, 5])
+            angle = random.uniform(0, np.pi)
+            rotated = xx * np.cos(angle) + yy * np.sin(angle)
+            pattern = (np.sin(rotated * 2 * np.pi / freq) * 0.3 + 0.7).astype(np.float32)
+        elif texture_type == 'gradient':
+            angle = random.uniform(0, 2 * np.pi)
+            grad = (xx - cx_t) * np.cos(angle) + (yy - cy_t) * np.sin(angle)
+            grad = grad / (radius + 1e-8)
+            pattern = (grad * 0.3 + 0.7).astype(np.float32)
+        elif texture_type == 'noise':
+            pattern = np.random.uniform(0.3, 1.0, (d, d)).astype(np.float32)
+        elif texture_type == 'dots':
+            pattern = np.ones((d, d), dtype=np.float32) * 0.5
+            spacing = random.choice([4, 5, 6])
+            for dy in range(0, d, spacing):
+                for dx in range(0, d, spacing):
+                    dist_sq = (yy - dy) ** 2 + (xx - dx) ** 2
+                    pattern[dist_sq <= 1] = 1.0
+        else:
+            pattern = np.ones((d, d), dtype=np.float32) * 0.8
+        patch = np.zeros((3, d, d), dtype=np.float32)
+        for c in range(3):
+            patch[c] = base[c] * pattern
+        dist_sq = (xx - cx_t) ** 2 + (yy - cy_t) ** 2
+        mask = dist_sq <= radius ** 2
+        return patch, mask
+
+    def render_frame(objects, obj_textures, bg_color):
+        img = np.zeros((3, S, S), dtype=np.float32)
+        for c in range(3):
+            img[c, :, :] = bg_color[c]
+        for oi_idx, obj in enumerate(objects):
+            r = obj['r']
+            cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+            patch, mask = obj_textures[oi_idx]
+            d = 2 * r + 1
+            for dy in range(d):
+                for dx in range(d):
+                    if mask[dy, dx]:
+                        px = cx_i - r + dx
+                        py = cy_i - r + dy
+                        if 0 <= px < S and 0 <= py < S:
+                            for c in range(3):
+                                img[c, py, px] = patch[c, dy, dx]
+        return img
+
+    def physics_step(objects, track_collisions=False):
+        n = len(objects)
+        collisions = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                oi_o, oj_o = objects[i], objects[j]
+                dx_c = oj_o['cx'] - oi_o['cx']
+                dy_c = oj_o['cy'] - oi_o['cy']
+                dist = math.hypot(dx_c, dy_c)
+                min_dist = oi_o['r'] + oj_o['r']
+                if dist < min_dist and dist > 0.1:
+                    nx, ny = dx_c / dist, dy_c / dist
+                    dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                          (oi_o['vy'] - oj_o['vy']) * ny
+                    if dvn > 0:
+                        m1, m2 = oi_o['mass'], oj_o['mass']
+                        imp = 2 * dvn / (m1 + m2)
+                        dv_i = imp * m2
+                        dv_j = imp * m1
+                        if track_collisions:
+                            collisions.append((i, j, dv_i, dv_j))
+                        oi_o['vx'] -= imp * m2 * nx
+                        oi_o['vy'] -= imp * m2 * ny
+                        oj_o['vx'] += imp * m1 * nx
+                        oj_o['vy'] += imp * m1 * ny
+                        overlap = min_dist - dist
+                        oi_o['cx'] -= overlap * nx * 0.5
+                        oi_o['cy'] -= overlap * ny * 0.5
+                        oj_o['cx'] += overlap * nx * 0.5
+                        oj_o['cy'] += overlap * ny * 0.5
+        for obj in objects:
+            obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+            r = obj['r']
+            if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+            if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+            if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+            if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+        return collisions if track_collisions else None
+
+    def objects_to_state(objects):
+        state = np.zeros((len(objects), 6), dtype=np.float32)
+        for oi, obj in enumerate(objects):
+            state[oi] = [obj['cx'] / S, obj['cy'] / S, obj['vx'] / vmax,
+                         obj['vy'] / vmax, obj['r'] / S, obj['mass'] / 3.0]
+        return state
+
+    def rgb_to_hue_vectorized(rgb):
+        r, g, b = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+        cmax = np.maximum(np.maximum(r, g), b)
+        cmin = np.minimum(np.minimum(r, g), b)
+        delta = cmax - cmin
+        hue = np.zeros(len(rgb), dtype=np.float32)
+        mask_r = (cmax == r) & (delta > 0.01)
+        hue[mask_r] = (((g[mask_r] - b[mask_r]) / delta[mask_r]) % 6) / 6.0
+        mask_g = (cmax == g) & (delta > 0.01) & ~mask_r
+        hue[mask_g] = ((b[mask_g] - r[mask_g]) / delta[mask_g] + 2) / 6.0
+        mask_b = (cmax == b) & (delta > 0.01) & ~mask_r & ~mask_g
+        hue[mask_b] = ((r[mask_b] - g[mask_b]) / delta[mask_b] + 4) / 6.0
+        achromatic = delta <= 0.01
+        hue[achromatic] = -1.0
+        sat = np.where(cmax > 0.01, delta / cmax, 0.0)
+        return hue, sat, cmax
+
+    def hue_distance(h1, h2):
+        d = np.abs(h1 - h2)
+        return np.minimum(d, 1.0 - d)
+
+    def get_corner_bg(img):
+        corners = []
+        for cy_s, cx_s in [(0, 0), (0, S-2), (S-2, 0), (S-2, S-2)]:
+            for dy in range(2):
+                for dx in range(2):
+                    corners.append(img[:, cy_s + dy, cx_s + dx])
+        return np.mean(corners, axis=0)
+
+    pixel_coords_y = np.repeat(np.arange(S, dtype=np.float32)[:, None], S, axis=1).flatten()
+    pixel_coords_x = np.repeat(np.arange(S, dtype=np.float32)[None, :], S, axis=0).flatten()
+    bg_dist_threshold = 0.15
+
+    def perceive_trajectories(objects_init, n_frames_p, seed_offset):
+        """Render + perceive → per-object trajectories [n_obj, n_frames, 2] (normalized)."""
+        rng_state = random.getstate()
+        np_rng_state = np.random.get_state()
+        random.seed(seed_offset)
+        np.random.seed(seed_offset)
+
+        bg_color = np.array([random.uniform(0.2, 0.6),
+                             random.uniform(0.2, 0.6),
+                             random.uniform(0.2, 0.6)], dtype=np.float32)
+        hue_offset = random.uniform(0, 1)
+        obj_hues = [(hue_offset + oi / n_obj) % 1.0 for oi in range(n_obj)]
+
+        objects = copy.deepcopy(objects_init)
+        obj_textures = []
+        for oi in range(n_obj):
+            tex_type = random.choice(texture_types)
+            patch, mask = generate_texture(objects[oi]['r'], tex_type, obj_hues[oi])
+            obj_textures.append((patch, mask))
+
+        random.setstate(rng_state)
+        np.random.set_state(np_rng_state)
+
+        gt_positions = [[None] * n_frames_p for _ in range(n_obj)]
+        frames = []
+        for fi in range(n_frames_p):
+            for oi in range(n_obj):
+                gt_positions[oi][fi] = [objects[oi]['cx'] / S, objects[oi]['cy'] / S]
+            frames.append(render_frame(objects, obj_textures, bg_color))
+            physics_step(objects)
+
+        # Perceive: discover hues
+        n_bins = 72
+        hue_thresh = 0.5 / n_obj
+        img0 = frames[0]
+        bg_est = get_corner_bg(img0)
+        pix_rgb0 = img0.transpose(1, 2, 0).reshape(-1, 3)
+        rgb_dist0 = np.sqrt(((pix_rgb0 - bg_est[None, :]) ** 2).sum(axis=1))
+        fg0 = rgb_dist0 > bg_dist_threshold
+        pix_hues0, pix_sats0, _ = rgb_to_hue_vectorized(pix_rgb0)
+        good = fg0 & (pix_hues0 >= 0) & (pix_sats0 > 0.1)
+        good_hues0 = pix_hues0[good]
+
+        hist, bin_edges = np.histogram(good_hues0, bins=n_bins, range=(0, 1))
+        kernel = np.array([1, 2, 3, 2, 1], dtype=np.float32)
+        kernel /= kernel.sum()
+        hist_smooth = np.convolve(np.tile(hist, 3), kernel, mode='same')[n_bins:2*n_bins]
+        min_height = max(hist_smooth.max() * 0.05, 3)
+        peaks = []
+        for bi in range(n_bins):
+            left = hist_smooth[(bi - 1) % n_bins]
+            right = hist_smooth[(bi + 1) % n_bins]
+            if hist_smooth[bi] > left and hist_smooth[bi] > right and hist_smooth[bi] >= min_height:
+                peaks.append(((bin_edges[bi] + bin_edges[bi + 1]) / 2, hist_smooth[bi]))
+
+        merged = []
+        used = set()
+        for i, (h1, c1) in enumerate(peaks):
+            if i in used: continue
+            group = [(h1, c1)]
+            for j, (h2, c2) in enumerate(peaks):
+                if j <= i or j in used: continue
+                if hue_distance(h1, h2) < 0.05:
+                    group.append((h2, c2))
+                    used.add(j)
+            merged.append(max(group, key=lambda x: x[1])[0])
+
+        disc_hue_to_obj = {}
+        gt_used = set()
+        disc_coms = []
+        for dh in merged:
+            h_dist = hue_distance(pix_hues0, dh)
+            sel = fg0 & (pix_hues0 >= 0) & (h_dist < hue_thresh)
+            if sel.sum() > 0:
+                disc_coms.append((dh, pixel_coords_x[sel].mean() / S,
+                                  pixel_coords_y[sel].mean() / S))
+            else:
+                disc_coms.append((dh, 0.5, 0.5))
+
+        for dh, dcx, dcy in disc_coms:
+            best_oi = -1
+            best_d = float('inf')
+            for oi in range(n_obj):
+                if oi in gt_used: continue
+                gx, gy = gt_positions[oi][0]
+                d = math.hypot(dcx - gx, dcy - gy)
+                if d < best_d:
+                    best_d = d
+                    best_oi = oi
+            if best_oi >= 0:
+                disc_hue_to_obj[dh] = best_oi
+                gt_used.add(best_oi)
+
+        # Localize all frames → per-object positions
+        perceived_positions = {oi: [] for oi in range(n_obj)}
+        for fi in range(n_frames_p):
+            img = frames[fi]
+            pix_rgb = img.transpose(1, 2, 0).reshape(-1, 3)
+            bg_fi = get_corner_bg(img)
+            rgb_dist_fi = np.sqrt(((pix_rgb - bg_fi[None, :]) ** 2).sum(axis=1))
+            pix_fg = rgb_dist_fi > bg_dist_threshold
+            pix_hues, pix_sats, _ = rgb_to_hue_vectorized(pix_rgb)
+
+            for dh, oi in disc_hue_to_obj.items():
+                h_dist = hue_distance(pix_hues, dh)
+                sel = pix_fg & (pix_hues >= 0) & (pix_sats > 0.1) & (h_dist < hue_thresh)
+                if sel.sum() > 5:
+                    cx_p = pixel_coords_x[sel].mean() / S
+                    cy_p = pixel_coords_y[sel].mean() / S
+                    perceived_positions[oi].append([cx_p, cy_p])
+                else:
+                    if perceived_positions[oi]:
+                        perceived_positions[oi].append(perceived_positions[oi][-1])
+                    else:
+                        perceived_positions[oi].append(gt_positions[oi][fi])
+
+            for oi in range(n_obj):
+                if oi not in disc_hue_to_obj.values():
+                    perceived_positions[oi].append(gt_positions[oi][fi])
+
+        # Return per-object trajectories as flat vectors [n_obj, 80]
+        obj_trajs = []
+        for oi in range(n_obj):
+            traj = np.array(perceived_positions[oi]).flatten()  # [80]
+            obj_trajs.append(traj)
+
+        return obj_trajs, perceived_positions
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 1: Generate training data (GT state sequences)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 1: Generate training data (2000 GT-state sequences)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t1 = time.time()
+
+    n_train_seq = 2000
+
+    random.seed(42)
+    np.random.seed(42)
+    all_states, all_actions = [], []
+    all_objects_init = []
+    all_masses, all_heavy_idx = [], []
+
+    for seq_i in range(n_train_seq):
+        masses = [1.0, 1.0, 1.0]
+        heavy_idx = random.randint(0, n_obj - 1)
+        masses[heavy_idx] = 3.0
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(6, 9)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-5.0, 5.0)
+            vy = random.uniform(-5.0, 5.0)
+            objects.append({'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                            'r': r, 'mass': masses[oi]})
+        all_objects_init.append(copy.deepcopy(objects))
+
+        intervention_plan = {}
+        n_interventions = random.randint(2, 4)
+        intervention_frames = sorted(random.sample(range(5, n_frames - 5), n_interventions))
+        for fi in intervention_frames:
+            target_obj = random.randint(0, n_obj - 1)
+            mag = random.uniform(2.0, 6.0)
+            angle = random.uniform(0, 2 * math.pi)
+            intervention_plan[fi] = (target_obj, mag * math.cos(angle), mag * math.sin(angle))
+
+        seq_states, seq_actions = [], {}
+        for fi in range(n_frames):
+            seq_states.append(objects_to_state(objects))
+            if fi in intervention_plan:
+                target_obj, fx, fy = intervention_plan[fi]
+                objects[target_obj]['vx'] += fx
+                objects[target_obj]['vy'] += fy
+                seq_actions[fi] = (target_obj, fx / vmax, fy / vmax)
+            physics_step(objects)
+        all_states.append(np.array(seq_states))
+        all_actions.append(seq_actions)
+        all_masses.append(masses)
+        all_heavy_idx.append(heavy_idx)
+        if (seq_i + 1) % 500 == 0:
+            print(f"│  Generated {seq_i+1}/{n_train_seq}", flush=True)
+    print(f"└─ Stage 1 done [{time.time()-t1:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 2: Train JEPA on GT states
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 2: Train JEPA on GT training data", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t2 = time.time()
+
+    states_t_list, states_tp1_list, actions_list = [], [], []
+    for seq_i in range(n_train_seq):
+        states = all_states[seq_i]
+        actions = all_actions[seq_i]
+        for fi in range(n_frames - 1):
+            states_t_list.append(states[fi])
+            states_tp1_list.append(states[fi + 1])
+            if fi in actions:
+                obj_idx, fx, fy = actions[fi]
+                action_vec = np.zeros(n_obj + 2, dtype=np.float32)
+                action_vec[obj_idx] = 1.0
+                action_vec[n_obj] = fx
+                action_vec[n_obj + 1] = fy
+                actions_list.append(action_vec)
+            else:
+                actions_list.append(np.zeros(n_obj + 2, dtype=np.float32))
+
+    states_t_np = np.array(states_t_list)
+    states_tp1_np = np.array(states_tp1_list)
+    actions_np = np.array(actions_list)
+
+    torch.manual_seed(42)
+    state_proj = nn.Linear(6, slot_dim, bias=False)
+    nn.init.orthogonal_(state_proj.weight)
+    state_proj = state_proj.to(device)
+    for p in state_proj.parameters():
+        p.requires_grad = False
+
+    states_t_raw = torch.tensor(states_t_np, dtype=torch.float32).to(device)
+    states_tp1_raw = torch.tensor(states_tp1_np, dtype=torch.float32).to(device)
+    with torch.no_grad():
+        slots_t = state_proj(states_t_raw)
+        slots_tp1 = state_proj(states_tp1_raw)
+    actions_t = torch.tensor(actions_np, dtype=torch.float32).to(device)
+
+    N = len(states_t_np)
+    n_train = int(0.8 * N)
+    perm = torch.randperm(N)
+    tr_slots_t = slots_t[perm[:n_train]]
+    tr_slots_tp1 = slots_tp1[perm[:n_train]]
+    tr_actions = actions_t[perm[:n_train]]
+
+    from world_model import ActionConditionedPredictor
+    torch.manual_seed(42)
+    jepa = ActionConditionedPredictor(
+        n_slots=n_obj, slot_dim=slot_dim, action_dim=64, hidden_dim=256).to(device)
+    jepa_opt = torch.optim.Adam(jepa.parameters(), lr=3e-4)
+    jepa_params = sum(p.numel() for p in jepa.parameters())
+    print(f"│  JEPA: {jepa_params:,} params", flush=True)
+
+    batch_size = 256
+    for epoch in range(1, 101):
+        jepa.train()
+        ep_perm = torch.randperm(n_train, device=device)
+        ep_loss = 0.0
+        for start in range(0, n_train, batch_size):
+            idx = ep_perm[start:start + batch_size]
+            pred = jepa(tr_slots_t[idx], tr_actions[idx])
+            loss = F.mse_loss(pred, tr_slots_tp1[idx])
+            jepa_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(jepa.parameters(), 1.0)
+            jepa_opt.step()
+            ep_loss += loss.item() * len(idx)
+        if epoch % 25 == 0 or epoch == 1:
+            print(f"│    JEPA Epoch {epoch:3d}: loss={ep_loss/n_train:.6f}", flush=True)
+    print(f"└─ Stage 2 done [{time.time()-t2:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 3: Train Position Decoder
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 3: Train Position Decoder", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t3 = time.time()
+
+    gt_pos = states_t_raw[:, :, :2]
+    all_slots_flat = slots_t.reshape(-1, slot_dim)
+    all_pos_flat = gt_pos.reshape(-1, 2)
+    n_dec_train = int(0.8 * len(all_slots_flat))
+    dec_perm = torch.randperm(len(all_slots_flat))
+    tr_dec_slots = all_slots_flat[dec_perm[:n_dec_train]]
+    tr_dec_pos = all_pos_flat[dec_perm[:n_dec_train]]
+    vl_dec_slots = all_slots_flat[dec_perm[n_dec_train:]]
+    vl_dec_pos = all_pos_flat[dec_perm[n_dec_train:]]
+
+    pos_decoder = nn.Linear(slot_dim, 2).to(device)
+    dec_opt = torch.optim.Adam(pos_decoder.parameters(), lr=1e-3)
+    for epoch in range(1, 51):
+        pos_decoder.train()
+        ep_perm = torch.randperm(n_dec_train, device=device)
+        for start in range(0, n_dec_train, 1024):
+            idx = ep_perm[start:start + 1024]
+            pred = pos_decoder(tr_dec_slots[idx])
+            loss = F.mse_loss(pred, tr_dec_pos[idx])
+            dec_opt.zero_grad()
+            loss.backward()
+            dec_opt.step()
+    pos_decoder.eval()
+    with torch.no_grad():
+        vl_pred = pos_decoder(vl_dec_slots)
+        dec_err = ((vl_pred - vl_dec_pos) * S).norm(dim=-1).mean().item()
+    print(f"│  Decoder val error: {dec_err:.3f}px", flush=True)
+    print(f"└─ Stage 3 done [{time.time()-t3:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 4: Perceive training sequences → trajectories
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 4: Render + perceive 2000 training sequences → trajectories", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t4 = time.time()
+
+    del states_t_raw, states_tp1_raw, slots_t, slots_tp1, actions_t
+    del tr_slots_t, tr_slots_tp1, tr_actions
+    del all_slots_flat, all_pos_flat, gt_pos
+    del tr_dec_slots, tr_dec_pos, vl_dec_slots, vl_dec_pos
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    train_trajs = []  # [n_train_seq, n_obj, 80]
+    for seq_i in range(n_train_seq):
+        obj_trajs, _ = perceive_trajectories(
+            all_objects_init[seq_i], n_frames, seed_offset=10000 + seq_i)
+        train_trajs.append(obj_trajs)
+        if (seq_i + 1) % 500 == 0:
+            print(f"│  Perceived {seq_i+1}/{n_train_seq} training sequences", flush=True)
+    print(f"└─ Stage 4 done [{time.time()-t4:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 5: Train Trajectory Sender + Receiver
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 5: Train Trajectory Sender + Comparative Receiver", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t5 = time.time()
+
+    class TrajectorySender(nn.Module):
+        """Trajectory-based sender: [80] raw positions → Gumbel-softmax token."""
+        def __init__(self, traj_dim=80, hidden=32, vocab_size=4):
+            super().__init__()
+            self.vocab_size = vocab_size
+            self.net = nn.Sequential(
+                nn.Linear(traj_dim, hidden),
+                nn.ReLU(),
+                nn.Linear(hidden, vocab_size),
+            )
+
+        def forward(self, x, tau=1.0, hard=False):
+            logits = self.net(x)
+            if hard:
+                idx = logits.argmax(dim=-1)
+                return F.one_hot(idx, self.vocab_size).float()
+            return F.gumbel_softmax(logits, tau=tau, hard=True)
+
+    class ComparativeReceiver(nn.Module):
+        """Receives ALL tokens, compares them, picks heaviest object."""
+        def __init__(self, max_obj=3, vocab_size=4, embed_dim=16, hidden=32):
+            super().__init__()
+            self.max_obj = max_obj
+            self.embed = nn.Linear(vocab_size, embed_dim)
+            self.head = nn.Sequential(
+                nn.Linear(max_obj * embed_dim, hidden),
+                nn.ReLU(),
+                nn.Linear(hidden, max_obj),
+            )
+
+        def forward(self, tokens):
+            B = tokens.shape[0]
+            embedded = F.relu(self.embed(tokens))
+            flat = embedded.reshape(B, -1)
+            return self.head(flat)
+
+    torch.manual_seed(42)
+    sender = TrajectorySender(traj_dim=traj_dim, hidden=32, vocab_size=vocab_size).to(device)
+    receiver = ComparativeReceiver(max_obj=n_obj, vocab_size=vocab_size,
+                                    embed_dim=16, hidden=32).to(device)
+    sender_params = sum(p.numel() for p in sender.parameters())
+    receiver_params = sum(p.numel() for p in receiver.parameters())
+    print(f"│  TrajectorySender: {sender_params} params", flush=True)
+    print(f"│  ComparativeReceiver: {receiver_params} params", flush=True)
+
+    n_comm_train = int(0.8 * n_train_seq)
+    train_trajs_tensor = torch.tensor(np.array(train_trajs), dtype=torch.float32).to(device)
+    train_labels_tensor = torch.tensor(all_heavy_idx, dtype=torch.long).to(device)
+
+    tr_trajs = train_trajs_tensor[:n_comm_train]
+    tr_labels = train_labels_tensor[:n_comm_train]
+    vl_trajs = train_trajs_tensor[n_comm_train:]
+    vl_labels = train_labels_tensor[n_comm_train:]
+
+    comm_opt = torch.optim.Adam(
+        list(sender.parameters()) + list(receiver.parameters()), lr=3e-4)
+    n_comm_epochs = 200
+    comm_batch = 64
+    best_comm_acc = 0.0
+    best_comm_state = None
+
+    for epoch in range(1, n_comm_epochs + 1):
+        sender.train(); receiver.train()
+        tau = 2.0 - (2.0 - 0.5) * (epoch - 1) / max(n_comm_epochs - 1, 1)
+
+        ep_perm = torch.randperm(n_comm_train, device=device)
+        epoch_correct = 0
+        for start in range(0, n_comm_train, comm_batch):
+            idx = ep_perm[start:start + comm_batch]
+            B = len(idx)
+            trajs_batch = tr_trajs[idx]  # [B, 3, 80]
+            labels_batch = tr_labels[idx]
+
+            all_tokens = torch.zeros(B, n_obj, vocab_size, device=device)
+            for oi in range(n_obj):
+                all_tokens[:, oi, :] = sender(trajs_batch[:, oi, :], tau=tau)
+
+            logits = receiver(all_tokens)
+            loss = F.cross_entropy(logits, labels_batch)
+            comm_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                list(sender.parameters()) + list(receiver.parameters()), 1.0)
+            comm_opt.step()
+            epoch_correct += (logits.argmax(dim=-1) == labels_batch).sum().item()
+
+        train_acc = epoch_correct / n_comm_train
+
+        if epoch % 20 == 0 or epoch == 1:
+            sender.eval(); receiver.eval()
+            with torch.no_grad():
+                vl_tokens = torch.zeros(len(vl_labels), n_obj, vocab_size, device=device)
+                for oi in range(n_obj):
+                    vl_tokens[:, oi, :] = sender(vl_trajs[:, oi, :], hard=True)
+                vl_logits = receiver(vl_tokens)
+                val_preds = vl_logits.argmax(dim=-1)
+                val_acc = (val_preds == vl_labels).float().mean().item()
+
+                msg_tokens = vl_tokens.argmax(dim=-1)
+                n_unique = len(set(msg_tokens.reshape(-1).cpu().tolist()))
+
+            if val_acc > best_comm_acc:
+                best_comm_acc = val_acc
+                best_comm_state = {
+                    'sender': {k: v.cpu().clone() for k, v in sender.state_dict().items()},
+                    'receiver': {k: v.cpu().clone() for k, v in receiver.state_dict().items()},
+                }
+
+            print(f"│    Epoch {epoch:3d}: τ={tau:.2f}, train={train_acc:.3f}, "
+                  f"val={val_acc:.3f}, tokens={n_unique}", flush=True)
+
+    sender.load_state_dict(best_comm_state['sender'])
+    receiver.load_state_dict(best_comm_state['receiver'])
+    sender.to(device).eval()
+    receiver.to(device).eval()
+    print(f"│  Best comm val_acc: {best_comm_acc*100:.1f}%", flush=True)
+    print(f"└─ Stage 5 done [{time.time()-t5:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 6: Generate + perceive 200 test scenarios
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 6: Generate + perceive 200 pixel test scenarios", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t6 = time.time()
+
+    del train_trajs_tensor, tr_trajs, tr_labels, vl_trajs, vl_labels
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    cpu = torch.device('cpu')
+    jepa.to(cpu).eval()
+    pos_decoder.to(cpu).eval()
+    sender.to(cpu).eval()
+    receiver.to(cpu).eval()
+    state_proj = state_proj.to(cpu)
+
+    n_test_seq = 200
+    random.seed(999)
+    np.random.seed(999)
+
+    test_scenarios = []
+    pos_errors = []
+
+    for si in range(n_test_seq):
+        masses = [1.0, 1.0, 1.0]
+        heavy_idx = random.randint(0, n_obj - 1)
+        masses[heavy_idx] = 3.0
+
+        bg_color = np.array([random.uniform(0.2, 0.6),
+                             random.uniform(0.2, 0.6),
+                             random.uniform(0.2, 0.6)], dtype=np.float32)
+        hue_offset = random.uniform(0, 1)
+        obj_hues = [(hue_offset + oi / n_obj) % 1.0 for oi in range(n_obj)]
+
+        objects = []
+        obj_textures = []
+        for oi in range(n_obj):
+            r = random.randint(6, 9)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-5.0, 5.0)
+            vy = random.uniform(-5.0, 5.0)
+            tex_type = random.choice(texture_types)
+            patch, mask = generate_texture(r, tex_type, obj_hues[oi])
+            objects.append({'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                            'r': r, 'mass': masses[oi]})
+            obj_textures.append((patch, mask))
+
+        gt_positions = [[None] * n_frames for _ in range(n_obj)]
+        frames = []
+        for fi in range(n_frames):
+            for oi in range(n_obj):
+                gt_positions[oi][fi] = [objects[oi]['cx'] / S, objects[oi]['cy'] / S]
+            frames.append(render_frame(objects, obj_textures, bg_color))
+            physics_step(objects)
+
+        # Perceive from pixels → trajectories
+        img0 = frames[0]
+        bg_est = get_corner_bg(img0)
+        pix_rgb0 = img0.transpose(1, 2, 0).reshape(-1, 3)
+        rgb_dist0 = np.sqrt(((pix_rgb0 - bg_est[None, :]) ** 2).sum(axis=1))
+        fg0 = rgb_dist0 > bg_dist_threshold
+        pix_hues0, pix_sats0, _ = rgb_to_hue_vectorized(pix_rgb0)
+        good = fg0 & (pix_hues0 >= 0) & (pix_sats0 > 0.1)
+        good_hues0 = pix_hues0[good]
+
+        n_bins = 72
+        hist, bin_edges = np.histogram(good_hues0, bins=n_bins, range=(0, 1))
+        kernel = np.array([1, 2, 3, 2, 1], dtype=np.float32)
+        kernel /= kernel.sum()
+        hist_smooth = np.convolve(np.tile(hist, 3), kernel, mode='same')[n_bins:2*n_bins]
+        min_height = max(hist_smooth.max() * 0.05, 3)
+        peaks = []
+        for bi in range(n_bins):
+            left = hist_smooth[(bi - 1) % n_bins]
+            right = hist_smooth[(bi + 1) % n_bins]
+            if hist_smooth[bi] > left and hist_smooth[bi] > right and hist_smooth[bi] >= min_height:
+                peaks.append(((bin_edges[bi] + bin_edges[bi + 1]) / 2, hist_smooth[bi]))
+        merged = []
+        used = set()
+        for i, (h1, c1) in enumerate(peaks):
+            if i in used: continue
+            group = [(h1, c1)]
+            for j, (h2, c2) in enumerate(peaks):
+                if j <= i or j in used: continue
+                if hue_distance(h1, h2) < 0.05:
+                    group.append((h2, c2))
+                    used.add(j)
+            merged.append(max(group, key=lambda x: x[1])[0])
+
+        hue_thresh = 0.5 / n_obj
+        disc_hue_to_obj = {}
+        gt_used = set()
+        disc_coms = []
+        for dh in merged:
+            h_dist = hue_distance(pix_hues0, dh)
+            sel = fg0 & (pix_hues0 >= 0) & (h_dist < hue_thresh)
+            if sel.sum() > 0:
+                disc_coms.append((dh, pixel_coords_x[sel].mean() / S,
+                                  pixel_coords_y[sel].mean() / S))
+            else:
+                disc_coms.append((dh, 0.5, 0.5))
+
+        for dh, dcx, dcy in disc_coms:
+            best_oi = -1
+            best_d = float('inf')
+            for oi in range(n_obj):
+                if oi in gt_used: continue
+                gx, gy = gt_positions[oi][0]
+                d = math.hypot(dcx - gx, dcy - gy)
+                if d < best_d:
+                    best_d = d
+                    best_oi = oi
+            if best_oi >= 0:
+                disc_hue_to_obj[dh] = best_oi
+                gt_used.add(best_oi)
+
+        perceived_positions = {oi: [] for oi in range(n_obj)}
+        for fi in range(n_frames):
+            img = frames[fi]
+            pix_rgb = img.transpose(1, 2, 0).reshape(-1, 3)
+            bg_fi = get_corner_bg(img)
+            rgb_dist_fi = np.sqrt(((pix_rgb - bg_fi[None, :]) ** 2).sum(axis=1))
+            pix_fg = rgb_dist_fi > bg_dist_threshold
+            pix_hues, pix_sats, _ = rgb_to_hue_vectorized(pix_rgb)
+
+            for dh, oi in disc_hue_to_obj.items():
+                h_dist = hue_distance(pix_hues, dh)
+                sel = pix_fg & (pix_hues >= 0) & (pix_sats > 0.1) & (h_dist < hue_thresh)
+                if sel.sum() > 5:
+                    cx_p = pixel_coords_x[sel].mean() / S
+                    cy_p = pixel_coords_y[sel].mean() / S
+                    perceived_positions[oi].append([cx_p, cy_p])
+                else:
+                    if perceived_positions[oi]:
+                        perceived_positions[oi].append(perceived_positions[oi][-1])
+                    else:
+                        perceived_positions[oi].append(gt_positions[oi][fi])
+            for oi in range(n_obj):
+                if oi not in disc_hue_to_obj.values():
+                    perceived_positions[oi].append(gt_positions[oi][fi])
+
+        for oi in range(n_obj):
+            for fi in range(n_frames):
+                gt_x, gt_y = gt_positions[oi][fi]
+                p_x, p_y = perceived_positions[oi][fi]
+                err = math.hypot((p_x - gt_x) * S, (p_y - gt_y) * S)
+                pos_errors.append(err)
+
+        # Per-object trajectories for sender
+        obj_trajs = []
+        for oi in range(n_obj):
+            traj = np.array(perceived_positions[oi]).flatten()
+            obj_trajs.append(traj)
+
+        test_scenarios.append({
+            'gt_heavy': heavy_idx,
+            'gt_objects': [copy.deepcopy(o) for o in objects],
+            'gt_positions': gt_positions,
+            'perceived_positions': perceived_positions,
+            'masses': masses,
+            'obj_trajs': obj_trajs,
+        })
+
+        if (si + 1) % 50 == 0:
+            print(f"│  Processed {si+1}/{n_test_seq} "
+                  f"(pos_err={np.mean(pos_errors):.2f}px)", flush=True)
+
+    mean_pos_err = np.mean(pos_errors)
+    print(f"│  Mean position error: {mean_pos_err:.2f}px", flush=True)
+    print(f"└─ Stage 6 done [{time.time()-t6:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 7: Planning with communication
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 7: Planning — Agent A sends → Agent B plans", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t7 = time.time()
+
+    random.seed(777)
+    np.random.seed(777)
+    test_targets = []
+    for si in range(n_test_seq):
+        test_targets.append(np.array([
+            random.uniform(0.2, 0.8), random.uniform(0.2, 0.8)], dtype=np.float32))
+
+    comm_correct = 0
+    full_comm_dists = []
+    oracle_comm_dists = []
+    no_comm_dists = []
+    random_dists = []
+
+    def cem_1step_plan(current_state, target_obj_idx, target_pos_norm):
+        cur_slots = state_proj(
+            torch.tensor(current_state, dtype=torch.float32).unsqueeze(0))
+        target_t = torch.tensor(target_pos_norm, dtype=torch.float32)
+        mu = torch.zeros(2)
+        sigma = torch.ones(2) * 0.3
+        for round_i in range(n_rounds):
+            forces = mu + sigma * torch.randn(n_candidates, 2)
+            forces = forces.clamp(-force_range, force_range)
+            with torch.no_grad():
+                cand_actions = torch.zeros(n_candidates, n_obj + 2)
+                cand_actions[:, target_obj_idx] = 1.0
+                cand_actions[:, n_obj] = forces[:, 0]
+                cand_actions[:, n_obj + 1] = forces[:, 1]
+                pred_slots = jepa(cur_slots.expand(n_candidates, -1, -1).clone(),
+                                  cand_actions)
+                target_slots = pred_slots[:, target_obj_idx, :]
+                pred_pos = pos_decoder(target_slots)
+                scores = -((pred_pos - target_t) ** 2).sum(dim=-1)
+            elite_idx = torch.topk(scores, n_elite).indices
+            elite_forces = forces[elite_idx]
+            mu = elite_forces.mean(dim=0)
+            sigma = elite_forces.std(dim=0).clamp(min=0.01)
+        return mu[0].item(), mu[1].item()
+
+    def run_closed_loop_jepa(gt_objects, target_obj_idx, target_pos):
+        objs = copy.deepcopy(gt_objects)
+        gt_heavy = None
+        for oi in range(n_obj):
+            if objs[oi]['mass'] == 3.0:
+                gt_heavy = oi
+        for step in range(K):
+            current_state = objects_to_state(objs)
+            fx, fy = cem_1step_plan(current_state, target_obj_idx, target_pos)
+            objs[target_obj_idx]['vx'] += fx * vmax
+            objs[target_obj_idx]['vy'] += fy * vmax
+            physics_step(objs)
+        final_pos = np.array([objs[gt_heavy]['cx'] / S, objs[gt_heavy]['cy'] / S])
+        return np.linalg.norm((final_pos - target_pos) * S)
+
+    for si in range(n_test_seq):
+        sc = test_scenarios[si]
+        gt_heavy = sc['gt_heavy']
+        target_pos = test_targets[si]
+        gt_objects = sc['gt_objects']
+
+        # A. Full pipeline: trajectory sender → token → receiver → plan
+        traj_tensor = torch.tensor(np.array(sc['obj_trajs']), dtype=torch.float32)
+        with torch.no_grad():
+            tokens = torch.zeros(1, n_obj, vocab_size)
+            for oi in range(n_obj):
+                tokens[0, oi, :] = sender(traj_tensor[oi:oi+1], hard=True)
+            logits = receiver(tokens)
+            comm_heavy = logits[0].argmax().item()
+        comm_correct += int(comm_heavy == gt_heavy)
+
+        fc_dist = run_closed_loop_jepa(gt_objects, comm_heavy, target_pos)
+        full_comm_dists.append(fc_dist)
+
+        # B. Oracle communication
+        oc_dist = run_closed_loop_jepa(gt_objects, gt_heavy, target_pos)
+        oracle_comm_dists.append(oc_dist)
+
+        # C. No communication
+        no_comm_target = random.randint(0, n_obj - 1)
+        nc_dist = run_closed_loop_jepa(gt_objects, no_comm_target, target_pos)
+        no_comm_dists.append(nc_dist)
+
+        # D. Random
+        r_objects = copy.deepcopy(gt_objects)
+        for step in range(K):
+            fx = random.uniform(-force_range, force_range)
+            fy = random.uniform(-force_range, force_range)
+            r_target = random.randint(0, n_obj - 1)
+            r_objects[r_target]['vx'] += fx * vmax
+            r_objects[r_target]['vy'] += fy * vmax
+            physics_step(r_objects)
+        r_final = np.array([r_objects[gt_heavy]['cx'] / S, r_objects[gt_heavy]['cy'] / S])
+        r_dist = np.linalg.norm((r_final - target_pos) * S)
+        random_dists.append(r_dist)
+
+        if (si + 1) % 50 == 0:
+            ca = comm_correct / (si + 1) * 100
+            fc_s = sum(1 for d in full_comm_dists if d < success_thresh) / len(full_comm_dists) * 100
+            oc_s = sum(1 for d in oracle_comm_dists if d < success_thresh) / len(oracle_comm_dists) * 100
+            nc_s = sum(1 for d in no_comm_dists if d < success_thresh) / len(no_comm_dists) * 100
+            r_s = sum(1 for d in random_dists if d < success_thresh) / len(random_dists) * 100
+            print(f"│    {si+1}/{n_test_seq}: comm={ca:.0f}%, "
+                  f"full={fc_s:.0f}%, oracle={oc_s:.0f}%, no_comm={nc_s:.0f}%, rand={r_s:.0f}%",
+                  flush=True)
+
+    print(f"└─ Stage 7 done [{time.time()-t7:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 8: Evaluation + Visualization
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 8: Final Evaluation", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    elapsed = time.time() - t0
+
+    comm_acc = comm_correct / n_test_seq * 100
+    fc_success = sum(1 for d in full_comm_dists if d < success_thresh) / n_test_seq * 100
+    oc_success = sum(1 for d in oracle_comm_dists if d < success_thresh) / n_test_seq * 100
+    nc_success = sum(1 for d in no_comm_dists if d < success_thresh) / n_test_seq * 100
+    r_success = sum(1 for d in random_dists if d < success_thresh) / n_test_seq * 100
+
+    print(f"\n│  Communication:", flush=True)
+    print(f"│    Comm accuracy (A→B): {comm_acc:.1f}%", flush=True)
+    print(f"│    Position error:      {mean_pos_err:.2f}px", flush=True)
+
+    print(f"\n│  Success rate (within {success_thresh}px):", flush=True)
+    print(f"│    Full pipeline:       {fc_success:.1f}%  (target >72%)", flush=True)
+    print(f"│    Oracle comm:         {oc_success:.1f}%  (ceiling)", flush=True)
+    print(f"│    No communication:    {nc_success:.1f}%  (expected ~33%)", flush=True)
+    print(f"│    Random:              {r_success:.1f}%", flush=True)
+
+    fc_mean = np.mean(full_comm_dists)
+    oc_mean = np.mean(oracle_comm_dists)
+    nc_mean = np.mean(no_comm_dists)
+    r_mean = np.mean(random_dists)
+    fc_med = np.median(full_comm_dists)
+    oc_med = np.median(oracle_comm_dists)
+    nc_med = np.median(no_comm_dists)
+    r_med = np.median(random_dists)
+
+    print(f"\n│  Mean distance (px):", flush=True)
+    print(f"│    Full pipeline:       {fc_mean:.2f}px (median {fc_med:.2f})", flush=True)
+    print(f"│    Oracle comm:         {oc_mean:.2f}px (median {oc_med:.2f})", flush=True)
+    print(f"│    No communication:    {nc_mean:.2f}px (median {nc_med:.2f})", flush=True)
+    print(f"│    Random:              {r_mean:.2f}px (median {r_med:.2f})", flush=True)
+    print(f"\n│  Total time: {elapsed:.0f}s", flush=True)
+
+    # Visualization
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+
+    # 1. Success rate comparison
+    ax = axes[0, 0]
+    planners = ['Full\npipeline', 'Oracle\ncomm', 'No\ncomm', 'Random']
+    successes = [fc_success, oc_success, nc_success, r_success]
+    colors = ['#2196F3', '#4CAF50', '#FF9800', '#9E9E9E']
+    bars = ax.bar(planners, successes, color=colors, edgecolor='black', linewidth=0.5)
+    for bar, val in zip(bars, successes):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                f'{val:.1f}%', ha='center', fontsize=10, fontweight='bold')
+    ax.set_ylabel('Success Rate (%)')
+    ax.set_title('Planning Success (< 10px)')
+    ax.set_ylim(0, 105)
+    ax.axhline(y=72, color='red', linestyle='--', alpha=0.5, label='Target 72%')
+    ax.legend()
+
+    # 2. Comm correct vs wrong → planning outcome
+    ax = axes[0, 1]
+    comm_correct_dists = []
+    comm_wrong_dists = []
+    for si in range(n_test_seq):
+        sc = test_scenarios[si]
+        traj_tensor = torch.tensor(np.array(sc['obj_trajs']), dtype=torch.float32)
+        with torch.no_grad():
+            tokens = torch.zeros(1, n_obj, vocab_size)
+            for oi in range(n_obj):
+                tokens[0, oi, :] = sender(traj_tensor[oi:oi+1], hard=True)
+            logits = receiver(tokens)
+            inferred = logits[0].argmax().item()
+        if inferred == sc['gt_heavy']:
+            comm_correct_dists.append(full_comm_dists[si])
+        else:
+            comm_wrong_dists.append(full_comm_dists[si])
+    if comm_correct_dists:
+        c_succ = sum(1 for d in comm_correct_dists if d < success_thresh) / len(comm_correct_dists) * 100
+        ax.hist(comm_correct_dists, bins=20, alpha=0.6, color='#4CAF50',
+                label=f'Comm correct (n={len(comm_correct_dists)}, {c_succ:.0f}%)')
+    if comm_wrong_dists:
+        w_succ = sum(1 for d in comm_wrong_dists if d < success_thresh) / len(comm_wrong_dists) * 100
+        ax.hist(comm_wrong_dists, bins=20, alpha=0.6, color='#f44336',
+                label=f'Comm wrong (n={len(comm_wrong_dists)}, {w_succ:.0f}%)')
+    ax.axvline(x=success_thresh, color='red', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Distance to target (px)')
+    ax.set_ylabel('Count')
+    ax.set_title(f'Comm Accuracy: {comm_acc:.1f}% → Planning Outcome')
+    ax.legend(fontsize=8)
+
+    # 3. Distance distributions
+    ax = axes[0, 2]
+    ax.hist(full_comm_dists, bins=30, alpha=0.6, label=f'Full (med={fc_med:.1f})', color='#2196F3')
+    ax.hist(oracle_comm_dists, bins=30, alpha=0.6, label=f'Oracle (med={oc_med:.1f})', color='#4CAF50')
+    ax.hist(no_comm_dists, bins=30, alpha=0.6, label=f'No comm (med={nc_med:.1f})', color='#FF9800')
+    ax.axvline(x=success_thresh, color='red', linestyle='--', label=f'Threshold={success_thresh}px')
+    ax.set_xlabel('Distance to target (px)')
+    ax.set_ylabel('Count')
+    ax.set_title('Distance Distributions')
+    ax.legend(fontsize=8)
+
+    # 4. CDF comparison
+    ax = axes[1, 0]
+    for dists, label, color in [(full_comm_dists, 'Full pipeline', '#2196F3'),
+                                 (oracle_comm_dists, 'Oracle comm', '#4CAF50'),
+                                 (no_comm_dists, 'No comm', '#FF9800'),
+                                 (random_dists, 'Random', '#9E9E9E')]:
+        sorted_d = np.sort(dists)
+        cdf = np.arange(1, len(sorted_d) + 1) / len(sorted_d)
+        ax.plot(sorted_d, cdf * 100, label=label, color=color, linewidth=2)
+    ax.axvline(x=success_thresh, color='red', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Distance to target (px)')
+    ax.set_ylabel('Cumulative %')
+    ax.set_title('CDF of Distance to Target')
+    ax.legend()
+    ax.set_xlim(0, 40)
+
+    # 5. Token usage: heavy vs light
+    ax = axes[1, 1]
+    heavy_tokens = []
+    light_tokens = []
+    for si in range(n_test_seq):
+        sc = test_scenarios[si]
+        traj_tensor = torch.tensor(np.array(sc['obj_trajs']), dtype=torch.float32)
+        with torch.no_grad():
+            for oi in range(n_obj):
+                tok = sender(traj_tensor[oi:oi+1], hard=True)
+                tok_id = tok[0].argmax().item()
+                if sc['masses'][oi] == 3.0:
+                    heavy_tokens.append(tok_id)
+                else:
+                    light_tokens.append(tok_id)
+    x = np.arange(vocab_size)
+    heavy_counts = [heavy_tokens.count(i) for i in range(vocab_size)]
+    light_counts = [light_tokens.count(i) for i in range(vocab_size)]
+    w = 0.35
+    ax.bar(x - w/2, heavy_counts, w, label='Heavy (mass=3)', color='#f44336', alpha=0.7)
+    ax.bar(x + w/2, light_counts, w, label='Light (mass=1)', color='#2196F3', alpha=0.7)
+    ax.set_xticks(x)
+    ax.set_xticklabels([f'Token {i}' for i in range(vocab_size)])
+    ax.set_ylabel('Count')
+    ax.set_title('Token Usage: Heavy vs Light Objects')
+    ax.legend()
+
+    # 6. 38 vs 38b comparison
+    ax = axes[1, 2]
+    planners_38 = ['38 feat\nsender', '38b traj\nsender', 'Oracle\ncomm', 'No\ncomm']
+    # 38 results hardcoded from previous run
+    successes_cmp = [67.5, fc_success, oc_success, nc_success]
+    colors_cmp = ['#90CAF9', '#2196F3', '#4CAF50', '#FF9800']
+    bars = ax.bar(planners_38, successes_cmp, color=colors_cmp, edgecolor='black', linewidth=0.5)
+    for bar, val in zip(bars, successes_cmp):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                f'{val:.1f}%', ha='center', fontsize=10, fontweight='bold')
+    ax.set_ylabel('Success Rate (%)')
+    ax.set_title('Phase 38 vs 38b Comparison')
+    ax.set_ylim(0, 105)
+
+    fig.suptitle('Phase 38b: Trajectory-Based Sender\n'
+                 f'raw trajectory [40×2=80] → sender → token (vocab={vocab_size}) → '
+                 f'receiver → plan, comm_acc={comm_acc:.1f}%',
+                 fontsize=14, fontweight='bold')
+
+    plt.tight_layout()
+    plt.savefig('results/phase38b_trajectory_sender.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\n│  Saved results/phase38b_trajectory_sender.png", flush=True)
+
+    # Verdict
+    print(f"\n{'=' * 70}", flush=True)
+    if fc_success > 72 and comm_acc > 88:
+        verdict = "SUCCESS"
+    elif fc_success > 65 or (fc_success > 55 and comm_acc > 80):
+        verdict = "PARTIAL"
+    else:
+        verdict = "FAIL"
+    print(f"VERDICT: {verdict}", flush=True)
+    print(f"  Comm accuracy:        {comm_acc:.1f}% (target >88%)", flush=True)
+    print(f"  Position error:       {mean_pos_err:.2f}px", flush=True)
+    print(f"  Full pipeline:        {fc_success:.1f}% (target >72%)", flush=True)
+    print(f"  Oracle comm:          {oc_success:.1f}%", flush=True)
+    print(f"  No communication:     {nc_success:.1f}%", flush=True)
+    print(f"  Random:               {r_success:.1f}%", flush=True)
+    print(f"  vs Phase 38:          {fc_success - 67.5:+.1f}pp full pipeline", flush=True)
+    print(f"  Total time:           {elapsed:.0f}s", flush=True)
+    print(f"{'=' * 70}", flush=True)
+
+
 def run_phase38_communicative_planning():
     """Phase 38: Two-agent communicative planning.
     Agent A (observer): perceives collisions, infers mass, sends 1 discrete token per object.
