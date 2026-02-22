@@ -1446,3 +1446,36 @@ Position decoder: Linear(64→2), trained on slot→(cx,cy) pairs. Decode error:
 - Mass signal in trajectories is subtle: heavy objects bounce less in collisions, but this requires detecting collision events and comparing velocity changes — exactly what the handcrafted features do
 - The feature-engineering in 37b (collision detection + DV ratios) is doing crucial work that a small linear network cannot replicate
 - **Lesson:** Domain-specific feature engineering > raw input with insufficient model capacity. The 6 collision features compress 80 raw values into the right representation for mass discrimination
+
+---
+
+## Phase 38c: Smoothed Features + Wider Sender
+**Date:** Feb 22 | **Duration:** 123s | **Verdict:** PARTIAL
+
+**Setup:** Same as Phase 38 except two changes: (1) Smooth positions with window=3 moving average BEFORE finite-differencing to get velocities (instead of smoothing velocities after), reducing noise in collision detection. (2) Wider sender: Linear(6,32)→ReLU→Linear(32,4) (356 params) instead of Linear(6,16)→ReLU→Linear(16,4) (180 params). ComparativeReceiver adjusted accordingly (1,747 params).
+
+**Architecture:**
+- PerObjectSender (wider): 356 params (6→32→4, Gumbel-softmax)
+- ComparativeReceiver: 1,747 params
+- Trained jointly on perceived features from 2000 rendered training sequences
+- Communication val accuracy: **86.3%** (uses all 4 tokens — richer code than 38's binary)
+
+**Results:**
+| Planner | Success (10px) | Mean dist | Median dist |
+|---|---|---|---|
+| **Full pipeline (A→B)** | **70.0%** | 7.78px | 5.10px |
+| Oracle comm (GT heavy) | 80.5% | 5.51px | 3.55px |
+| No communication | 30.0% | 17.39px | 16.43px |
+| Random | 11.0% | 22.27px | 19.90px |
+
+**vs Phase 38:**
+- Comm accuracy: 86.0% vs 82.2% (+3.8pp)
+- Full pipeline: 70.0% vs 67.5% (+2.5pp)
+- Sender uses all 4 tokens (vs 2 in Phase 38) — richer encoding
+
+**Key insights:**
+- Position smoothing + wider sender improved both communication (+3.8pp) and full pipeline (+2.5pp)
+- Smoothing reduces velocity noise from finite-differencing, leading to cleaner collision features
+- 4-token utilization (vs 2 in Phase 38) suggests the wider sender can represent finer mass distinctions
+- Gap to oracle: 10.5pp (70.0% vs 80.5%) — still driven by ~14% comm errors
+- Still short of targets (comm >86%, full >72%) by small margins
