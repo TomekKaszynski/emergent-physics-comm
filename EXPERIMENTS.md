@@ -996,6 +996,32 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Key insight:** The comparative receiver solves the tie-breaking problem that 33b couldn't. Even with the same binary per-object tokens, comparing all messages simultaneously lets the receiver pick the one "heavy" token among N objects. The sender still emits the same binary language — the intelligence is in the receiver's comparison. N=5 lags (81.7%) because with 4 light and 1 heavy, any mis-sent token is harder to recover from.
 - **Verdict:** SUCCESS — 90.0% overall, N=2-4 all >90%. Massive improvement: 61%→77.5%→90.0% across three architectures.
 
+### Phase 33d — Larger vocab (vocab=8) comparative (Feb 22)
+- **Goal:** Identical to 33c except vocab_size=8 instead of 4. Test whether more tokens help the sender encode finer-grained mass information. Target: >93% overall, N=5 >88%.
+- **Results:**
+  ```
+  Metric                         Value       Target
+  ─────────────────────────────────────────────────
+  Count discovery                99.2%       >90% ✓
+  Position error (px)            0.46        <2px ✓
+  Direct classifier (%)         95.5%        —
+  Communication (seq-lvl)       89.5%       >93% ✗
+
+  Communication by object count:
+    N=2:  95.9%  (33c: 95.9%)
+    N=3:  92.5%  (33c: 95.0%)
+    N=4:  88.2%  (33c: 90.2%)
+    N=5:  83.3%  (33c: 81.7%)
+
+  Token language: 2-3 of 8 tokens used
+    Token 0 → "heavy" (P(heavy)=0.99, 145 heavy + 1 light)
+    Token 1 → "light" (P(heavy)=0.08, 48 heavy + 520 light)
+    Token 7 → "heavy?" (P(heavy)=0.88, 7 heavy + 1 light, rare)
+  ```
+  3149 params total (248 sender + 2901 receiver). Training: 100 epochs, 45s.
+- **Key insight:** Larger vocab did NOT help — 89.5% vs 90.0% for vocab=4. Only 2-3 of 8 tokens used. The sender still learns a binary heavy/light distinction regardless of vocab size. The bottleneck is not vocab capacity but the per-object sender's inability to encode *how heavy* (it only sees one object). The comparative receiver architecture (33c) already extracts maximum information from binary tokens. Diminishing returns — vocab=4 is optimal.
+- **Verdict:** FAIL — 89.5% overall (below 93% target), N=5 83.3% (below 88% target). Vocab=8 slightly worse than vocab=4 due to harder Gumbel-softmax optimization over larger action space.
+
 ## Current State (Feb 22)
 
 **Validated pipeline:**
@@ -1025,7 +1051,8 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - Count discovery: **99.2%** via pixel-based color analysis (slot masks unreliable for counting)
 - Phase 33: **61.0%** — whole-sequence sender, 1 token vocab=8. N=5 collapses to chance (33%)
 - Phase 33b: **77.5%** — per-object sender + per-object receiver (BCE). Uniform but binary tokens can't break ties
-- Phase 33c: **90.0%** — per-object sender + comparative receiver (CE). Receiver compares all tokens, picks heaviest. N=2: 95.9%, N=3: 95.0%, N=4: 90.2%, N=5: 81.7%
-- Emergent language: binary "heavy/light" (2 of 4 tokens), comparative receiver does the ranking
+- **Phase 33c: 90.0%** — per-object sender + comparative receiver (CE). Best architecture. N=2-4 >90%, N=5: 81.7%
+- Phase 33d: **89.5%** — vocab=8 didn't help (slightly worse). Binary language is the ceiling for per-object sender
+- Emergent language: binary "heavy/light" (2 tokens used regardless of vocab size), comparative receiver does the ranking
 
 **Next steps:** (1) Multi-agent version: two agents with different viewpoints communicate about mass through discrete bottleneck, (2) Replace Color-COM with learned position extraction if needed for generalization.
