@@ -1022,6 +1022,25 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Key insight:** Larger vocab did NOT help — 89.5% vs 90.0% for vocab=4. Only 2-3 of 8 tokens used. The sender still learns a binary heavy/light distinction regardless of vocab size. The bottleneck is not vocab capacity but the per-object sender's inability to encode *how heavy* (it only sees one object). The comparative receiver architecture (33c) already extracts maximum information from binary tokens. Diminishing returns — vocab=4 is optimal.
 - **Verdict:** FAIL — 89.5% overall (below 93% target), N=5 83.3% (below 88% target). Vocab=8 slightly worse than vocab=4 due to harder Gumbel-softmax optimization over larger action space.
 
+### Phase 34a — Textured objects, black background (Feb 22)
+- **Goal:** Replace solid-color circles with textured circles (checkerboard, stripes, gradient, noise, dots). Localization via foreground threshold + connected components + COM (no color knowledge). Black background. Target: <2px position error, >85% mass communication.
+- **Results:**
+  ```
+  Metric                         Value       Target
+  ─────────────────────────────────────────────────
+  Count discovery                78.6%       >90% ✗
+  Position error (px)            17.72       <2px ✗
+  Merged-component frames        42.1%       —
+  Missed object-frames           28.1%       —
+  Direct classifier (%)         72.3%        —
+  Communication (seq-lvl)       32.5%       >85% ✗
+
+  Count discovery by N:
+    N=2: 100%    N=3: 100%    N=4: 84%    N=5: 32%
+  ```
+- **Key insight:** Connected components fail catastrophically when objects overlap — and with circles of radius 7-10 in 64×64, objects overlap in **42% of frames**, not "rarely during collisions" as hypothesized. When objects merge into one component, both the COM and tracking break down. Position error (17.72px) is as bad as raw slot attention centroids. The approach fundamentally requires non-overlapping objects.
+- **Verdict:** FAIL — position error 17.72px (target <2px), communication 32.5% (chance). Connected components don't work for overlapping objects.
+
 ## Current State (Feb 22)
 
 **Validated pipeline:**
@@ -1055,4 +1074,9 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - Phase 33d: **89.5%** — vocab=8 didn't help (slightly worse). Binary language is the ceiling for per-object sender
 - Emergent language: binary "heavy/light" (2 tokens used regardless of vocab size), comparative receiver does the ranking
 
-**Next steps:** (1) Multi-agent version: two agents with different viewpoints communicate about mass through discrete bottleneck, (2) Replace Color-COM with learned position extraction if needed for generalization.
+**Phase 34a — Textured objects (FAIL):**
+- Connected components fail when objects overlap (42% of frames at these sizes/speeds)
+- Position error 17.72px — as bad as raw SA centroids
+- Need a different approach for textured objects: either reduce overlap (smaller objects, bigger grid) or use learned segmentation (slot attention masks)
+
+**Next steps:** (1) Multi-agent version: two agents with different viewpoints communicate about mass through discrete bottleneck, (2) Try textured objects with reduced overlap (smaller radii or bigger grid) or slot-attention-based segmentation.
