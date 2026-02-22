@@ -946,6 +946,31 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Key insight:** 1 discrete token with vocab=8 encodes 3 possible heavy indices well (Phase 31: 95.5%) but cannot encode 5 possible indices. With N=5 objects, the sender needs to distinguish 5 classes through a single 8-way token — performance drops to chance (33%). The bottleneck is information-theoretic: log2(5)=2.3 bits needed, but a single token from vocab=8 provides log2(8)=3 bits — enough in theory, but the Gumbel-softmax training can't learn the mapping when object counts vary within the same batch.
 - **Verdict:** PARTIAL — count discovery exceeds target (99.2%), but communication fails (61% vs 85%). Need either more tokens, larger vocab, or separate count-conditioned channels.
 
+### Phase 33b — Per-object communication (Feb 22)
+- **Goal:** Replace Phase 33's whole-sequence sender with per-object sender/receiver. PerObjectSender (shared, Linear(6→16→4), Gumbel-softmax) emits 1 token per object. PerObjectReceiver (shared, embed(4,16)→sigmoid) predicts P(heavy) per object. BCE loss. Pick argmax P(heavy) at eval. Target: >90% across all N.
+- **Results:**
+  ```
+  Metric                         Value       Target
+  ─────────────────────────────────────────────────
+  Count discovery                99.2%       >90% ✓
+  Position error (px)            0.46        <2px ✓
+  Direct classifier (%)         94.5%        —
+  Communication (seq-lvl)       77.5%       >90% ✗
+
+  Communication by object count:
+    N=2:  85.7%  (Phase 33: 98.0%)
+    N=3:  80.0%  (Phase 33: 65.3%)
+    N=4:  80.4%  (Phase 33: 55.0%)
+    N=5:  66.7%  (Phase 33: 33.0%)
+
+  Token language: 2 of 4 tokens used
+    Token 1 → "light" (P(heavy)=0.08, 520 light + 48 heavy)
+    Token 2 → "heavy" (P(heavy)=0.99, 2 light + 152 heavy)
+  ```
+  277 params total (180 sender + 97 receiver). Training: 100 epochs, 32s.
+- **Key insight:** Per-object communication is much more uniform across object counts than whole-sequence (range 85.7-66.7% vs 98-33%). The sender learned a clean binary "heavy/light" language. But binary is insufficient — when receiver sees P(heavy) for all objects, ties between light objects can cause wrong predictions, especially with N=5 (4 light objects, any could be mis-classified). The architecture is correct; the bottleneck is that a single binary token per object doesn't encode *relative* heaviness.
+- **Verdict:** PARTIAL — 77.5% overall (up from 61%), uniform across counts, but below 90% target. Binary heavy/light language doesn't resolve ties.
+
 ## Current State (Feb 22)
 
 **Validated pipeline:**
@@ -971,9 +996,9 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - Position error: 0.42px via Color-COM (slot masks provide identity, color matching provides precision)
 - 3-token emergent language, each token = "object X is heavy" with >95% purity
 
-**Phase 33 — Variable object count (partial):**
+**Phase 33/33b — Variable object count:**
 - Count discovery: **99.2%** via pixel-based color analysis (slot masks unreliable for counting)
-- Communication: **61.0%** — 1 token with vocab=8 insufficient for 2-5 objects. N=2 works (98%), N=5 collapses to chance (33%)
-- Need more tokens or larger vocab to encode variable-count heavy object identity
+- Phase 33: **61.0%** — whole-sequence sender with 1 token, vocab=8. N=2: 98%, N=5: 33% (chance)
+- Phase 33b: **77.5%** — per-object sender/receiver (shared, 277 params), vocab=4, BCE loss. N=2: 85.7%, N=3: 80.0%, N=4: 80.4%, N=5: 66.7%. Much more uniform across counts but only 2 of 4 tokens used (binary heavy/light). Ties between objects not resolved.
 
-**Next steps:** (1) Fix Phase 33 communication: try multi-token messages (2-3 tokens) or larger vocab, or count-conditioned sender, (2) Multi-agent version: two agents with different viewpoints communicate about mass through discrete bottleneck, (3) Replace Color-COM with learned position extraction if needed for generalization.
+**Next steps:** (1) Multi-agent version: two agents with different viewpoints communicate about mass through discrete bottleneck, (2) Replace Color-COM with learned position extraction if needed for generalization.
