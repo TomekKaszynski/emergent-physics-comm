@@ -1211,3 +1211,34 @@ Position decoder: Linear(64→2), trained on slot→(cx,cy) pairs. Decode error:
 - JEPA planning is **~4x better than random** (51% vs 13%)
 - Improved parameters vs 36b: 128 candidates (vs 64), ±0.5 force (vs ±0.3), 10px threshold (vs 5px) — all contributed to higher absolute success
 - The full loop works: perceive → infer latent property → plan → act
+
+### Milestone: Phase 36 Series — Action-Conditioned World Model
+
+**What works end-to-end:**
+1. **Perception:** Collision features from 40-frame observation → 99.5% mass inference (257-param classifier)
+2. **World model:** ActionConditionedPredictor (214K params) learns force effects — +45% on action frames, +65-73% per acted object
+3. **Planning:** JEPA as forward model + random shooting (128 candidates, K=5 rollout) → 51% success at pushing heavy object to target (4x random baseline)
+4. **Full loop:** perceive → infer latent property → plan → act, all from scratch in 67 seconds
+
+**What limits performance:**
+- Autoregressive rollout accumulates error over K steps
+- Oracle planner only reaches 51-52% — the task geometry (force → K=5 momentum steps → hit 10px target) has inherent variance
+- The 2D force space is simple enough that 128 random candidates already saturate search (CEM didn't help, see 36d)
+
+### Phase 36d: CEM Planning
+**Date:** Feb 22 | **Duration:** 72s | **Verdict:** FAIL
+
+**Setup:** Identical to 36c except replace random shooting with Cross-Entropy Method. CEM: 128 candidates, 16 elite, 3 rounds of iterative refinement. Gaussian distribution initialized at mu=0, sigma=0.3, updated from elite set each round. Same JEPA, same mass classifier, same 200 test scenarios with same seeds.
+
+**Results:**
+| Planner | Success (10px) | Mean dist | Median dist |
+|---|---|---|---|
+| CEM pipeline | 51.0% | 11.31px | 9.73px |
+| Random shooting | 52.0% | 11.71px | 9.66px |
+| Oracle mass + CEM | 52.0% | 11.41px | 9.89px |
+| Random | 8.5% | 24.04px | 23.68px |
+
+- CEM improvement over shooting: **-1.0pp** (within noise)
+- Mass inference: 99.5% (unchanged)
+
+**Key insight:** CEM provides zero benefit over random shooting in this setting. The 2D force space (fx, fy ∈ [-0.5, 0.5]) is low-dimensional enough that 128 random samples already provide dense coverage. The bottleneck is not search quality but JEPA prediction accuracy over K=5 autoregressive steps — the oracle planner (which uses GT physics) also only achieves 52%. To improve planning success, need either: (a) better JEPA (lower rollout error), (b) shorter rollout horizon, or (c) larger target threshold.
