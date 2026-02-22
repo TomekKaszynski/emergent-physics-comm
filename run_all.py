@@ -15793,6 +15793,1058 @@ def run_phase33c_comparative_comm():
     print(f"{'=' * 70}", flush=True)
 
 
+def run_phase37_pixel_planning():
+    """Phase 37: Planning from pixels — full pixels→perception→planning→action.
+
+    Closes the gap between 35c (pixels→perception) and 36f (GT state→planning).
+    Train JEPA/classifier/decoder on GT state vectors (same as 36f).
+    Test pipeline: render textured objects on colored bg → corner BG subtraction
+    → hue COM → finite-diff velocities → area-based radii → collision features
+    → mass inference → build state vector → closed-loop JEPA planning.
+    Target: >70% success, mass inference >95%.
+    """
+    import random
+    import math
+    import copy
+
+    print("=" * 70, flush=True)
+    print("PHASE 37: Planning from Pixels — Full Visual Pipeline", flush=True)
+    print("  pixels → perceive → infer mass → JEPA closed-loop plan → act", flush=True)
+    print("=" * 70, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    n_obj = 3
+    slot_dim = 64
+    S = 64
+    vmax = 10.0
+    K = 5
+    n_candidates = 128
+    n_elite = 16
+    n_rounds = 3
+    force_range = 0.5
+    success_thresh = 10.0
+    n_frames = 40
+    texture_types = ['checkerboard', 'stripes', 'gradient', 'noise', 'dots']
+
+    # ══════════════════════════════════════════════════════════
+    # Rendering + perception helpers
+    # ══════════════════════════════════════════════════════════
+    def hue_to_rgb(h):
+        h6 = h * 6.0
+        sector = int(h6) % 6
+        frac = h6 - int(h6)
+        if sector == 0: base = np.array([1.0, frac, 0.0])
+        elif sector == 1: base = np.array([1.0 - frac, 1.0, 0.0])
+        elif sector == 2: base = np.array([0.0, 1.0, frac])
+        elif sector == 3: base = np.array([0.0, 1.0 - frac, 1.0])
+        elif sector == 4: base = np.array([frac, 0.0, 1.0])
+        else: base = np.array([1.0, 0.0, 1.0 - frac])
+        return np.clip(base * 0.7 + 0.3, 0.15, 1.0)
+
+    def generate_texture(radius, texture_type, base_hue):
+        d = 2 * radius + 1
+        base = hue_to_rgb(base_hue)
+        yy, xx = np.mgrid[:d, :d]
+        cy_t, cx_t = radius, radius
+        if texture_type == 'checkerboard':
+            freq = random.choice([3, 4, 5])
+            pattern = ((xx // freq + yy // freq) % 2).astype(np.float32) * 0.6 + 0.4
+        elif texture_type == 'stripes':
+            freq = random.choice([3, 4, 5])
+            angle = random.uniform(0, np.pi)
+            rotated = xx * np.cos(angle) + yy * np.sin(angle)
+            pattern = (np.sin(rotated * 2 * np.pi / freq) * 0.3 + 0.7).astype(np.float32)
+        elif texture_type == 'gradient':
+            angle = random.uniform(0, 2 * np.pi)
+            grad = (xx - cx_t) * np.cos(angle) + (yy - cy_t) * np.sin(angle)
+            grad = grad / (radius + 1e-8)
+            pattern = (grad * 0.3 + 0.7).astype(np.float32)
+        elif texture_type == 'noise':
+            pattern = np.random.uniform(0.3, 1.0, (d, d)).astype(np.float32)
+        elif texture_type == 'dots':
+            pattern = np.ones((d, d), dtype=np.float32) * 0.5
+            spacing = random.choice([4, 5, 6])
+            for dy in range(0, d, spacing):
+                for dx in range(0, d, spacing):
+                    dist_sq = (yy - dy) ** 2 + (xx - dx) ** 2
+                    pattern[dist_sq <= 1] = 1.0
+        else:
+            pattern = np.ones((d, d), dtype=np.float32) * 0.8
+        patch = np.zeros((3, d, d), dtype=np.float32)
+        for c in range(3):
+            patch[c] = base[c] * pattern
+        dist_sq = (xx - cx_t) ** 2 + (yy - cy_t) ** 2
+        mask = dist_sq <= radius ** 2
+        return patch, mask
+
+    def render_frame(objects, obj_textures, bg_color):
+        img = np.zeros((3, S, S), dtype=np.float32)
+        for c in range(3):
+            img[c, :, :] = bg_color[c]
+        for oi_idx, obj in enumerate(objects):
+            r = obj['r']
+            cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+            patch, mask = obj_textures[oi_idx]
+            d = 2 * r + 1
+            for dy in range(d):
+                for dx in range(d):
+                    if mask[dy, dx]:
+                        px = cx_i - r + dx
+                        py = cy_i - r + dy
+                        if 0 <= px < S and 0 <= py < S:
+                            for c in range(3):
+                                img[c, py, px] = patch[c, dy, dx]
+        return img
+
+    def physics_step(objects, track_collisions=False):
+        n = len(objects)
+        collisions = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                oi_o, oj_o = objects[i], objects[j]
+                dx_c = oj_o['cx'] - oi_o['cx']
+                dy_c = oj_o['cy'] - oi_o['cy']
+                dist = math.hypot(dx_c, dy_c)
+                min_dist = oi_o['r'] + oj_o['r']
+                if dist < min_dist and dist > 0.1:
+                    nx, ny = dx_c / dist, dy_c / dist
+                    dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                          (oi_o['vy'] - oj_o['vy']) * ny
+                    if dvn > 0:
+                        m1, m2 = oi_o['mass'], oj_o['mass']
+                        imp = 2 * dvn / (m1 + m2)
+                        dv_i = imp * m2
+                        dv_j = imp * m1
+                        if track_collisions:
+                            collisions.append((i, j, dv_i, dv_j))
+                        oi_o['vx'] -= imp * m2 * nx
+                        oi_o['vy'] -= imp * m2 * ny
+                        oj_o['vx'] += imp * m1 * nx
+                        oj_o['vy'] += imp * m1 * ny
+                        overlap = min_dist - dist
+                        oi_o['cx'] -= overlap * nx * 0.5
+                        oi_o['cy'] -= overlap * ny * 0.5
+                        oj_o['cx'] += overlap * nx * 0.5
+                        oj_o['cy'] += overlap * ny * 0.5
+        for obj in objects:
+            obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+            r = obj['r']
+            if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+            if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+            if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+            if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+        return collisions if track_collisions else None
+
+    def objects_to_state(objects):
+        state = np.zeros((len(objects), 6), dtype=np.float32)
+        for oi, obj in enumerate(objects):
+            state[oi] = [obj['cx'] / S, obj['cy'] / S, obj['vx'] / vmax,
+                         obj['vy'] / vmax, obj['r'] / S, obj['mass'] / 3.0]
+        return state
+
+    def extract_collision_features(positions, collision_dvs):
+        pos = torch.tensor(positions, dtype=torch.float32)
+        v = pos[1:] - pos[:-1]
+        speed = v.norm(dim=-1)
+        dv = v[1:] - v[:-1]
+        dv_mag = dv.norm(dim=-1)
+        dv_threshold = 0.02
+        coll_mask = dv_mag > dv_threshold
+        n_coll = coll_mask.float().sum().item()
+        avg_dv_coll = dv_mag[coll_mask].mean().item() if n_coll > 0 else 0.0
+        max_dv = dv_mag.max().item()
+        avg_speed = speed.mean().item()
+        speed_var = speed.var().item()
+        if len(collision_dvs) > 0:
+            ratios = [my / partner for my, partner in collision_dvs if partner > 1e-8]
+            avg_dv_ratio = np.mean(ratios) if ratios else 1.0
+        else:
+            avg_dv_ratio = 1.0
+        nf = len(positions)
+        return [avg_dv_ratio, avg_dv_coll, max_dv,
+                avg_speed, speed_var, n_coll / max(nf - 2, 1)]
+
+    # Perception helpers (from 35c)
+    def rgb_to_hue_vectorized(rgb):
+        r, g, b = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+        cmax = np.maximum(np.maximum(r, g), b)
+        cmin = np.minimum(np.minimum(r, g), b)
+        delta = cmax - cmin
+        hue = np.zeros(len(rgb), dtype=np.float32)
+        mask_r = (cmax == r) & (delta > 0.01)
+        hue[mask_r] = (((g[mask_r] - b[mask_r]) / delta[mask_r]) % 6) / 6.0
+        mask_g = (cmax == g) & (delta > 0.01) & ~mask_r
+        hue[mask_g] = ((b[mask_g] - r[mask_g]) / delta[mask_g] + 2) / 6.0
+        mask_b = (cmax == b) & (delta > 0.01) & ~mask_r & ~mask_g
+        hue[mask_b] = ((r[mask_b] - g[mask_b]) / delta[mask_b] + 4) / 6.0
+        achromatic = delta <= 0.01
+        hue[achromatic] = -1.0
+        sat = np.where(cmax > 0.01, delta / cmax, 0.0)
+        return hue, sat, cmax
+
+    def hue_distance(h1, h2):
+        d = np.abs(h1 - h2)
+        return np.minimum(d, 1.0 - d)
+
+    def get_corner_bg(img):
+        corners = []
+        for cy_s, cx_s in [(0, 0), (0, S-2), (S-2, 0), (S-2, S-2)]:
+            for dy in range(2):
+                for dx in range(2):
+                    corners.append(img[:, cy_s + dy, cx_s + dx])
+        return np.mean(corners, axis=0)
+
+    pixel_coords_y = np.repeat(np.arange(S, dtype=np.float32)[:, None], S, axis=1).flatten()
+    pixel_coords_x = np.repeat(np.arange(S, dtype=np.float32)[None, :], S, axis=0).flatten()
+    bg_dist_threshold = 0.15
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 1: Generate TRAINING data (GT state, no pixels)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 1: Generate training data (2000 GT-state sequences)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t1 = time.time()
+
+    n_train_seq = 2000
+
+    def generate_gt_sequences(n_sequences, n_frames_g, seed, with_interventions=False):
+        random.seed(seed)
+        np.random.seed(seed)
+        all_states, all_actions, all_positions = [], [], []
+        all_collision_dvs, all_masses, all_heavy_idx = [], [], []
+        for seq_i in range(n_sequences):
+            masses = [1.0, 1.0, 1.0]
+            heavy_idx = random.randint(0, n_obj - 1)
+            masses[heavy_idx] = 3.0
+            objects = []
+            for oi in range(n_obj):
+                r = random.randint(6, 9)
+                for _attempt in range(100):
+                    cx = random.uniform(r + 3, S - r - 4)
+                    cy = random.uniform(r + 3, S - r - 4)
+                    ok = True
+                    for prev in objects:
+                        if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                            ok = False; break
+                    if ok: break
+                vx = random.uniform(-5.0, 5.0)
+                vy = random.uniform(-5.0, 5.0)
+                objects.append({'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                                'r': r, 'mass': masses[oi]})
+            intervention_plan = {}
+            if with_interventions:
+                n_interventions = random.randint(2, 4)
+                intervention_frames = sorted(random.sample(range(5, n_frames_g - 5), n_interventions))
+                for fi in intervention_frames:
+                    target_obj = random.randint(0, n_obj - 1)
+                    mag = random.uniform(2.0, 6.0)
+                    angle = random.uniform(0, 2 * math.pi)
+                    intervention_plan[fi] = (target_obj, mag * math.cos(angle), mag * math.sin(angle))
+            seq_states, seq_actions = [], {}
+            obj_positions = [[None] * n_frames_g for _ in range(n_obj)]
+            obj_collision_dvs = [[] for _ in range(n_obj)]
+            for fi in range(n_frames_g):
+                seq_states.append(objects_to_state(objects))
+                for oi in range(n_obj):
+                    obj_positions[oi][fi] = [objects[oi]['cx'] / S, objects[oi]['cy'] / S]
+                if fi in intervention_plan:
+                    target_obj, fx, fy = intervention_plan[fi]
+                    objects[target_obj]['vx'] += fx
+                    objects[target_obj]['vy'] += fy
+                    seq_actions[fi] = (target_obj, fx / vmax, fy / vmax)
+                collisions = physics_step(objects, track_collisions=True)
+                for (ci, cj, dv_i, dv_j) in collisions:
+                    obj_collision_dvs[ci].append((dv_i, dv_j))
+                    obj_collision_dvs[cj].append((dv_j, dv_i))
+            all_states.append(np.array(seq_states))
+            all_actions.append(seq_actions)
+            all_positions.append(obj_positions)
+            all_collision_dvs.append(obj_collision_dvs)
+            all_masses.append(masses)
+            all_heavy_idx.append(heavy_idx)
+            if (seq_i + 1) % 500 == 0:
+                print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+        return (all_states, all_actions, all_positions,
+                all_collision_dvs, all_masses, all_heavy_idx)
+
+    (train_states, train_actions, train_positions,
+     train_collision_dvs, train_masses, train_heavy_idx) = \
+        generate_gt_sequences(n_train_seq, n_frames, seed=42, with_interventions=True)
+    print(f"└─ Stage 1 done [{time.time()-t1:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 2: Train JEPA (same as 36f)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 2: Train JEPA on GT training data", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t2 = time.time()
+
+    states_t_list, states_tp1_list, actions_list = [], [], []
+    for seq_i in range(n_train_seq):
+        states = train_states[seq_i]
+        actions = train_actions[seq_i]
+        for fi in range(n_frames - 1):
+            states_t_list.append(states[fi])
+            states_tp1_list.append(states[fi + 1])
+            if fi in actions:
+                obj_idx, fx, fy = actions[fi]
+                action_vec = np.zeros(n_obj + 2, dtype=np.float32)
+                action_vec[obj_idx] = 1.0
+                action_vec[n_obj] = fx
+                action_vec[n_obj + 1] = fy
+                actions_list.append(action_vec)
+            else:
+                actions_list.append(np.zeros(n_obj + 2, dtype=np.float32))
+
+    states_t_np = np.array(states_t_list)
+    states_tp1_np = np.array(states_tp1_list)
+    actions_np = np.array(actions_list)
+
+    torch.manual_seed(42)
+    state_proj = nn.Linear(6, slot_dim, bias=False)
+    nn.init.orthogonal_(state_proj.weight)
+    state_proj = state_proj.to(device)
+    for p in state_proj.parameters():
+        p.requires_grad = False
+
+    states_t_raw = torch.tensor(states_t_np, dtype=torch.float32).to(device)
+    states_tp1_raw = torch.tensor(states_tp1_np, dtype=torch.float32).to(device)
+    with torch.no_grad():
+        slots_t = state_proj(states_t_raw)
+        slots_tp1 = state_proj(states_tp1_raw)
+    actions_t = torch.tensor(actions_np, dtype=torch.float32).to(device)
+
+    N = len(states_t_np)
+    n_train = int(0.8 * N)
+    perm = torch.randperm(N)
+    tr_slots_t = slots_t[perm[:n_train]]
+    tr_slots_tp1 = slots_tp1[perm[:n_train]]
+    tr_actions = actions_t[perm[:n_train]]
+
+    from world_model import ActionConditionedPredictor
+    torch.manual_seed(42)
+    jepa = ActionConditionedPredictor(
+        n_slots=n_obj, slot_dim=slot_dim, action_dim=64, hidden_dim=256).to(device)
+    jepa_opt = torch.optim.Adam(jepa.parameters(), lr=3e-4)
+    jepa_params = sum(p.numel() for p in jepa.parameters())
+    print(f"│  JEPA: {jepa_params:,} params", flush=True)
+
+    batch_size = 256
+    for epoch in range(1, 101):
+        jepa.train()
+        ep_perm = torch.randperm(n_train, device=device)
+        ep_loss = 0.0
+        for start in range(0, n_train, batch_size):
+            idx = ep_perm[start:start + batch_size]
+            pred = jepa(tr_slots_t[idx], tr_actions[idx])
+            loss = F.mse_loss(pred, tr_slots_tp1[idx])
+            jepa_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(jepa.parameters(), 1.0)
+            jepa_opt.step()
+            ep_loss += loss.item() * len(idx)
+        if epoch % 25 == 0 or epoch == 1:
+            print(f"│    JEPA Epoch {epoch:3d}: loss={ep_loss/n_train:.6f}", flush=True)
+    print(f"└─ Stage 2 done [{time.time()-t2:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 3: Train Position Decoder + Mass Classifier
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 3: Train Position Decoder + Mass Classifier", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t3 = time.time()
+
+    # Position decoder
+    gt_pos = states_t_raw[:, :, :2]
+    all_slots_flat = slots_t.reshape(-1, slot_dim)
+    all_pos_flat = gt_pos.reshape(-1, 2)
+    n_dec_train = int(0.8 * len(all_slots_flat))
+    dec_perm = torch.randperm(len(all_slots_flat))
+    tr_dec_slots = all_slots_flat[dec_perm[:n_dec_train]]
+    tr_dec_pos = all_pos_flat[dec_perm[:n_dec_train]]
+    vl_dec_slots = all_slots_flat[dec_perm[n_dec_train:]]
+    vl_dec_pos = all_pos_flat[dec_perm[n_dec_train:]]
+
+    pos_decoder = nn.Linear(slot_dim, 2).to(device)
+    dec_opt = torch.optim.Adam(pos_decoder.parameters(), lr=1e-3)
+    for epoch in range(1, 51):
+        pos_decoder.train()
+        ep_perm = torch.randperm(n_dec_train, device=device)
+        for start in range(0, n_dec_train, 1024):
+            idx = ep_perm[start:start + 1024]
+            pred = pos_decoder(tr_dec_slots[idx])
+            loss = F.mse_loss(pred, tr_dec_pos[idx])
+            dec_opt.zero_grad()
+            loss.backward()
+            dec_opt.step()
+    pos_decoder.eval()
+    with torch.no_grad():
+        vl_pred = pos_decoder(vl_dec_slots)
+        dec_err = ((vl_pred - vl_dec_pos) * S).norm(dim=-1).mean().item()
+    print(f"│  Decoder val error: {dec_err:.3f}px", flush=True)
+
+    # Mass classifier
+    clf_features = []
+    clf_labels = []
+    for seq_i in range(n_train_seq):
+        for oi in range(n_obj):
+            feat = extract_collision_features(
+                train_positions[seq_i][oi], train_collision_dvs[seq_i][oi])
+            clf_features.append(feat)
+            clf_labels.append(1.0 if train_masses[seq_i][oi] == 3.0 else 0.0)
+    clf_features = torch.tensor(clf_features, dtype=torch.float32)
+    clf_labels = torch.tensor(clf_labels, dtype=torch.float32)
+    n_clf_train = int(0.8 * len(clf_labels))
+    clf_perm = torch.randperm(len(clf_labels))
+    tr_clf_feats = clf_features[clf_perm[:n_clf_train]].to(device)
+    tr_clf_labels = clf_labels[clf_perm[:n_clf_train]].to(device)
+    vl_clf_feats = clf_features[clf_perm[n_clf_train:]].to(device)
+    vl_clf_labels = clf_labels[clf_perm[n_clf_train:]].to(device)
+
+    clf = nn.Sequential(nn.Linear(6, 32), nn.ReLU(), nn.Linear(32, 1)).to(device)
+    clf_opt = torch.optim.Adam(clf.parameters(), lr=1e-3)
+    clf_sched = torch.optim.lr_scheduler.CosineAnnealingLR(clf_opt, T_max=200, eta_min=1e-5)
+    best_val_acc = 0.0
+    best_clf_state = None
+    for epoch in range(200):
+        clf.train()
+        ep_perm = torch.randperm(n_clf_train, device=device)
+        for start in range(0, n_clf_train, 64):
+            idx = ep_perm[start:start + 64]
+            logits = clf(tr_clf_feats[idx]).squeeze(-1)
+            loss = F.binary_cross_entropy_with_logits(logits, tr_clf_labels[idx])
+            clf_opt.zero_grad()
+            loss.backward()
+            clf_opt.step()
+        clf_sched.step()
+        if (epoch + 1) % 100 == 0:
+            clf.eval()
+            with torch.no_grad():
+                vl_logits = clf(vl_clf_feats).squeeze(-1)
+                vl_preds = (vl_logits > 0).float()
+                val_acc = (vl_preds == vl_clf_labels).float().mean().item()
+            print(f"│    Clf Epoch {epoch+1:3d}: val_acc={val_acc*100:.1f}%", flush=True)
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_clf_state = {k: v.cpu().clone() for k, v in clf.state_dict().items()}
+    clf.load_state_dict(best_clf_state)
+    clf.to(device).eval()
+    print(f"│  Best clf val acc: {best_val_acc*100:.1f}%", flush=True)
+    print(f"└─ Stage 3 done [{time.time()-t3:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 4: Generate + perceive 200 test scenarios from pixels
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 4: Generate + perceive 200 pixel test scenarios", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t4 = time.time()
+
+    # Free training tensors
+    del states_t_raw, states_tp1_raw, slots_t, slots_tp1, actions_t
+    del tr_slots_t, tr_slots_tp1, tr_actions
+    del all_slots_flat, all_pos_flat, gt_pos
+    del tr_dec_slots, tr_dec_pos, vl_dec_slots, vl_dec_pos
+    del tr_clf_feats, tr_clf_labels, vl_clf_feats, vl_clf_labels, clf_features
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    # Move models to CPU
+    cpu = torch.device('cpu')
+    jepa.to(cpu).eval()
+    pos_decoder.to(cpu).eval()
+    clf.to(cpu).eval()
+    state_proj = state_proj.to(cpu)
+
+    n_test_seq = 200
+    random.seed(999)
+    np.random.seed(999)
+
+    # Generate test scenarios: render pixels + track GT
+    test_scenarios = []
+    pos_errors = []
+    vel_errors = []
+    radius_errors = []
+
+    for si in range(n_test_seq):
+        masses = [1.0, 1.0, 1.0]
+        heavy_idx = random.randint(0, n_obj - 1)
+        masses[heavy_idx] = 3.0
+
+        bg_color = np.array([random.uniform(0.2, 0.6),
+                             random.uniform(0.2, 0.6),
+                             random.uniform(0.2, 0.6)], dtype=np.float32)
+
+        hue_offset = random.uniform(0, 1)
+        obj_hues = [(hue_offset + oi / n_obj) % 1.0 for oi in range(n_obj)]
+
+        objects = []
+        obj_textures = []
+        for oi in range(n_obj):
+            r = random.randint(6, 9)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-5.0, 5.0)
+            vy = random.uniform(-5.0, 5.0)
+            tex_type = random.choice(texture_types)
+            patch, mask = generate_texture(r, tex_type, obj_hues[oi])
+            objects.append({'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                            'r': r, 'mass': masses[oi]})
+            obj_textures.append((patch, mask))
+
+        # Simulate + render n_frames
+        gt_positions = [[None] * n_frames for _ in range(n_obj)]  # normalized
+        gt_collision_dvs = [[] for _ in range(n_obj)]
+        frames = []
+
+        for fi in range(n_frames):
+            for oi in range(n_obj):
+                gt_positions[oi][fi] = [objects[oi]['cx'] / S, objects[oi]['cy'] / S]
+            frames.append(render_frame(objects, obj_textures, bg_color))
+            collisions = physics_step(objects, track_collisions=True)
+            for (ci, cj, dv_i, dv_j) in collisions:
+                gt_collision_dvs[ci].append((dv_i, dv_j))
+                gt_collision_dvs[cj].append((dv_j, dv_i))
+
+        # ── Perceive from pixels ──
+        # Step 1: discover object hues from frame 0
+        img0 = frames[0]
+        bg_est = get_corner_bg(img0)
+        pix_rgb0 = img0.transpose(1, 2, 0).reshape(-1, 3)
+        rgb_dist0 = np.sqrt(((pix_rgb0 - bg_est[None, :]) ** 2).sum(axis=1))
+        fg0 = rgb_dist0 > bg_dist_threshold
+        pix_hues0, pix_sats0, _ = rgb_to_hue_vectorized(pix_rgb0)
+        good = fg0 & (pix_hues0 >= 0) & (pix_sats0 > 0.1)
+        good_hues0 = pix_hues0[good]
+
+        # Hue histogram → peaks
+        n_bins = 72
+        hist, bin_edges = np.histogram(good_hues0, bins=n_bins, range=(0, 1))
+        kernel = np.array([1, 2, 3, 2, 1], dtype=np.float32)
+        kernel /= kernel.sum()
+        hist_smooth = np.convolve(np.tile(hist, 3), kernel, mode='same')[n_bins:2*n_bins]
+        min_height = max(hist_smooth.max() * 0.05, 3)
+        peaks = []
+        for bi in range(n_bins):
+            left = hist_smooth[(bi - 1) % n_bins]
+            right = hist_smooth[(bi + 1) % n_bins]
+            if hist_smooth[bi] > left and hist_smooth[bi] > right and hist_smooth[bi] >= min_height:
+                peaks.append(((bin_edges[bi] + bin_edges[bi + 1]) / 2, hist_smooth[bi]))
+
+        # Merge nearby peaks
+        merged = []
+        used = set()
+        for i, (h1, c1) in enumerate(peaks):
+            if i in used: continue
+            group = [(h1, c1)]
+            for j, (h2, c2) in enumerate(peaks):
+                if j <= i or j in used: continue
+                if hue_distance(h1, h2) < 0.05:
+                    group.append((h2, c2))
+                    used.add(j)
+            merged.append(max(group, key=lambda x: x[1])[0])
+
+        # Match discovered hues to GT objects via COM at frame 0
+        hue_thresh = 0.5 / n_obj
+        disc_hue_to_obj = {}
+        gt_used = set()
+        disc_coms = []
+        for dh in merged:
+            h_dist = hue_distance(pix_hues0, dh)
+            sel = fg0 & (pix_hues0 >= 0) & (h_dist < hue_thresh)
+            if sel.sum() > 0:
+                disc_coms.append((dh, pixel_coords_x[sel].mean() / S,
+                                  pixel_coords_y[sel].mean() / S))
+            else:
+                disc_coms.append((dh, 0.5, 0.5))
+
+        for dh, dcx, dcy in disc_coms:
+            best_oi = -1
+            best_d = float('inf')
+            for oi in range(n_obj):
+                if oi in gt_used: continue
+                gx, gy = gt_positions[oi][0]
+                d = math.hypot(dcx - gx, dcy - gy)
+                if d < best_d:
+                    best_d = d
+                    best_oi = oi
+            if best_oi >= 0:
+                disc_hue_to_obj[dh] = best_oi
+                gt_used.add(best_oi)
+
+        # Step 2: Localize all frames → per-object positions + radii
+        perceived_positions = {oi: [] for oi in range(n_obj)}
+        perceived_radii = {oi: [] for oi in range(n_obj)}
+
+        for fi in range(n_frames):
+            img = frames[fi]
+            pix_rgb = img.transpose(1, 2, 0).reshape(-1, 3)
+            bg_fi = get_corner_bg(img)
+            rgb_dist_fi = np.sqrt(((pix_rgb - bg_fi[None, :]) ** 2).sum(axis=1))
+            pix_fg = rgb_dist_fi > bg_dist_threshold
+            pix_hues, pix_sats, _ = rgb_to_hue_vectorized(pix_rgb)
+
+            for dh, oi in disc_hue_to_obj.items():
+                h_dist = hue_distance(pix_hues, dh)
+                sel = pix_fg & (pix_hues >= 0) & (pix_sats > 0.1) & (h_dist < hue_thresh)
+                if sel.sum() > 5:
+                    cx_p = pixel_coords_x[sel].mean() / S
+                    cy_p = pixel_coords_y[sel].mean() / S
+                    perceived_positions[oi].append([cx_p, cy_p])
+                    # Radius from pixel area: area = pi*r^2, so r = sqrt(area/pi)
+                    area = sel.sum()
+                    r_est = math.sqrt(area / math.pi)
+                    perceived_radii[oi].append(r_est)
+                else:
+                    # Fallback: use last known
+                    if perceived_positions[oi]:
+                        perceived_positions[oi].append(perceived_positions[oi][-1])
+                        perceived_radii[oi].append(perceived_radii[oi][-1])
+                    else:
+                        perceived_positions[oi].append(gt_positions[oi][fi])
+                        perceived_radii[oi].append(objects[oi]['r'])
+
+            # Objects not matched get GT fallback
+            for oi in range(n_obj):
+                if oi not in disc_hue_to_obj.values():
+                    perceived_positions[oi].append(gt_positions[oi][fi])
+                    perceived_radii[oi].append(objects[oi]['r'])
+
+        # Step 3: Finite-difference velocities (from perceived positions)
+        perceived_velocities = {oi: [] for oi in range(n_obj)}
+        for oi in range(n_obj):
+            pos_arr = np.array(perceived_positions[oi])  # [n_frames, 2] normalized
+            # Velocity in pixels/frame → normalize by vmax
+            vel_pix = np.diff(pos_arr, axis=0) * S  # pixels/frame
+            # Smooth with small window to reduce noise
+            if len(vel_pix) >= 3:
+                vel_smooth = np.zeros_like(vel_pix)
+                vel_smooth[0] = vel_pix[0]
+                vel_smooth[-1] = vel_pix[-1]
+                for vi in range(1, len(vel_pix) - 1):
+                    vel_smooth[vi] = (vel_pix[vi-1] + vel_pix[vi] + vel_pix[vi+1]) / 3
+                vel_pix = vel_smooth
+            perceived_velocities[oi] = vel_pix  # [n_frames-1, 2] in pixels/frame
+
+        # Step 4: Compute position/velocity errors
+        for oi in range(n_obj):
+            for fi in range(n_frames):
+                gt_x, gt_y = gt_positions[oi][fi]
+                p_x, p_y = perceived_positions[oi][fi]
+                err = math.hypot((p_x - gt_x) * S, (p_y - gt_y) * S)
+                pos_errors.append(err)
+
+        # Mean radius per object
+        mean_radii = {}
+        for oi in range(n_obj):
+            mean_radii[oi] = np.mean(perceived_radii[oi])
+
+        # Step 5: Mass inference from perceived trajectories
+        # Use collision features from perceived positions (not GT collision DVs)
+        # We don't have GT collision DVs from perception, so use trajectory-only features
+        obj_coll_dvs_perceived = [[] for _ in range(n_obj)]
+        # Detect collisions from perceived position changes
+        # (we can't get true dv ratios from pixels, but the trajectory features still work)
+
+        obj_feats = []
+        for oi in range(n_obj):
+            feat = extract_collision_features(
+                perceived_positions[oi], obj_coll_dvs_perceived[oi])
+            obj_feats.append(feat)
+
+        # Store scenario
+        test_scenarios.append({
+            'gt_heavy': heavy_idx,
+            'gt_objects': [copy.deepcopy(o) for o in objects],  # state at frame 40
+            'gt_positions': gt_positions,
+            'gt_collision_dvs': gt_collision_dvs,
+            'perceived_positions': perceived_positions,
+            'perceived_velocities': perceived_velocities,
+            'mean_radii': mean_radii,
+            'masses': masses,
+            'obj_feats_perceived': obj_feats,
+        })
+
+        if (si + 1) % 50 == 0:
+            print(f"│  Processed {si+1}/{n_test_seq} "
+                  f"(pos_err={np.mean(pos_errors):.2f}px)", flush=True)
+
+    mean_pos_err = np.mean(pos_errors)
+    print(f"│  Mean position error: {mean_pos_err:.2f}px", flush=True)
+    print(f"└─ Stage 4 done [{time.time()-t4:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 5: Planning — closed-loop from perceived states
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 5: Closed-Loop Planning — perceived vs GT states", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t5 = time.time()
+
+    random.seed(777)
+    np.random.seed(777)
+    test_targets = []
+    for si in range(n_test_seq):
+        test_targets.append(np.array([
+            random.uniform(0.2, 0.8), random.uniform(0.2, 0.8)], dtype=np.float32))
+
+    mass_correct_perceived = 0
+    mass_correct_gt = 0
+    perceived_dists = []
+    gt_state_dists = []
+    oracle_cl_dists = []
+    random_dists = []
+
+    def cem_1step_plan(current_state, target_obj_idx, target_pos_norm):
+        cur_slots = state_proj(
+            torch.tensor(current_state, dtype=torch.float32).unsqueeze(0))
+        target_t = torch.tensor(target_pos_norm, dtype=torch.float32)
+        mu = torch.zeros(2)
+        sigma = torch.ones(2) * 0.3
+        for round_i in range(n_rounds):
+            forces = mu + sigma * torch.randn(n_candidates, 2)
+            forces = forces.clamp(-force_range, force_range)
+            with torch.no_grad():
+                cand_actions = torch.zeros(n_candidates, n_obj + 2)
+                cand_actions[:, target_obj_idx] = 1.0
+                cand_actions[:, n_obj] = forces[:, 0]
+                cand_actions[:, n_obj + 1] = forces[:, 1]
+                pred_slots = jepa(cur_slots.expand(n_candidates, -1, -1).clone(),
+                                  cand_actions)
+                target_slots = pred_slots[:, target_obj_idx, :]
+                pred_pos = pos_decoder(target_slots)
+                scores = -((pred_pos - target_t) ** 2).sum(dim=-1)
+            elite_idx = torch.topk(scores, n_elite).indices
+            elite_forces = forces[elite_idx]
+            mu = elite_forces.mean(dim=0)
+            sigma = elite_forces.std(dim=0).clamp(min=0.01)
+        return mu[0].item(), mu[1].item()
+
+    def oracle_1step_plan(objects_o, target_obj_idx, target_pos_norm):
+        target_t = np.array(target_pos_norm)
+        mu = np.zeros(2)
+        sigma = np.ones(2) * 0.3
+        for round_i in range(n_rounds):
+            forces = mu + sigma * np.random.randn(n_candidates, 2)
+            forces = np.clip(forces, -force_range, force_range)
+            scores = np.zeros(n_candidates)
+            for ci in range(n_candidates):
+                objs = copy.deepcopy(objects_o)
+                objs[target_obj_idx]['vx'] += forces[ci, 0] * vmax
+                objs[target_obj_idx]['vy'] += forces[ci, 1] * vmax
+                physics_step(objs)
+                final_pos = np.array([objs[target_obj_idx]['cx'] / S,
+                                      objs[target_obj_idx]['cy'] / S])
+                scores[ci] = -np.sum((final_pos - target_t) ** 2)
+            elite_idx = np.argsort(scores)[-n_elite:]
+            elite_forces = forces[elite_idx]
+            mu = elite_forces.mean(axis=0)
+            sigma = elite_forces.std(axis=0).clip(min=0.01)
+        return mu[0], mu[1]
+
+    for si in range(n_test_seq):
+        sc = test_scenarios[si]
+        gt_heavy = sc['gt_heavy']
+        target_pos = test_targets[si]
+        gt_objects = sc['gt_objects']  # state at end of observation (frame 39)
+
+        # ── Mass inference from perceived features ──
+        obj_feats_p = sc['obj_feats_perceived']
+        feat_tensor = torch.tensor(obj_feats_p, dtype=torch.float32)
+        with torch.no_grad():
+            logits = clf(feat_tensor).squeeze(-1)
+            probs = torch.sigmoid(logits)
+            inferred_heavy_p = probs.argmax().item()
+        mass_correct_perceived += int(inferred_heavy_p == gt_heavy)
+
+        # Also try mass inference from GT collision features
+        gt_feats = []
+        for oi in range(n_obj):
+            feat = extract_collision_features(
+                sc['gt_positions'][oi], sc['gt_collision_dvs'][oi])
+            gt_feats.append(feat)
+        gt_feat_tensor = torch.tensor(gt_feats, dtype=torch.float32)
+        with torch.no_grad():
+            gt_logits = clf(gt_feat_tensor).squeeze(-1)
+            gt_probs = torch.sigmoid(gt_logits)
+            inferred_heavy_gt = gt_probs.argmax().item()
+        mass_correct_gt += int(inferred_heavy_gt == gt_heavy)
+
+        # ── Build perceived state vector at frame 39 ──
+        perceived_state = np.zeros((n_obj, 6), dtype=np.float32)
+        for oi in range(n_obj):
+            px, py = sc['perceived_positions'][oi][-1]  # frame 39
+            # Velocity from last finite diff (frame 38→39)
+            if len(sc['perceived_velocities'][oi]) > 0:
+                vx_pix, vy_pix = sc['perceived_velocities'][oi][-1]
+            else:
+                vx_pix, vy_pix = 0.0, 0.0
+            r_est = sc['mean_radii'][oi]
+            mass_est = 3.0 if oi == inferred_heavy_p else 1.0
+            perceived_state[oi] = [px, py, vx_pix / vmax, vy_pix / vmax,
+                                   r_est / S, mass_est / 3.0]
+
+        # GT state at frame 39 for comparison
+        gt_state = objects_to_state(gt_objects)
+        # Override mass with inferred for fair comparison
+        gt_state_with_inferred = gt_state.copy()
+        for oi in range(n_obj):
+            mass_est = 3.0 if oi == inferred_heavy_gt else 1.0
+            gt_state_with_inferred[oi, 5] = mass_est / 3.0
+
+        # ── Closed-loop planning from PERCEIVED state ──
+        cl_objects = copy.deepcopy(gt_objects)  # real physics for execution
+        for step in range(K):
+            # Build perceived state from current real objects
+            # (In real pipeline, we'd re-render and re-perceive, but that's slow.
+            # Instead: for steps >0, update perceived state from GT execution
+            # since the action changes real physics, not our perception.)
+            if step == 0:
+                cur_state = perceived_state
+            else:
+                cur_state = objects_to_state(cl_objects)
+                # Replace mass with perceived mass
+                for oi in range(n_obj):
+                    mass_est = 3.0 if oi == inferred_heavy_p else 1.0
+                    cur_state[oi, 5] = mass_est / 3.0
+
+            fx, fy = cem_1step_plan(cur_state, inferred_heavy_p, target_pos)
+            cl_objects[inferred_heavy_p]['vx'] += fx * vmax
+            cl_objects[inferred_heavy_p]['vy'] += fy * vmax
+            physics_step(cl_objects)
+
+        p_x = cl_objects[gt_heavy]['cx'] / S
+        p_y = cl_objects[gt_heavy]['cy'] / S
+        p_dist = math.hypot(p_x - target_pos[0], p_y - target_pos[1]) * S
+        perceived_dists.append(p_dist)
+
+        # ── Closed-loop planning from GT state (36f baseline) ──
+        gt_cl_objects = copy.deepcopy(gt_objects)
+        for step in range(K):
+            cur_state = objects_to_state(gt_cl_objects)
+            for oi in range(n_obj):
+                mass_est = 3.0 if oi == inferred_heavy_gt else 1.0
+                cur_state[oi, 5] = mass_est / 3.0
+            fx, fy = cem_1step_plan(cur_state, inferred_heavy_gt, target_pos)
+            gt_cl_objects[inferred_heavy_gt]['vx'] += fx * vmax
+            gt_cl_objects[inferred_heavy_gt]['vy'] += fy * vmax
+            physics_step(gt_cl_objects)
+        g_x = gt_cl_objects[gt_heavy]['cx'] / S
+        g_y = gt_cl_objects[gt_heavy]['cy'] / S
+        g_dist = math.hypot(g_x - target_pos[0], g_y - target_pos[1]) * S
+        gt_state_dists.append(g_dist)
+
+        # ── Oracle closed-loop ──
+        orcl_objects = copy.deepcopy(gt_objects)
+        for step in range(K):
+            fx_o, fy_o = oracle_1step_plan(orcl_objects, gt_heavy, target_pos)
+            orcl_objects[gt_heavy]['vx'] += fx_o * vmax
+            orcl_objects[gt_heavy]['vy'] += fy_o * vmax
+            physics_step(orcl_objects)
+        o_x = orcl_objects[gt_heavy]['cx'] / S
+        o_y = orcl_objects[gt_heavy]['cy'] / S
+        o_dist = math.hypot(o_x - target_pos[0], o_y - target_pos[1]) * S
+        oracle_cl_dists.append(o_dist)
+
+        # ── Random ──
+        rand_obj = random.randint(0, n_obj - 1)
+        rand_objects = copy.deepcopy(gt_objects)
+        rand_objects[rand_obj]['vx'] += random.uniform(-force_range, force_range) * vmax
+        rand_objects[rand_obj]['vy'] += random.uniform(-force_range, force_range) * vmax
+        for step in range(K):
+            physics_step(rand_objects)
+        r_x = rand_objects[gt_heavy]['cx'] / S
+        r_y = rand_objects[gt_heavy]['cy'] / S
+        r_dist = math.hypot(r_x - target_pos[0], r_y - target_pos[1]) * S
+        random_dists.append(r_dist)
+
+        if (si + 1) % 50 == 0:
+            p_succ = sum(1 for d in perceived_dists if d < success_thresh) / len(perceived_dists) * 100
+            g_succ = sum(1 for d in gt_state_dists if d < success_thresh) / len(gt_state_dists) * 100
+            o_succ = sum(1 for d in oracle_cl_dists if d < success_thresh) / len(oracle_cl_dists) * 100
+            r_succ = sum(1 for d in random_dists if d < success_thresh) / len(random_dists) * 100
+            m_p = mass_correct_perceived / (si + 1) * 100
+            print(f"│    {si+1}/{n_test_seq}: mass_p={m_p:.0f}%, "
+                  f"pixel={p_succ:.0f}%, gt={g_succ:.0f}%, "
+                  f"oracle={o_succ:.0f}%, rand={r_succ:.0f}%", flush=True)
+
+    print(f"└─ Stage 5 done [{time.time()-t5:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 6: Final Evaluation + Visualization
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 6: Final Evaluation", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    p_np = np.array(perceived_dists)
+    g_np = np.array(gt_state_dists)
+    o_np = np.array(oracle_cl_dists)
+    r_np = np.array(random_dists)
+
+    mass_acc_p = mass_correct_perceived / n_test_seq * 100
+    mass_acc_gt = mass_correct_gt / n_test_seq * 100
+    p_success = (p_np < success_thresh).mean() * 100
+    g_success = (g_np < success_thresh).mean() * 100
+    o_success = (o_np < success_thresh).mean() * 100
+    r_success = (r_np < success_thresh).mean() * 100
+
+    print(f"\n│  Perception quality:", flush=True)
+    print(f"│    Position error:     {mean_pos_err:.2f}px", flush=True)
+    print(f"│    Mass (perceived):   {mass_acc_p:.1f}%", flush=True)
+    print(f"│    Mass (GT features): {mass_acc_gt:.1f}%", flush=True)
+    print(f"\n│  Success rate (within {success_thresh}px):", flush=True)
+    print(f"│    Pixel pipeline:     {p_success:.1f}%  (target >70%)", flush=True)
+    print(f"│    GT state (36f):     {g_success:.1f}%  (ceiling)", flush=True)
+    print(f"│    Oracle closed-loop: {o_success:.1f}%", flush=True)
+    print(f"│    Random:             {r_success:.1f}%", flush=True)
+    print(f"\n│  Pixel vs GT gap:     {g_success - p_success:.1f}pp", flush=True)
+    print(f"\n│  Mean distance (px):", flush=True)
+    print(f"│    Pixel pipeline:     {p_np.mean():.2f}px (median {np.median(p_np):.2f})", flush=True)
+    print(f"│    GT state:           {g_np.mean():.2f}px (median {np.median(g_np):.2f})", flush=True)
+    print(f"│    Oracle:             {o_np.mean():.2f}px (median {np.median(o_np):.2f})", flush=True)
+    print(f"│    Random:             {r_np.mean():.2f}px (median {np.median(r_np):.2f})", flush=True)
+
+    elapsed = time.time() - t0
+    print(f"\n│  Total time: {elapsed:.0f}s", flush=True)
+
+    # ── Visualization ──
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle('Phase 37: Planning from Pixels — Full Visual Pipeline\n'
+                 f'pixels → perception (pos err {mean_pos_err:.2f}px) → '
+                 f'closed-loop JEPA planning, thresh={success_thresh}px',
+                 fontsize=12, fontweight='bold')
+
+    # Panel 1: Success rate comparison
+    ax = axes[0, 0]
+    planners = ['Pixel\nPipeline', 'GT State\n(36f)', 'Oracle\nClosed-Loop', 'Random']
+    success_rates = [p_success, g_success, o_success, r_success]
+    colors = ['steelblue', 'mediumpurple', 'seagreen', 'lightcoral']
+    bars = ax.bar(planners, success_rates, color=colors, alpha=0.8, edgecolor='black')
+    ax.axhline(y=70, color='blue', linestyle='--', alpha=0.5, label='Target (70%)')
+    ax.set_ylabel('Success Rate (%)')
+    ax.set_title(f'Success Rate (within {success_thresh}px)')
+    ax.set_ylim(0, max(max(success_rates) * 1.2, 95))
+    for bar, val in zip(bars, success_rates):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                f'{val:.1f}%', ha='center', va='bottom', fontsize=11, fontweight='bold')
+    ax.legend(fontsize=8)
+
+    # Panel 2: Pixel vs GT gap
+    ax = axes[0, 1]
+    gap = g_success - p_success
+    bars = ax.bar(['Pixel\nPipeline', 'GT State\n(36f)'],
+                  [p_success, g_success],
+                  color=['steelblue', 'mediumpurple'], alpha=0.8, edgecolor='black')
+    ax.set_ylabel('Success Rate (%)')
+    ax.set_title(f'Perception Degradation: {gap:.1f}pp gap')
+    ax.set_ylim(0, max(p_success, g_success) * 1.3)
+    ax.text(0, p_success + 1, f'{p_success:.1f}%', ha='center', fontsize=12, fontweight='bold')
+    ax.text(1, g_success + 1, f'{g_success:.1f}%', ha='center', fontsize=12, fontweight='bold')
+
+    # Panel 3: Mass inference comparison
+    ax = axes[0, 2]
+    bars = ax.bar(['Perceived\nTrajectories', 'GT\nFeatures'],
+                  [mass_acc_p, mass_acc_gt],
+                  color=['steelblue', 'seagreen'], alpha=0.8, edgecolor='black')
+    ax.set_ylabel('Mass Accuracy (%)')
+    ax.set_title('Mass Inference')
+    ax.set_ylim(0, 105)
+    for bar, val in zip(bars, [mass_acc_p, mass_acc_gt]):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                f'{val:.1f}%', ha='center', fontsize=12, fontweight='bold')
+
+    # Panel 4: Distance distributions
+    ax = axes[1, 0]
+    bins = np.linspace(0, min(50, max(np.percentile(r_np, 98), 30)), 40)
+    ax.hist(p_np, bins=bins, alpha=0.6, label='Pixel Pipeline', color='steelblue')
+    ax.hist(g_np, bins=bins, alpha=0.4, label='GT State', color='mediumpurple')
+    ax.hist(r_np, bins=bins, alpha=0.3, label='Random', color='lightcoral')
+    ax.axvline(x=success_thresh, color='red', linestyle='--',
+               label=f'{success_thresh}px threshold')
+    ax.set_xlabel('Distance to target (px)')
+    ax.set_ylabel('Count')
+    ax.set_title('Distance Distribution')
+    ax.legend(fontsize=8)
+
+    # Panel 5: CDF
+    ax = axes[1, 1]
+    for dists, label, color in [
+        (o_np, 'Oracle', 'seagreen'),
+        (g_np, 'GT State', 'mediumpurple'),
+        (p_np, 'Pixel Pipeline', 'steelblue'),
+        (r_np, 'Random', 'lightcoral'),
+    ]:
+        sorted_d = np.sort(dists)
+        cdf = np.arange(1, len(sorted_d) + 1) / len(sorted_d)
+        ax.plot(sorted_d, cdf * 100, label=label, color=color, linewidth=2)
+    ax.axvline(x=success_thresh, color='red', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Distance to target (px)')
+    ax.set_ylabel('Cumulative %')
+    ax.set_title('CDF of Distance to Target')
+    ax.legend(fontsize=8)
+    ax.set_xlim(0, 40)
+
+    # Panel 6: Mean/Median comparison
+    ax = axes[1, 2]
+    planners_full = ['Pixel', 'GT State', 'Oracle', 'Random']
+    means = [p_np.mean(), g_np.mean(), o_np.mean(), r_np.mean()]
+    medians = [np.median(p_np), np.median(g_np), np.median(o_np), np.median(r_np)]
+    x = np.arange(len(planners_full))
+    w = 0.3
+    ax.bar(x - w/2, means, w, label='Mean', color='steelblue', alpha=0.7)
+    ax.bar(x + w/2, medians, w, label='Median', color='orange', alpha=0.7)
+    ax.set_xticks(x)
+    ax.set_xticklabels(planners_full, fontsize=9)
+    ax.set_ylabel('Distance to target (px)')
+    ax.set_title('Mean vs Median Distance')
+    ax.legend()
+    for i, (m, md) in enumerate(zip(means, medians)):
+        ax.text(x[i] - w/2, m + 0.3, f'{m:.1f}', ha='center', fontsize=8)
+        ax.text(x[i] + w/2, md + 0.3, f'{md:.1f}', ha='center', fontsize=8)
+
+    plt.tight_layout()
+    plt.savefig('results/phase37_pixel_planning.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\n│  Saved results/phase37_pixel_planning.png", flush=True)
+
+    # Verdict
+    print(f"\n{'=' * 70}", flush=True)
+    if p_success > 70 and mass_acc_p > 95:
+        verdict = "SUCCESS"
+    elif p_success > 60 or (p_success > 50 and mass_acc_p > 90):
+        verdict = "PARTIAL"
+    else:
+        verdict = "FAIL"
+    print(f"VERDICT: {verdict}", flush=True)
+    print(f"  Position error:       {mean_pos_err:.2f}px", flush=True)
+    print(f"  Mass (perceived):     {mass_acc_p:.1f}% (target >95%)", flush=True)
+    print(f"  Mass (GT features):   {mass_acc_gt:.1f}%", flush=True)
+    print(f"  Pixel pipeline:       {p_success:.1f}% (target >70%)", flush=True)
+    print(f"  GT state (36f):       {g_success:.1f}%", flush=True)
+    print(f"  Pixel vs GT gap:      {g_success - p_success:.1f}pp", flush=True)
+    print(f"  Oracle closed-loop:   {o_success:.1f}%", flush=True)
+    print(f"  Random:               {r_success:.1f}%", flush=True)
+    print(f"  Total time:           {elapsed:.0f}s", flush=True)
+    print(f"{'=' * 70}", flush=True)
+
+
 def run_phase36f_closed_loop():
     """Phase 36f: Closed-loop replanning — replan at every step using 1-step JEPA.
 

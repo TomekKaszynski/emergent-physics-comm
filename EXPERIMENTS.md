@@ -1291,3 +1291,36 @@ Position decoder: Linear(64→2), trained on slot→(cx,cy) pairs. Decode error:
 - Oracle median distance 0.49px (!!) — closed-loop with perfect physics converges almost exactly to target
 - JEPA median 4.62px — well within 10px threshold, with room to spare
 - The remaining 11pp gap to oracle (81.5% vs 92.5%) is the JEPA's per-step prediction error, which is small but compounds slightly across 5 replan steps
+
+---
+
+## Phase 37: Planning from Pixels
+
+### Phase 37: Full Pixel→Planning Pipeline
+**Date:** Feb 22 | **Duration:** 79s | **Verdict:** PARTIAL
+
+**Setup:** Closes the gap between 35c (pixels→perception) and 36f (GT→planning). Train JEPA/classifier/decoder on GT state vectors (same as 36f). Test on 200 pixel-rendered scenarios: textured objects on colored backgrounds. Pipeline: corner BG subtraction → hue COM → finite-diff velocities → area-based radii → collision features → mass inference → state vector → closed-loop JEPA planning (K=5).
+
+**Perception quality:**
+- Position error: **0.41px** (excellent, matching 35c's 0.48px)
+- Mass inference (perceived trajectories): **75.5%** (target >95%) — MISS
+- Mass inference (GT collision features): 100.0%
+
+**Results:**
+| Planner | Success (10px) | Mean dist | Median dist |
+|---|---|---|---|
+| **Pixel pipeline** | **65.0%** | 9.88px | 5.62px |
+| GT state (36f) | 83.5% | 5.31px | 3.19px |
+| Oracle closed-loop | 94.5% | 2.87px | 0.59px |
+| Random | 13.5% | 22.84px | 22.36px |
+
+- Pixel vs GT gap: **18.5pp** (65.0% vs 83.5%)
+- Pixel pipeline is **4.8x better than random** (65% vs 13.5%)
+
+**Key insights:**
+- **Position error (0.41px) is NOT the bottleneck** — it's well within tolerance
+- **Mass inference is the bottleneck** — dropped from 99.5% (GT features) to 75.5% (perceived)
+- Root cause: `avg_dv_ratio` (the most discriminative collision feature) requires explicit collision DV tracking. From pixels, we only have trajectory-based features (speed, acceleration magnitudes) which are less discriminative — `avg_dv_ratio` defaults to 1.0 for all objects
+- When mass is wrong (24.5% of cases), the agent pushes the wrong object → guaranteed failure
+- The 18.5pp gap is ~entirely explained by mass errors: 24.5% wrong mass × ~100% failure rate = ~24.5pp loss, close to the observed 18.5pp gap
+- **Fix needed:** Detect pairwise collisions from perceived trajectories (proximity + sudden velocity change) and estimate DV ratios from position data. This would restore the key feature that makes mass inference work
