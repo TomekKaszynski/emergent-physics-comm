@@ -1515,3 +1515,35 @@ Position decoder: Linear(64→2), trained on slot→(cx,cy) pairs. Decode error:
 - Gumbel-softmax collapsed at low τ (~epoch 340): train/val accuracy dropped to 33.3% (random). But best checkpoint from epoch ~300 retained 96.5% accuracy — early stopping was critical
 - JEPA also benefited from 2× data: final loss 0.000613 vs 0.000956 (38c), though oracle planning stayed ~80%
 - **Milestone:** Full perception→communication→planning pipeline at 75% success, within 5pp of oracle ceiling
+
+---
+
+## Phase 39: Visual JEPA — Slot Dynamics from DINOv2 Features
+**Date:** Feb 23 | **Duration:** 2557s (~43 min) | **Verdict:** PARTIAL
+
+**Setup:** Train SlotAttentionDINO on 5000 physics frames (3 textured objects, colored bg, collisions). Encode 1000 sequences × 40 frames → DINOv2 slot vectors [1000, 40, 7, 64]. Hungarian-match slots across consecutive frames. Train SlotPredictor MLP (slots[t] → slots[t+1]) on 31K pairs. No GT state vectors, no classical CV — pure visual slot prediction.
+
+**Architecture:**
+- SlotAttentionDINO: 640K trainable params (frozen DINOv2-S 22M), 7 slots, 64-dim, 5 SA iters
+- SA trained 40 epochs on 5000 frames: entropy=0.236, 7/7 active slots
+- SlotPredictor: 296K params (7×64=448 → 256 → 256 → 448)
+- 100 JEPA training epochs, lr=3e-4, batch=256
+
+**Results:**
+
+| Horizon | JEPA MSE | Copy MSE | Improvement |
+|---|---|---|---|
+| 1-step | 0.0809 | 0.0835 | **+3.1%** |
+| 2-step | 0.1768 | 0.2066 | **+14.4%** |
+| 3-step | 0.2648 | 0.3227 | **+17.9%** |
+| 5-step | 0.3653 | 0.4544 | **+19.6%** |
+
+Position decoding: 17.1px error from slot centroids (S=64), predicted slots 12.4px — slots encode appearance more than position.
+
+**Key insights:**
+- **1-step: barely beats copy** (+3.1%, target was >15%). Consecutive slot cosine similarity = 0.991 — slots change very little frame-to-frame, making copy an extremely strong baseline
+- **Multi-step: JEPA learns real dynamics** — improvement grows with horizon (14%→18%→20%), because copy error compounds while JEPA captures momentum/direction
+- **Hungarian matching was unnecessary** — raw cosine sim = matched sim = 0.991. SA with per-slot learnable inits already produces temporally consistent slot ordering
+- **Position poorly decoded** — 13-17px error means DINOv2 slots encode texture/appearance features, not spatial position. Need explicit position encoding or a different decoder
+- **SA training was the bottleneck** — 40 epochs × 5000 DINOv2 frames on MPS took ~40 min. Encoding 40K frames took ~7 min. JEPA training took only 24s
+- **The 1-step target was wrong** — for slow-moving objects with DINOv2 features, copy is near-perfect. The interesting signal is at 3-5 step horizons where dynamics matter

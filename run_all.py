@@ -15793,6 +15793,715 @@ def run_phase33c_comparative_comm():
     print(f"{'=' * 70}", flush=True)
 
 
+def run_phase39_visual_jepa():
+    """Phase 39: Visual JEPA — predict future DINOv2 slot features from current.
+
+    Stage 1: Generate 5000 physics frames, train SlotAttentionDINO (80 epochs)
+    Stage 2: Generate 1000 sequences × 40 frames, encode all → slot vectors
+    Stage 3: Hungarian-match slots across consecutive frames for consistent ordering
+    Stage 4: Train SlotPredictor: slots[t] → slots[t+1] (39K pairs)
+    Stage 5: Evaluate vs copy baseline; decode positions from predicted slots
+    Target: >15% improvement over copy baseline on slot feature prediction."""
+    import random
+    import math
+    from scipy.optimize import linear_sum_assignment
+
+    print("=" * 70, flush=True)
+    print("PHASE 39: Visual JEPA — Slot Dynamics from DINOv2 Features", flush=True)
+    print("  No GT state, no classical CV — pure visual slot prediction", flush=True)
+    print("=" * 70, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    n_obj = 3
+    S = 64
+    n_slots = 7
+    slot_dim = 64
+    texture_types = ['checkerboard', 'stripes', 'gradient', 'noise', 'dots']
+
+    # ── Rendering helpers ──────────────────────────────────────
+    def hue_to_rgb(h):
+        h6 = h * 6.0
+        sector = int(h6) % 6
+        frac = h6 - int(h6)
+        if sector == 0: base = np.array([1.0, frac, 0.0])
+        elif sector == 1: base = np.array([1.0 - frac, 1.0, 0.0])
+        elif sector == 2: base = np.array([0.0, 1.0, frac])
+        elif sector == 3: base = np.array([0.0, 1.0 - frac, 1.0])
+        elif sector == 4: base = np.array([frac, 0.0, 1.0])
+        else: base = np.array([1.0, 0.0, 1.0 - frac])
+        return np.clip(base * 0.7 + 0.3, 0.15, 1.0)
+
+    def generate_texture(radius, texture_type, base_hue):
+        d = 2 * radius + 1
+        base = hue_to_rgb(base_hue)
+        yy, xx = np.mgrid[:d, :d]
+        cy_t, cx_t = radius, radius
+        if texture_type == 'checkerboard':
+            freq = random.choice([3, 4, 5])
+            pattern = ((xx // freq + yy // freq) % 2).astype(np.float32) * 0.6 + 0.4
+        elif texture_type == 'stripes':
+            freq = random.choice([3, 4, 5])
+            angle = random.uniform(0, np.pi)
+            rotated = xx * np.cos(angle) + yy * np.sin(angle)
+            pattern = (np.sin(rotated * 2 * np.pi / freq) * 0.3 + 0.7).astype(np.float32)
+        elif texture_type == 'gradient':
+            angle = random.uniform(0, 2 * np.pi)
+            grad = (xx - cx_t) * np.cos(angle) + (yy - cy_t) * np.sin(angle)
+            grad = grad / (radius + 1e-8)
+            pattern = (grad * 0.3 + 0.7).astype(np.float32)
+        elif texture_type == 'noise':
+            pattern = np.random.uniform(0.3, 1.0, (d, d)).astype(np.float32)
+        elif texture_type == 'dots':
+            pattern = np.ones((d, d), dtype=np.float32) * 0.5
+            spacing = random.choice([4, 5, 6])
+            for dy in range(0, d, spacing):
+                for dx in range(0, d, spacing):
+                    dist_sq = (yy - dy) ** 2 + (xx - dx) ** 2
+                    pattern[dist_sq <= 1] = 1.0
+        else:
+            pattern = np.ones((d, d), dtype=np.float32) * 0.8
+        patch = np.zeros((3, d, d), dtype=np.float32)
+        for c in range(3):
+            patch[c] = base[c] * pattern
+        dist_sq = (xx - cx_t) ** 2 + (yy - cy_t) ** 2
+        mask = dist_sq <= radius ** 2
+        return patch, mask
+
+    def render_frame(objects, obj_textures, bg_color):
+        img = np.zeros((3, S, S), dtype=np.float32)
+        for c in range(3):
+            img[c, :, :] = bg_color[c]
+        for oi_idx, obj in enumerate(objects):
+            r = obj['r']
+            cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+            patch, mask = obj_textures[oi_idx]
+            d = 2 * r + 1
+            for dy in range(d):
+                for dx in range(d):
+                    if mask[dy, dx]:
+                        px = cx_i - r + dx
+                        py = cy_i - r + dy
+                        if 0 <= px < S and 0 <= py < S:
+                            for c in range(3):
+                                img[c, py, px] = patch[c, dy, dx]
+        return img
+
+    def physics_step(objects):
+        n = len(objects)
+        for i in range(n):
+            for j in range(i + 1, n):
+                oi_o, oj_o = objects[i], objects[j]
+                dx_c = oj_o['cx'] - oi_o['cx']
+                dy_c = oj_o['cy'] - oi_o['cy']
+                dist = math.hypot(dx_c, dy_c)
+                min_dist = oi_o['r'] + oj_o['r']
+                if dist < min_dist and dist > 0.1:
+                    nx, ny = dx_c / dist, dy_c / dist
+                    dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                          (oi_o['vy'] - oj_o['vy']) * ny
+                    if dvn > 0:
+                        m1, m2 = oi_o['mass'], oj_o['mass']
+                        imp = 2 * dvn / (m1 + m2)
+                        oi_o['vx'] -= imp * m2 * nx
+                        oi_o['vy'] -= imp * m2 * ny
+                        oj_o['vx'] += imp * m1 * nx
+                        oj_o['vy'] += imp * m1 * ny
+                        overlap = min_dist - dist
+                        oi_o['cx'] -= overlap * nx * 0.5
+                        oi_o['cy'] -= overlap * ny * 0.5
+                        oj_o['cx'] += overlap * nx * 0.5
+                        oj_o['cy'] += overlap * ny * 0.5
+        for obj in objects:
+            obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+            r = obj['r']
+            if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+            if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+            if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+            if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+    def make_scene(rng_seed):
+        """Create a scene: objects + textures + bg."""
+        rng_state = random.getstate()
+        np_state = np.random.get_state()
+        random.seed(rng_seed)
+        np.random.seed(rng_seed)
+
+        masses = [1.0, 1.0, 1.0]
+        heavy_idx = random.randint(0, n_obj - 1)
+        masses[heavy_idx] = 3.0
+
+        bg_color = np.array([random.uniform(0.15, 0.55),
+                             random.uniform(0.15, 0.55),
+                             random.uniform(0.15, 0.55)], dtype=np.float32)
+        hue_offset = random.uniform(0, 1)
+        obj_hues = [(hue_offset + oi / n_obj) % 1.0 for oi in range(n_obj)]
+
+        objects = []
+        obj_textures = []
+        for oi in range(n_obj):
+            r = random.randint(6, 9)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-5.0, 5.0)
+            vy = random.uniform(-5.0, 5.0)
+            objects.append({'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                            'r': r, 'mass': masses[oi]})
+            tex_type = random.choice(texture_types)
+            patch, mask = generate_texture(r, tex_type, obj_hues[oi])
+            obj_textures.append((patch, mask))
+
+        random.setstate(rng_state)
+        np.random.set_state(np_state)
+        return objects, obj_textures, bg_color
+
+    def render_sequence(objects, obj_textures, bg_color, n_frames):
+        """Render n_frames of physics, return frames [n_frames, 3, S, S] and GT positions."""
+        import copy
+        objs = copy.deepcopy(objects)
+        frames = []
+        gt_pos = []  # [n_frames, n_obj, 2] normalized
+        for fi in range(n_frames):
+            gt_pos.append([[o['cx'] / S, o['cy'] / S] for o in objs])
+            frames.append(render_frame(objs, obj_textures, bg_color))
+            physics_step(objs)
+        return np.array(frames), np.array(gt_pos, dtype=np.float32)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 1: Generate 5000 frames + Train SlotAttentionDINO
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 1: Generate SA training data + Train SlotAttentionDINO", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t1 = time.time()
+
+    random.seed(42)
+    np.random.seed(42)
+
+    # Generate 5000 diverse frames (1000 scenes × 5 frames each)
+    n_sa_scenes = 1000
+    n_sa_frames_per = 5
+    sa_frames = []
+    for si in range(n_sa_scenes):
+        objects, obj_textures, bg_color = make_scene(rng_seed=42000 + si)
+        seq_frames, _ = render_sequence(objects, obj_textures, bg_color, n_sa_frames_per)
+        sa_frames.append(seq_frames)
+        if (si + 1) % 250 == 0:
+            print(f"│  Generated {(si+1)*n_sa_frames_per} SA training frames", flush=True)
+    sa_frames = np.concatenate(sa_frames, axis=0)  # [5000, 3, S, S]
+    print(f"│  SA training frames: {sa_frames.shape}", flush=True)
+
+    sa_tensor = torch.tensor(sa_frames, dtype=torch.float32)
+    del sa_frames
+
+    # Train SlotAttentionDINO
+    from world_model import SlotAttentionDINO
+    ae = SlotAttentionDINO(n_slots=n_slots, slot_dim=slot_dim, img_size=S).to(device)
+    ae_params = sum(p.numel() for p in ae.parameters() if p.requires_grad)
+    print(f"│  SlotAttentionDINO trainable params: {ae_params:,}", flush=True)
+
+    ae_opt = torch.optim.Adam(
+        [p for p in ae.parameters() if p.requires_grad], lr=4e-4)
+    ae_epochs = 40
+    batch_size = 32
+    n_sa_total = len(sa_tensor)
+    n_sa_train = int(0.9 * n_sa_total)
+
+    sa_perm = torch.randperm(n_sa_total)
+    sa_train_idx = sa_perm[:n_sa_train]
+    sa_val_idx = sa_perm[n_sa_train:]
+
+    for epoch in range(1, ae_epochs + 1):
+        ae.train()
+        ae.dino.eval()
+        ep_perm = sa_train_idx[torch.randperm(n_sa_train)]
+        ep_loss = 0.0
+        n_batches = 0
+        for start in range(0, n_sa_train, batch_size):
+            idx = ep_perm[start:start + batch_size]
+            batch = sa_tensor[idx].to(device)
+            loss, recon_loss, entropy, _, _, _ = ae(batch)
+            ae_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                [p for p in ae.parameters() if p.requires_grad], 1.0)
+            ae_opt.step()
+            ep_loss += loss.item() * len(idx)
+            n_batches += 1
+        if epoch % 10 == 0 or epoch == 1:
+            ae.eval()
+            with torch.no_grad():
+                vl_batch = sa_tensor[sa_val_idx[:64]].to(device)
+                vl_loss, _, vl_ent, _, _, vl_alpha = ae(vl_batch)
+                # Count active slots
+                ownership = vl_alpha.argmax(dim=1)
+                active = len(set(ownership.reshape(-1).cpu().tolist()))
+            print(f"│    SA Epoch {epoch:3d}: train_loss={ep_loss/n_sa_train:.4f}, "
+                  f"val_loss={vl_loss.item():.4f}, entropy={vl_ent.item():.3f}, "
+                  f"active={active}/{n_slots}", flush=True)
+        if device.type == 'mps':
+            torch.mps.empty_cache()
+
+    ae.eval()
+    del sa_tensor
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+    print(f"└─ Stage 1 done [{time.time()-t1:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 2: Generate 1000 sequences × 40 frames, encode all
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 2: Generate + encode 1000 sequences × 40 frames", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t2 = time.time()
+
+    n_jepa_seq = 1000
+    n_jepa_frames = 40
+    all_slots = []  # [n_seq, n_frames, n_slots, slot_dim]
+    all_gt_pos = []  # [n_seq, n_frames, n_obj, 2]
+
+    encode_batch = 8  # frames per forward pass
+
+    for si in range(n_jepa_seq):
+        objects, obj_textures, bg_color = make_scene(rng_seed=80000 + si)
+        seq_frames, gt_pos = render_sequence(
+            objects, obj_textures, bg_color, n_jepa_frames)
+
+        # Encode frames → slots
+        seq_frames_t = torch.tensor(seq_frames, dtype=torch.float32)
+        seq_slots = []
+        with torch.no_grad():
+            for fi in range(0, n_jepa_frames, encode_batch):
+                batch = seq_frames_t[fi:fi + encode_batch].to(device)
+                slots, _ = ae.encode(batch)  # [B, n_slots, slot_dim]
+                seq_slots.append(slots.cpu())
+        seq_slots = torch.cat(seq_slots, dim=0)  # [n_frames, n_slots, slot_dim]
+        all_slots.append(seq_slots)
+        all_gt_pos.append(gt_pos)
+
+        if device.type == 'mps' and (si + 1) % 25 == 0:
+            torch.mps.empty_cache()
+        if (si + 1) % 100 == 0:
+            print(f"│  Encoded {si+1}/{n_jepa_seq} sequences", flush=True)
+
+    all_slots = torch.stack(all_slots)  # [1000, 40, 7, 64]
+    all_gt_pos = np.array(all_gt_pos)   # [1000, 40, 3, 2]
+    slot_mean_norm = all_slots.reshape(-1, slot_dim).norm(dim=-1).mean().item()
+    print(f"│  Slot cache: {list(all_slots.shape)}", flush=True)
+    print(f"│  Slot mean L2 norm: {slot_mean_norm:.3f}", flush=True)
+    print(f"└─ Stage 2 done [{time.time()-t2:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 3: Hungarian matching for consistent slot ordering
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 3: Hungarian-match slots across consecutive frames", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t3 = time.time()
+
+    # For each sequence, match slot[t] to slot[t+1] by cosine similarity
+    # Reorder slot[t+1] to match slot[t]'s ordering
+    matched_slots = torch.zeros_like(all_slots)
+    for si in range(n_jepa_seq):
+        matched_slots[si, 0] = all_slots[si, 0]  # first frame is reference
+        for fi in range(1, n_jepa_frames):
+            prev = matched_slots[si, fi - 1]  # [n_slots, slot_dim] — already ordered
+            curr = all_slots[si, fi]           # [n_slots, slot_dim] — raw SA output
+            # Cost matrix: negative cosine similarity
+            prev_norm = F.normalize(prev, dim=-1)
+            curr_norm = F.normalize(curr, dim=-1)
+            sim = torch.mm(prev_norm, curr_norm.t())  # [n_slots, n_slots]
+            cost = -sim.numpy()
+            row_ind, col_ind = linear_sum_assignment(cost)
+            matched_slots[si, fi] = curr[col_ind]
+
+        if (si + 1) % 250 == 0:
+            print(f"│  Matched {si+1}/{n_jepa_seq} sequences", flush=True)
+
+    # Verify matching quality: mean cosine sim between consecutive matched slots
+    consec_sim = F.cosine_similarity(
+        matched_slots[:, :-1].reshape(-1, slot_dim),
+        matched_slots[:, 1:].reshape(-1, slot_dim), dim=-1).mean().item()
+    raw_sim = F.cosine_similarity(
+        all_slots[:, :-1].reshape(-1, slot_dim),
+        all_slots[:, 1:].reshape(-1, slot_dim), dim=-1).mean().item()
+    print(f"│  Consecutive cosine sim — raw: {raw_sim:.4f}, matched: {consec_sim:.4f}", flush=True)
+    print(f"└─ Stage 3 done [{time.time()-t3:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 4: Train Visual JEPA (SlotPredictor)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 4: Train Visual JEPA — slots[t] → slots[t+1]", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t4 = time.time()
+
+    # Move SA model to CPU to free MPS memory
+    ae.to('cpu')
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    n_train_seq = 800
+    n_val_seq = 200
+    # Build pairs from matched slots
+    train_slots_t = matched_slots[:n_train_seq, :-1].reshape(-1, n_slots, slot_dim)
+    train_slots_tp1 = matched_slots[:n_train_seq, 1:].reshape(-1, n_slots, slot_dim)
+    val_slots_t = matched_slots[n_train_seq:, :-1].reshape(-1, n_slots, slot_dim)
+    val_slots_tp1 = matched_slots[n_train_seq:, 1:].reshape(-1, n_slots, slot_dim)
+
+    print(f"│  Train pairs: {len(train_slots_t)}", flush=True)
+    print(f"│  Val pairs: {len(val_slots_t)}", flush=True)
+
+    # Copy baseline
+    copy_mse = F.mse_loss(val_slots_t, val_slots_tp1).item()
+    print(f"│  Copy baseline MSE: {copy_mse:.6f}", flush=True)
+
+    # Train predictor
+    from world_model import SlotPredictor
+    torch.manual_seed(42)
+    predictor = SlotPredictor(n_slots=n_slots, slot_dim=slot_dim, hidden_dim=256).to(device)
+    pred_params = sum(p.numel() for p in predictor.parameters())
+    print(f"│  SlotPredictor: {pred_params:,} params", flush=True)
+
+    pred_opt = torch.optim.Adam(predictor.parameters(), lr=3e-4)
+    pred_epochs = 100
+    pred_batch = 256
+    n_train_pairs = len(train_slots_t)
+
+    # Move training data to device
+    tr_t = train_slots_t.to(device)
+    tr_tp1 = train_slots_tp1.to(device)
+    vl_t = val_slots_t.to(device)
+    vl_tp1 = val_slots_tp1.to(device)
+
+    best_val_mse = float('inf')
+    best_pred_state = None
+
+    for epoch in range(1, pred_epochs + 1):
+        predictor.train()
+        ep_perm = torch.randperm(n_train_pairs, device=device)
+        ep_loss = 0.0
+        for start in range(0, n_train_pairs, pred_batch):
+            idx = ep_perm[start:start + pred_batch]
+            pred = predictor(tr_t[idx])
+            loss = F.mse_loss(pred, tr_tp1[idx])
+            pred_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(predictor.parameters(), 1.0)
+            pred_opt.step()
+            ep_loss += loss.item() * len(idx)
+
+        if epoch % 10 == 0 or epoch == 1:
+            predictor.eval()
+            with torch.no_grad():
+                vl_pred = predictor(vl_t)
+                val_mse = F.mse_loss(vl_pred, vl_tp1).item()
+            improvement = (1 - val_mse / copy_mse) * 100
+            print(f"│    Epoch {epoch:3d}: train={ep_loss/n_train_pairs:.6f}, "
+                  f"val={val_mse:.6f}, vs copy: {improvement:+.1f}%", flush=True)
+            if val_mse < best_val_mse:
+                best_val_mse = val_mse
+                best_pred_state = {k: v.cpu().clone()
+                                   for k, v in predictor.state_dict().items()}
+
+    predictor.load_state_dict(best_pred_state)
+    predictor.to(device).eval()
+    improvement = (1 - best_val_mse / copy_mse) * 100
+    print(f"│  Best val MSE: {best_val_mse:.6f} ({improvement:+.1f}% vs copy)", flush=True)
+    print(f"└─ Stage 4 done [{time.time()-t4:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 5: Evaluation + Position Decoding
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 5: Evaluation + Position Decoding", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t5 = time.time()
+
+    # 5a. Autoregressive rollout (1-5 steps)
+    print(f"│  Autoregressive rollout on val set:", flush=True)
+    ar_steps = [1, 2, 3, 5]
+    ar_mse = {}
+    ar_copy_mse = {}
+    for steps in ar_steps:
+        # Use first frame of each val sequence, predict `steps` ahead
+        val_init = matched_slots[n_train_seq:, 0]  # [200, n_slots, slot_dim]
+        val_targets = matched_slots[n_train_seq:, steps]  # [200, n_slots, slot_dim]
+
+        # Autoregressive prediction
+        with torch.no_grad():
+            current = val_init.to(device)
+            for s in range(steps):
+                current = predictor(current)
+            pred_mse = F.mse_loss(current.cpu(), val_targets).item()
+
+        # Copy baseline for this horizon
+        c_mse = F.mse_loss(val_init, val_targets).item()
+        imp = (1 - pred_mse / c_mse) * 100
+        ar_mse[steps] = pred_mse
+        ar_copy_mse[steps] = c_mse
+        print(f"│    {steps}-step: pred={pred_mse:.6f}, copy={c_mse:.6f}, "
+              f"improvement={imp:+.1f}%", flush=True)
+
+    # 5b. Train position decoder: slot → (x, y)
+    # For each frame, find which slot best matches each object (by attention/proximity)
+    # Simpler: train on matched slots where we know GT positions
+    print(f"│", flush=True)
+    print(f"│  Training position decoder (slot → xy):", flush=True)
+
+    # Build decoder training data from val sequences
+    # Use all matched slots + GT positions
+    # For each sequence frame, slot[i] should correspond to object[i] if Hungarian
+    # matching worked... but SA has 7 slots for 3 objects. We need to figure out
+    # which 3 slots correspond to the 3 objects.
+    # Simple approach: for each frame, find the 3 slots closest to GT positions
+    # by training a decoder on ALL slots and letting it learn position.
+
+    # Actually, let's use SA attention masks to assign slots to spatial positions.
+    # Re-encode a small batch to get attention masks, then use those to compute
+    # slot centroids as pseudo-GT.
+
+    # Even simpler: decode all 7 slots → xy, then match decoded positions to GT
+    # by Hungarian. This tests whether position info is in the slots at all.
+
+    # Train decoder on frame 0 of all sequences (where we have GT positions)
+    # We know GT pos: all_gt_pos [1000, 40, 3, 2]
+    # We need to figure out which of 7 slots maps to which of 3 objects.
+    # Use cosine similarity between slot centroids and... hmm, slots don't
+    # directly encode position.
+
+    # Better approach: train on ALL 7 slots with a regression target.
+    # For each slot, the target is the centroid of its attention mask in pixel space.
+    # But we don't have attention masks cached.
+
+    # Simplest approach that works: re-encode a batch, get attention masks,
+    # compute slot centroids, use those as training targets.
+    ae.to(device)
+    ae.eval()
+
+    # Use 200 frames to train decoder, 50 to validate
+    n_dec_frames = 250
+    dec_slots_list = []
+    dec_pos_list = []
+
+    with torch.no_grad():
+        for si in range(50):  # 50 sequences × 5 frames each
+            objects, obj_textures, bg_color = make_scene(rng_seed=80000 + si)
+            seq_frames, gt_pos = render_sequence(
+                objects, obj_textures, bg_color, 5)
+            frames_t = torch.tensor(seq_frames, dtype=torch.float32).to(device)
+            slots, _ = ae.encode(frames_t)  # [5, 7, 64]
+            _, alpha = ae.decode(slots)      # alpha: [5, 7, 256]
+
+            # Compute slot centroids from attention masks
+            # alpha: [5, 7, 256] — 256 = 16×16 patches
+            n_p = 16
+            grid_y = torch.arange(n_p, device=device).float() / (n_p - 1)
+            grid_x = torch.arange(n_p, device=device).float() / (n_p - 1)
+            gy, gx = torch.meshgrid(grid_y, grid_x, indexing='ij')
+            gx_flat = gx.reshape(-1)  # [256]
+            gy_flat = gy.reshape(-1)
+
+            for fi in range(5):
+                for slot_i in range(n_slots):
+                    a = alpha[fi, slot_i]  # [256]
+                    a_sum = a.sum()
+                    if a_sum > 0.01:
+                        cx = (a * gx_flat).sum() / a_sum
+                        cy = (a * gy_flat).sum() / a_sum
+                        dec_slots_list.append(slots[fi, slot_i].cpu())
+                        dec_pos_list.append(torch.tensor([cx.item(), cy.item()]))
+
+    ae.to('cpu')
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    dec_slots_t = torch.stack(dec_slots_list)  # [N, 64]
+    dec_pos_t = torch.stack(dec_pos_list)      # [N, 2]
+    print(f"│    Decoder training samples: {len(dec_slots_t)}", flush=True)
+
+    n_dec_train = int(0.8 * len(dec_slots_t))
+    dec_perm = torch.randperm(len(dec_slots_t))
+    tr_dec_s = dec_slots_t[dec_perm[:n_dec_train]].to(device)
+    tr_dec_p = dec_pos_t[dec_perm[:n_dec_train]].to(device)
+    vl_dec_s = dec_slots_t[dec_perm[n_dec_train:]].to(device)
+    vl_dec_p = dec_pos_t[dec_perm[n_dec_train:]].to(device)
+
+    pos_decoder = nn.Linear(slot_dim, 2).to(device)
+    dec_opt = torch.optim.Adam(pos_decoder.parameters(), lr=1e-3)
+    for epoch in range(100):
+        pos_decoder.train()
+        pred = pos_decoder(tr_dec_s)
+        loss = F.mse_loss(pred, tr_dec_p)
+        dec_opt.zero_grad()
+        loss.backward()
+        dec_opt.step()
+    pos_decoder.eval()
+    with torch.no_grad():
+        vl_pred_pos = pos_decoder(vl_dec_s)
+        dec_err_px = ((vl_pred_pos - vl_dec_p) * S).norm(dim=-1).mean().item()
+    print(f"│    Decoder val error: {dec_err_px:.2f}px", flush=True)
+
+    # 5c. Decode positions from predicted slots vs actual slots
+    # For each val sequence, decode position from predicted vs actual slot[t+1]
+    print(f"│", flush=True)
+    print(f"│  Position decoding from predicted vs actual slots:", flush=True)
+    pos_decoder.to('cpu').eval()
+
+    pred_pos_errors = []
+    actual_pos_errors = []
+
+    with torch.no_grad():
+        for si in range(n_val_seq):
+            for fi in range(n_jepa_frames - 1):
+                actual_slots_fi = matched_slots[n_train_seq + si, fi + 1]  # [7, 64]
+                input_slots = matched_slots[n_train_seq + si, fi].unsqueeze(0).to(device)
+                pred_slots_fi = predictor(input_slots).cpu().squeeze(0)  # [7, 64]
+
+                actual_pos = pos_decoder(actual_slots_fi)  # [7, 2]
+                pred_pos = pos_decoder(pred_slots_fi)      # [7, 2]
+                gt = torch.tensor(all_gt_pos[n_train_seq + si, fi + 1])  # [3, 2]
+
+                # Match decoded positions to GT objects (3 of 7 slots)
+                for oi in range(n_obj):
+                    gt_oi = gt[oi]
+                    # Find closest slot (actual)
+                    a_dists = (actual_pos - gt_oi).norm(dim=-1)
+                    actual_pos_errors.append((a_dists.min() * S).item())
+                    # Find closest slot (predicted)
+                    p_dists = (pred_pos - gt_oi).norm(dim=-1)
+                    pred_pos_errors.append((p_dists.min() * S).item())
+
+    actual_pos_err = np.mean(actual_pos_errors)
+    pred_pos_err = np.mean(pred_pos_errors)
+    print(f"│    From actual slots: {actual_pos_err:.2f}px", flush=True)
+    print(f"│    From predicted slots: {pred_pos_err:.2f}px", flush=True)
+    print(f"└─ Stage 5 done [{time.time()-t5:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 6: Visualization + Final Results
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 6: Visualization", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    elapsed = time.time() - t0
+
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+
+    # 1. Autoregressive rollout: JEPA vs copy
+    ax = axes[0, 0]
+    steps_list = sorted(ar_mse.keys())
+    pred_vals = [ar_mse[s] for s in steps_list]
+    copy_vals = [ar_copy_mse[s] for s in steps_list]
+    ax.plot(steps_list, pred_vals, 'o-', color='#2196F3', linewidth=2, label='JEPA predictor')
+    ax.plot(steps_list, copy_vals, 's--', color='#9E9E9E', linewidth=2, label='Copy baseline')
+    ax.set_xlabel('Prediction horizon (steps)')
+    ax.set_ylabel('MSE (slot features)')
+    ax.set_title('Autoregressive Rollout: JEPA vs Copy')
+    ax.legend()
+    ax.set_xticks(steps_list)
+
+    # 2. Training curve
+    ax = axes[0, 1]
+    ax.axhline(y=copy_mse, color='#9E9E9E', linestyle='--', label=f'Copy baseline ({copy_mse:.6f})')
+    ax.axhline(y=best_val_mse, color='#2196F3', linestyle='-',
+               label=f'Best JEPA ({best_val_mse:.6f})')
+    ax.set_title(f'1-Step Prediction: {improvement:+.1f}% vs Copy')
+    ax.set_ylabel('MSE')
+    ax.legend()
+
+    # 3. Slot similarity before/after matching
+    ax = axes[0, 2]
+    labels = ['Raw SA', 'Hungarian\nMatched']
+    vals = [raw_sim, consec_sim]
+    bars = ax.bar(labels, vals, color=['#FF9800', '#4CAF50'], edgecolor='black', linewidth=0.5)
+    for bar, val in zip(bars, vals):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.005,
+                f'{val:.4f}', ha='center', fontsize=10)
+    ax.set_ylabel('Cosine Similarity')
+    ax.set_title('Consecutive Frame Slot Consistency')
+    ax.set_ylim(0, 1.1)
+
+    # 4. Position decoding quality
+    ax = axes[1, 0]
+    labels = ['Actual\nslots', 'Predicted\nslots']
+    vals = [actual_pos_err, pred_pos_err]
+    colors = ['#4CAF50', '#2196F3']
+    bars = ax.bar(labels, vals, color=colors, edgecolor='black', linewidth=0.5)
+    for bar, val in zip(bars, vals):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.2,
+                f'{val:.2f}px', ha='center', fontsize=10)
+    ax.set_ylabel('Position Error (px)')
+    ax.set_title('Position Decoding from Slots')
+
+    # 5. Per-step improvement bar chart
+    ax = axes[1, 1]
+    improvements = [(1 - ar_mse[s] / ar_copy_mse[s]) * 100 for s in steps_list]
+    bars = ax.bar([str(s) for s in steps_list], improvements,
+                  color='#2196F3', edgecolor='black', linewidth=0.5)
+    for bar, val in zip(bars, improvements):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                f'{val:+.1f}%', ha='center', fontsize=10)
+    ax.axhline(y=15, color='red', linestyle='--', alpha=0.5, label='15% target')
+    ax.set_xlabel('Prediction horizon (steps)')
+    ax.set_ylabel('Improvement over copy (%)')
+    ax.set_title('JEPA Improvement by Horizon')
+    ax.legend()
+
+    # 6. Slot feature variance over time (are slots dynamic?)
+    ax = axes[1, 2]
+    slot_change = (matched_slots[:, 1:] - matched_slots[:, :-1]).norm(dim=-1).mean(dim=(0, 2))
+    ax.plot(range(1, n_jepa_frames), slot_change.numpy(), color='#2196F3', linewidth=2)
+    ax.set_xlabel('Frame')
+    ax.set_ylabel('Mean slot change (L2)')
+    ax.set_title('Slot Dynamics Over Time')
+
+    fig.suptitle(f'Phase 39: Visual JEPA — DINOv2 Slot Prediction\n'
+                 f'1-step: {improvement:+.1f}% vs copy, '
+                 f'pos decode: actual={actual_pos_err:.1f}px pred={pred_pos_err:.1f}px',
+                 fontsize=14, fontweight='bold')
+
+    plt.tight_layout()
+    plt.savefig('results/phase39_visual_jepa.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"│  Saved results/phase39_visual_jepa.png", flush=True)
+
+    # Verdict
+    one_step_imp = (1 - best_val_mse / copy_mse) * 100
+    print(f"\n{'=' * 70}", flush=True)
+    if one_step_imp > 15:
+        verdict = "SUCCESS"
+    elif one_step_imp > 5:
+        verdict = "PARTIAL"
+    else:
+        verdict = "FAIL"
+    print(f"VERDICT: {verdict}", flush=True)
+    print(f"  1-step improvement:   {one_step_imp:+.1f}% (target >15%)", flush=True)
+    print(f"  Copy baseline MSE:    {copy_mse:.6f}", flush=True)
+    print(f"  Best JEPA MSE:        {best_val_mse:.6f}", flush=True)
+    print(f"  Position decode:      actual={actual_pos_err:.2f}px, pred={pred_pos_err:.2f}px", flush=True)
+    print(f"  Hungarian matching:   raw_sim={raw_sim:.4f}, matched_sim={consec_sim:.4f}", flush=True)
+    for steps in ar_steps:
+        imp = (1 - ar_mse[steps] / ar_copy_mse[steps]) * 100
+        print(f"  {steps}-step rollout:     pred={ar_mse[steps]:.6f}, "
+              f"copy={ar_copy_mse[steps]:.6f}, imp={imp:+.1f}%", flush=True)
+    print(f"  Total time:           {elapsed:.0f}s", flush=True)
+    print(f"{'=' * 70}", flush=True)
+
+
 def run_phase38d_more_observation():
     """Phase 38d: More observation + longer training.
     80 frames instead of 40, 400 comm epochs instead of 200.
