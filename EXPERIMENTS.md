@@ -1114,4 +1114,13 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
   - Ran in 55s (no DINOv2), but the fundamental assumption was wrong
   - Key insight: need to constrain bg generation to be genuinely desaturated, or use a different fg detection strategy
 
-**Next steps:** (1) Fix bg generation: use grayscale or low-saturation bg (HSV with S<0.1), then saturation thresholding will work, (2) Or: directly match object hues against known palette without fg detection (objects have well-separated vivid hues, bg is random — cluster all saturated pixels by hue regardless of fg/bg).
+- **35c: Corner BG subtraction SUCCESS** — bg_color = mean of 4 corner 2×2 patches, FG = ||RGB - bg|| > 0.15
+  - FG coverage: 18.5% (correct — only objects are foreground)
+  - Count discovery: **99.0%**, position error: **0.48px**, communication: **89.5%**
+  - Per-count: N=2: 98.1%, N=3: 81.0%, N=4: 91.2%, N=5: 85.4%
+  - Binary emergent language: Token 1="light" (P=0.07), Token 2="heavy" (P=0.93)
+  - Direct classifier: 94.2%. Feature separation excellent (avg_dv_ratio 820x!)
+  - 59 seconds total. No neural network for perception. Pure classical CV.
+  - Key insight: uniform bg means corners always show bg color. Simple L2 distance cleanly separates fg/bg.
+
+**Next steps:** (1) Multi-agent version: two agents with different viewpoints communicate about mass through discrete bottleneck, (2) Non-uniform backgrounds (textured bg, gradients) — will need learned fg detection.
