@@ -1242,3 +1242,27 @@ Position decoder: Linear(64→2), trained on slot→(cx,cy) pairs. Decode error:
 - Mass inference: 99.5% (unchanged)
 
 **Key insight:** CEM provides zero benefit over random shooting in this setting. The 2D force space (fx, fy ∈ [-0.5, 0.5]) is low-dimensional enough that 128 random samples already provide dense coverage. The bottleneck is not search quality but JEPA prediction accuracy over K=5 autoregressive steps — the oracle planner (which uses GT physics) also only achieves 52%. To improve planning success, need either: (a) better JEPA (lower rollout error), (b) shorter rollout horizon, or (c) larger target threshold.
+
+### Phase 36e: Multi-Step Planning
+**Date:** Feb 22 | **Duration:** 75s | **Verdict:** PARTIAL
+
+**Setup:** CEM over K=5 force sequences (10D search space: 5 steps × 2 forces). Each step applies a different force to the target object. 256 candidates, 32 elite, 3 CEM rounds. Oracle also uses multi-step CEM with GT physics. Same JEPA, mass classifier, 200 test scenarios with same seeds.
+
+**Results:**
+| Planner | Success (10px) | Mean dist | Median dist |
+|---|---|---|---|
+| Multi-step CEM | **57.5%** | 10.21px | 9.24px |
+| Single-step shooting | 51.5% | 11.87px | 9.87px |
+| Oracle multi-step | **76.0%** | 7.56px | 6.67px |
+| Random | 13.0% | 22.95px | 23.07px |
+
+- Multi-step improvement over single-step: **+6.0pp** (57.5% vs 51.5%)
+- Oracle hits 76.0% (target >75%) — proves multi-step planning is powerful with accurate forward model
+- JEPA-based planner captures 57.5/76.0 = 76% of oracle's capability
+
+**Key insights:**
+- Multi-step forces give the planner corrective ability — can steer mid-trajectory, not just initial impulse
+- The 10D search space benefits from CEM (unlike 2D in 36d where random was sufficient)
+- Oracle ceiling jumped from 52% (single-step) to 76% (multi-step) — confirms multi-step planning is fundamentally more capable
+- JEPA gap to oracle: 18.5pp (57.5% vs 76.0%). The JEPA's autoregressive rollout accumulates error, but still captures most of the benefit
+- Missed 65% target by 7.5pp — could likely close with more candidates, more CEM rounds, or better JEPA training
