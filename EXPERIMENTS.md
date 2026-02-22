@@ -1150,3 +1150,29 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 **Key insight:** The conditioned model specifically learns the effect of force on the targeted object, with per-object improvement of 65-73%. The overall improvement (7.9%) is modest because only 7.8% of frames have actions, but on those specific frames the improvement is dramatic (45%).
 
 **Next steps:** (1) Multi-agent communication with action conditioning, (2) Test with pixel-level slot representations (not just state projections).
+
+### Phase 36b: Goal-Directed Planning via Shooting
+**Date:** Feb 22 | **Duration:** ~25min | **Verdict:** PARTIAL
+
+**Setup:** Use trained JEPA as forward model for planning. Given a target object and target position, search over 64 candidate force actions, score each by JEPA-predicted final position after K=5 autoregressive rollout steps. Compare three planners:
+- **JEPA planner:** Score candidates using JEPA rollout + position decoder
+- **Random planner:** Pick random force (no scoring)
+- **Oracle planner:** Score candidates using ground-truth physics sim
+
+Position decoder: Linear(64→2), trained on slot→(cx,cy) pairs. Decode error: 0.000px (trivial since projection is linear orthogonal). 500 test scenarios, force range ±0.3 (normalized), success threshold 5px.
+
+**Results:**
+| Planner | Success (5px) | Mean dist | Median dist |
+|---|---|---|---|
+| JEPA | 9.4% | 15.95px | 14.16px |
+| Random | 3.0% | 23.82px | 23.80px |
+| Oracle | 33.8% | 11.30px | 9.80px |
+
+- JEPA is **3.1x better than random** on success rate
+- JEPA mean distance **33% lower** than random (15.95 vs 23.82px)
+- Oracle only 33.8% — the 5px threshold is tight for K=5 steps with moderate forces
+- JEPA/Oracle ratio: 28% (captures ~1/4 of oracle's planning ability)
+
+**Why not SUCCESS:** Oracle success only 33.8% (target was >80%), indicating the task parameters make precise positioning hard. With larger force range or more rollout steps, absolute numbers would improve. The JEPA ranking is informative (3x random) but the search space (64 random candidates) is sparse.
+
+**Key insight:** The JEPA forward model produces useful rankings for planning — it consistently outperforms random search. But random shooting with 64 candidates is a weak optimization method. Gradient-based planning or CEM would likely extract more value from the learned model.

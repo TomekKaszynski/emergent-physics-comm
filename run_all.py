@@ -15793,6 +15793,608 @@ def run_phase33c_comparative_comm():
     print(f"{'=' * 70}", flush=True)
 
 
+def run_phase36b_planning():
+    """Phase 36b: Goal-directed planning via action-conditioned JEPA.
+
+    Retrain JEPA from 36a (no checkpoint saved), train position decoder,
+    then plan actions via shooting: search 64 candidate forces, pick the one
+    whose K=5 step JEPA rollout lands closest to target position.
+    Compare: JEPA planner vs random vs oracle (GT physics).
+    Target: JEPA >50% success, random <20%, oracle >80%.
+    """
+    import random
+    import math
+    import copy
+
+    print("=" * 70, flush=True)
+    print("PHASE 36b: Goal-Directed Planning via Action-Conditioned JEPA", flush=True)
+    print("  retrain JEPA → position decoder → shooting-based planning", flush=True)
+    print("=" * 70, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    n_obj = 3
+    slot_dim = 64
+    S = 64
+    vmax = 10.0
+    K = 5  # rollout steps
+    n_candidates = 64
+    force_range = 0.3  # normalized (actual = force_range * vmax = 3.0)
+
+    # ══════════════════════════════════════════════════════════
+    # Physics helper (reused for data gen, oracle, and execution)
+    # ══════════════════════════════════════════════════════════
+    def physics_step(objects):
+        """One step: collision detection + position update + wall bounce."""
+        n = len(objects)
+        for i in range(n):
+            for j in range(i + 1, n):
+                oi_o, oj_o = objects[i], objects[j]
+                dx_c = oj_o['cx'] - oi_o['cx']
+                dy_c = oj_o['cy'] - oi_o['cy']
+                dist = math.hypot(dx_c, dy_c)
+                min_dist = oi_o['r'] + oj_o['r']
+                if dist < min_dist and dist > 0.1:
+                    nx, ny = dx_c / dist, dy_c / dist
+                    dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                          (oi_o['vy'] - oj_o['vy']) * ny
+                    if dvn > 0:
+                        m1, m2 = oi_o['mass'], oj_o['mass']
+                        imp = 2 * dvn / (m1 + m2)
+                        oi_o['vx'] -= imp * m2 * nx
+                        oi_o['vy'] -= imp * m2 * ny
+                        oj_o['vx'] += imp * m1 * nx
+                        oj_o['vy'] += imp * m1 * ny
+                        overlap = min_dist - dist
+                        oi_o['cx'] -= overlap * nx * 0.5
+                        oi_o['cy'] -= overlap * ny * 0.5
+                        oj_o['cx'] += overlap * nx * 0.5
+                        oj_o['cy'] += overlap * ny * 0.5
+        for obj in objects:
+            obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+            r = obj['r']
+            if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+            if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+            if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+            if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+    def objects_to_state(objects):
+        """Convert object dicts to [n_obj, 6] state array."""
+        state = np.zeros((len(objects), 6), dtype=np.float32)
+        for oi, obj in enumerate(objects):
+            state[oi] = [
+                obj['cx'] / S, obj['cy'] / S,
+                obj['vx'] / vmax, obj['vy'] / vmax,
+                obj['r'] / S, obj['mass'] / 3.0,
+            ]
+        return state
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 1: Generate data + Train JEPA (reproduce 36a)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 1: Generate intervention data + Train JEPA", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t1 = time.time()
+
+    n_sequences = 2000
+    n_frames = 40
+
+    all_states = []
+    all_actions = []
+
+    random.seed(42)
+    np.random.seed(42)
+    for seq_i in range(n_sequences):
+        masses = [1.0, 1.0, 1.0]
+        heavy_idx = random.randint(0, n_obj - 1)
+        masses[heavy_idx] = 3.0
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(6, 9)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-5.0, 5.0)
+            vy = random.uniform(-5.0, 5.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi],
+            })
+
+        n_interventions = random.randint(2, 4)
+        intervention_frames = sorted(random.sample(range(5, n_frames - 5), n_interventions))
+        intervention_plan = {}
+        for fi in intervention_frames:
+            target_obj = random.randint(0, n_obj - 1)
+            mag = random.uniform(2.0, 6.0)
+            angle = random.uniform(0, 2 * math.pi)
+            intervention_plan[fi] = (target_obj, mag * math.cos(angle), mag * math.sin(angle))
+
+        seq_states = []
+        seq_actions = {}
+
+        for fi in range(n_frames):
+            seq_states.append(objects_to_state(objects))
+
+            if fi in intervention_plan:
+                target_obj, fx, fy = intervention_plan[fi]
+                objects[target_obj]['vx'] += fx
+                objects[target_obj]['vy'] += fy
+                seq_actions[fi] = (target_obj, fx / vmax, fy / vmax)
+
+            physics_step(objects)
+
+        all_states.append(np.array(seq_states))
+        all_actions.append(seq_actions)
+
+        if (seq_i + 1) % 500 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    # Build transition pairs
+    states_t_list = []
+    states_tp1_list = []
+    actions_list = []
+    for seq_i in range(n_sequences):
+        states = all_states[seq_i]
+        actions = all_actions[seq_i]
+        for fi in range(n_frames - 1):
+            states_t_list.append(states[fi])
+            states_tp1_list.append(states[fi + 1])
+            if fi in actions:
+                obj_idx, fx, fy = actions[fi]
+                action_vec = np.zeros(n_obj + 2, dtype=np.float32)
+                action_vec[obj_idx] = 1.0
+                action_vec[n_obj] = fx
+                action_vec[n_obj + 1] = fy
+                actions_list.append(action_vec)
+            else:
+                actions_list.append(np.zeros(n_obj + 2, dtype=np.float32))
+
+    states_t_np = np.array(states_t_list)
+    states_tp1_np = np.array(states_tp1_list)
+    actions_np = np.array(actions_list)
+
+    # Frozen orthogonal projection (same seed as 36a)
+    torch.manual_seed(42)
+    state_proj = nn.Linear(6, slot_dim, bias=False)
+    nn.init.orthogonal_(state_proj.weight)
+    state_proj = state_proj.to(device)
+    for p in state_proj.parameters():
+        p.requires_grad = False
+
+    states_t_raw = torch.tensor(states_t_np, dtype=torch.float32).to(device)
+    states_tp1_raw = torch.tensor(states_tp1_np, dtype=torch.float32).to(device)
+    with torch.no_grad():
+        slots_t = state_proj(states_t_raw)
+        slots_tp1 = state_proj(states_tp1_raw)
+    actions_t = torch.tensor(actions_np, dtype=torch.float32).to(device)
+
+    N = len(states_t_np)
+    n_train = int(0.8 * N)
+    perm = torch.randperm(N)
+    tr_slots_t = slots_t[perm[:n_train]]
+    tr_slots_tp1 = slots_tp1[perm[:n_train]]
+    tr_actions = actions_t[perm[:n_train]]
+
+    # Train JEPA
+    from world_model import ActionConditionedPredictor
+
+    torch.manual_seed(42)
+    jepa = ActionConditionedPredictor(
+        n_slots=n_obj, slot_dim=slot_dim, action_dim=64, hidden_dim=256).to(device)
+    jepa_opt = torch.optim.Adam(jepa.parameters(), lr=3e-4)
+
+    jepa_params = sum(p.numel() for p in jepa.parameters())
+    print(f"│  JEPA: {jepa_params:,} params", flush=True)
+    print(f"│  Training: 100 epochs, {N} pairs ({n_train} train)", flush=True)
+
+    batch_size = 256
+    for epoch in range(1, 101):
+        jepa.train()
+        ep_perm = torch.randperm(n_train, device=device)
+        ep_loss = 0.0
+        for start in range(0, n_train, batch_size):
+            idx = ep_perm[start:start + batch_size]
+            pred = jepa(tr_slots_t[idx], tr_actions[idx])
+            loss = F.mse_loss(pred, tr_slots_tp1[idx])
+            jepa_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(jepa.parameters(), 1.0)
+            jepa_opt.step()
+            ep_loss += loss.item() * len(idx)
+        if epoch % 25 == 0 or epoch == 1:
+            print(f"│    JEPA Epoch {epoch:3d}: loss={ep_loss/n_train:.6f}", flush=True)
+
+    print(f"└─ Stage 1 done [{time.time()-t1:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 2: Train position decoder
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 2: Train Position Decoder (slot → xy)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t2 = time.time()
+
+    # GT positions: first 2 dims of state vector (cx/S, cy/S)
+    gt_pos = states_t_raw[:, :, :2]  # [N, n_obj, 2]
+    all_slots_flat = slots_t.reshape(-1, slot_dim)  # [N*n_obj, 64]
+    all_pos_flat = gt_pos.reshape(-1, 2)            # [N*n_obj, 2]
+
+    n_dec_train = int(0.8 * len(all_slots_flat))
+    dec_perm = torch.randperm(len(all_slots_flat))
+    tr_dec_slots = all_slots_flat[dec_perm[:n_dec_train]]
+    tr_dec_pos = all_pos_flat[dec_perm[:n_dec_train]]
+    vl_dec_slots = all_slots_flat[dec_perm[n_dec_train:]]
+    vl_dec_pos = all_pos_flat[dec_perm[n_dec_train:]]
+
+    pos_decoder = nn.Linear(slot_dim, 2).to(device)
+    dec_opt = torch.optim.Adam(pos_decoder.parameters(), lr=1e-3)
+
+    for epoch in range(1, 51):
+        pos_decoder.train()
+        ep_perm = torch.randperm(n_dec_train, device=device)
+        for start in range(0, n_dec_train, 1024):
+            idx = ep_perm[start:start + 1024]
+            pred = pos_decoder(tr_dec_slots[idx])
+            loss = F.mse_loss(pred, tr_dec_pos[idx])
+            dec_opt.zero_grad()
+            loss.backward()
+            dec_opt.step()
+
+    pos_decoder.eval()
+    with torch.no_grad():
+        vl_pred = pos_decoder(vl_dec_slots)
+        dec_err = ((vl_pred - vl_dec_pos) * S).norm(dim=-1)
+        dec_mean = dec_err.mean().item()
+        dec_p95 = torch.quantile(dec_err, 0.95).item()
+    print(f"│  Decoder val error: mean={dec_mean:.3f}px, 95th={dec_p95:.3f}px", flush=True)
+    print(f"└─ Stage 2 done [{time.time()-t2:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 3: Generate 500 test scenarios
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 3: Generate 500 Test Scenarios", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t3 = time.time()
+
+    n_scenarios = 500
+    random.seed(999)  # different seed from training data
+    np.random.seed(999)
+
+    scenarios = []
+    for si in range(n_scenarios):
+        masses = [1.0, 1.0, 1.0]
+        heavy_idx = random.randint(0, n_obj - 1)
+        masses[heavy_idx] = 3.0
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(6, 9)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-5.0, 5.0)
+            vy = random.uniform(-5.0, 5.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi],
+            })
+
+        target_obj = random.randint(0, n_obj - 1)
+        target_pos = np.array([
+            random.uniform(0.2, 0.8),
+            random.uniform(0.2, 0.8),
+        ], dtype=np.float32)
+
+        scenarios.append({
+            'objects': copy.deepcopy(objects),
+            'target_obj': target_obj,
+            'target_pos': target_pos,
+        })
+
+    print(f"│  Generated {n_scenarios} scenarios", flush=True)
+    print(f"└─ Stage 3 done [{time.time()-t3:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 4: Planning via shooting
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 4: Planning (JEPA vs Random vs Oracle)", flush=True)
+    print(f"  {n_candidates} candidates, K={K} rollout steps, force_range={force_range}", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t4 = time.time()
+
+    jepa.eval()
+    pos_decoder.eval()
+
+    zero_action = torch.zeros(1, n_obj + 2, device=device)
+
+    jepa_dists = []
+    random_dists = []
+    oracle_dists = []
+    jepa_scores_vs_actual = []  # (jepa_score, actual_dist) for correlation
+
+    for si in range(n_scenarios):
+        scen = scenarios[si]
+        target_obj = scen['target_obj']
+        target_pos = scen['target_pos']
+        init_objects = scen['objects']
+
+        # Generate candidate forces
+        cand_forces = []
+        for ci in range(n_candidates):
+            fx = random.uniform(-force_range, force_range)
+            fy = random.uniform(-force_range, force_range)
+            cand_forces.append((fx, fy))
+
+        # ── JEPA planner: score all candidates ──
+        init_state = objects_to_state(init_objects)  # [n_obj, 6]
+        init_slots = state_proj(
+            torch.tensor(init_state, dtype=torch.float32).unsqueeze(0).to(device))  # [1, 3, 64]
+
+        best_jepa_score = -float('inf')
+        best_jepa_idx = 0
+
+        with torch.no_grad():
+            # Batch all candidates
+            # Build action tensors for step 1
+            cand_actions = torch.zeros(n_candidates, n_obj + 2, device=device)
+            for ci, (fx, fy) in enumerate(cand_forces):
+                cand_actions[ci, target_obj] = 1.0
+                cand_actions[ci, n_obj] = fx
+                cand_actions[ci, n_obj + 1] = fy
+
+            # Rollout K steps
+            slots_cur = init_slots.expand(n_candidates, -1, -1).clone()  # [64, 3, 64]
+
+            for step in range(K):
+                if step == 0:
+                    slots_cur = jepa(slots_cur, cand_actions)
+                else:
+                    slots_cur = jepa(slots_cur, zero_action.expand(n_candidates, -1))
+
+            # Decode target object position
+            target_slots = slots_cur[:, target_obj, :]  # [64, 64]
+            pred_pos = pos_decoder(target_slots)  # [64, 2]
+            target_t = torch.tensor(target_pos, dtype=torch.float32, device=device)
+            scores = -((pred_pos - target_t) ** 2).sum(dim=-1)  # [64]
+
+            best_jepa_idx = scores.argmax().item()
+            best_jepa_score = scores[best_jepa_idx].item()
+
+        # ── Oracle planner: score via GT physics ──
+        best_oracle_dist = float('inf')
+        best_oracle_idx = 0
+        oracle_final_dists = []
+
+        for ci, (fx, fy) in enumerate(cand_forces):
+            test_objs = copy.deepcopy(init_objects)
+            # Apply force
+            test_objs[target_obj]['vx'] += fx * vmax
+            test_objs[target_obj]['vy'] += fy * vmax
+            for step in range(K):
+                physics_step(test_objs)
+            final_x = test_objs[target_obj]['cx'] / S
+            final_y = test_objs[target_obj]['cy'] / S
+            dist = math.hypot(final_x - target_pos[0], final_y - target_pos[1])
+            oracle_final_dists.append(dist)
+            if dist < best_oracle_dist:
+                best_oracle_dist = dist
+                best_oracle_idx = ci
+
+        # ── Execute chosen actions in GT physics ──
+        # JEPA's choice
+        jepa_fx, jepa_fy = cand_forces[best_jepa_idx]
+        jepa_objs = copy.deepcopy(init_objects)
+        jepa_objs[target_obj]['vx'] += jepa_fx * vmax
+        jepa_objs[target_obj]['vy'] += jepa_fy * vmax
+        for step in range(K):
+            physics_step(jepa_objs)
+        jepa_final_x = jepa_objs[target_obj]['cx'] / S
+        jepa_final_y = jepa_objs[target_obj]['cy'] / S
+        jepa_dist = math.hypot(jepa_final_x - target_pos[0], jepa_final_y - target_pos[1]) * S
+        jepa_dists.append(jepa_dist)
+
+        # Random choice (first candidate, effectively random since order is random)
+        rand_fx, rand_fy = cand_forces[0]
+        rand_objs = copy.deepcopy(init_objects)
+        rand_objs[target_obj]['vx'] += rand_fx * vmax
+        rand_objs[target_obj]['vy'] += rand_fy * vmax
+        for step in range(K):
+            physics_step(rand_objs)
+        rand_final_x = rand_objs[target_obj]['cx'] / S
+        rand_final_y = rand_objs[target_obj]['cy'] / S
+        rand_dist = math.hypot(rand_final_x - target_pos[0], rand_final_y - target_pos[1]) * S
+        random_dists.append(rand_dist)
+
+        # Oracle choice
+        oracle_dist = best_oracle_dist * S
+        oracle_dists.append(oracle_dist)
+
+        # Track JEPA score vs actual outcome for correlation
+        jepa_scores_vs_actual.append((best_jepa_score, jepa_dist))
+
+        if (si + 1) % 100 == 0:
+            j_succ = sum(1 for d in jepa_dists if d < 5) / len(jepa_dists) * 100
+            r_succ = sum(1 for d in random_dists if d < 5) / len(random_dists) * 100
+            o_succ = sum(1 for d in oracle_dists if d < 5) / len(oracle_dists) * 100
+            print(f"│    {si+1}/{n_scenarios}: JEPA={j_succ:.0f}%, Random={r_succ:.0f}%, "
+                  f"Oracle={o_succ:.0f}%", flush=True)
+
+    print(f"└─ Stage 4 done [{time.time()-t4:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 5: Evaluation + Visualization
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 5: Final Evaluation", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    jepa_dists_np = np.array(jepa_dists)
+    random_dists_np = np.array(random_dists)
+    oracle_dists_np = np.array(oracle_dists)
+
+    success_thresh = 5.0  # pixels
+    jepa_success = (jepa_dists_np < success_thresh).mean() * 100
+    random_success = (random_dists_np < success_thresh).mean() * 100
+    oracle_success = (oracle_dists_np < success_thresh).mean() * 100
+
+    print(f"\n│  Success rate (within {success_thresh}px):", flush=True)
+    print(f"│    JEPA planner:   {jepa_success:.1f}%", flush=True)
+    print(f"│    Random:         {random_success:.1f}%", flush=True)
+    print(f"│    Oracle:         {oracle_success:.1f}%", flush=True)
+
+    print(f"\n│  Mean distance to target (px):", flush=True)
+    print(f"│    JEPA planner:   {jepa_dists_np.mean():.2f}px (median {np.median(jepa_dists_np):.2f})", flush=True)
+    print(f"│    Random:         {random_dists_np.mean():.2f}px (median {np.median(random_dists_np):.2f})", flush=True)
+    print(f"│    Oracle:         {oracle_dists_np.mean():.2f}px (median {np.median(oracle_dists_np):.2f})", flush=True)
+
+    # JEPA rank correlation: does JEPA score predict actual outcome?
+    jepa_sc = [x[0] for x in jepa_scores_vs_actual]
+    jepa_ac = [x[1] for x in jepa_scores_vs_actual]
+
+    elapsed = time.time() - t0
+    print(f"\n│  Position decoder error: {dec_mean:.3f}px", flush=True)
+    print(f"│  Total time: {elapsed:.0f}s", flush=True)
+
+    # ── Visualization ──
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle('Phase 36b: Goal-Directed Planning via Action-Conditioned JEPA\n'
+                 f'{n_candidates} candidates, K={K} rollout steps, force ∈ [-{force_range}, {force_range}]',
+                 fontsize=13, fontweight='bold')
+
+    # Panel 1: Sample scenario
+    ax = axes[0, 0]
+    scen0 = scenarios[0]
+    for oi, obj in enumerate(scen0['objects']):
+        color = 'red' if oi == scen0['target_obj'] else 'blue'
+        circle = plt.Circle((obj['cx'], obj['cy']), obj['r'],
+                            fill=False, color=color, linewidth=2)
+        ax.add_patch(circle)
+        ax.text(obj['cx'], obj['cy'], str(oi), ha='center', va='center',
+                fontsize=10, fontweight='bold', color=color)
+    tp = scen0['target_pos']
+    ax.plot(tp[0] * S, tp[1] * S, 'x', color='green', markersize=15, markeredgewidth=3)
+    ax.set_xlim(0, S)
+    ax.set_ylim(0, S)
+    ax.set_aspect('equal')
+    ax.set_title(f'Sample Scenario (target: obj {scen0["target_obj"]})')
+    ax.invert_yaxis()
+
+    # Panel 2: Success rate bar chart
+    ax = axes[0, 1]
+    planners = ['JEPA', 'Random', 'Oracle']
+    success_rates = [jepa_success, random_success, oracle_success]
+    colors = ['steelblue', 'lightcoral', 'seagreen']
+    bars = ax.bar(planners, success_rates, color=colors, alpha=0.8, edgecolor='black')
+    ax.axhline(y=50, color='blue', linestyle='--', alpha=0.5, label='JEPA target (50%)')
+    ax.set_ylabel('Success Rate (%)')
+    ax.set_title(f'Success Rate (within {success_thresh}px)')
+    ax.set_ylim(0, 105)
+    for bar, val in zip(bars, success_rates):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                f'{val:.1f}%', ha='center', va='bottom', fontsize=12, fontweight='bold')
+    ax.legend()
+
+    # Panel 3: Distance distributions
+    ax = axes[0, 2]
+    bins = np.linspace(0, min(40, max(np.percentile(random_dists_np, 98), 30)), 40)
+    ax.hist(oracle_dists_np, bins=bins, alpha=0.5, label='Oracle', color='seagreen')
+    ax.hist(jepa_dists_np, bins=bins, alpha=0.5, label='JEPA', color='steelblue')
+    ax.hist(random_dists_np, bins=bins, alpha=0.5, label='Random', color='lightcoral')
+    ax.axvline(x=success_thresh, color='red', linestyle='--', label=f'{success_thresh}px threshold')
+    ax.set_xlabel('Distance to target (px)')
+    ax.set_ylabel('Count')
+    ax.set_title('Distance Distribution')
+    ax.legend(fontsize=8)
+
+    # Panel 4: CDF
+    ax = axes[1, 0]
+    for dists, label, color in [
+        (oracle_dists_np, 'Oracle', 'seagreen'),
+        (jepa_dists_np, 'JEPA', 'steelblue'),
+        (random_dists_np, 'Random', 'lightcoral'),
+    ]:
+        sorted_d = np.sort(dists)
+        cdf = np.arange(1, len(sorted_d) + 1) / len(sorted_d)
+        ax.plot(sorted_d, cdf * 100, label=label, color=color, linewidth=2)
+    ax.axvline(x=success_thresh, color='red', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Distance to target (px)')
+    ax.set_ylabel('Cumulative %')
+    ax.set_title('CDF of Distance to Target')
+    ax.legend()
+    ax.set_xlim(0, 30)
+
+    # Panel 5: Mean distance bar chart
+    ax = axes[1, 1]
+    means = [jepa_dists_np.mean(), random_dists_np.mean(), oracle_dists_np.mean()]
+    medians = [np.median(jepa_dists_np), np.median(random_dists_np), np.median(oracle_dists_np)]
+    x = np.arange(len(planners))
+    w = 0.3
+    ax.bar(x - w/2, means, w, label='Mean', color='steelblue', alpha=0.7)
+    ax.bar(x + w/2, medians, w, label='Median', color='orange', alpha=0.7)
+    ax.set_xticks(x)
+    ax.set_xticklabels(planners)
+    ax.set_ylabel('Distance to target (px)')
+    ax.set_title('Mean vs Median Distance')
+    ax.legend()
+    for i, (m, md) in enumerate(zip(means, medians)):
+        ax.text(x[i] - w/2, m + 0.3, f'{m:.1f}', ha='center', fontsize=9)
+        ax.text(x[i] + w/2, md + 0.3, f'{md:.1f}', ha='center', fontsize=9)
+
+    # Panel 6: Decoder accuracy
+    ax = axes[1, 2]
+    with torch.no_grad():
+        dec_errs_all = ((pos_decoder(vl_dec_slots) - vl_dec_pos) * S).norm(dim=-1).cpu().numpy()
+    ax.hist(dec_errs_all, bins=50, color='steelblue', alpha=0.8, edgecolor='black', linewidth=0.3)
+    ax.axvline(x=dec_mean, color='red', linestyle='--', linewidth=2,
+               label=f'Mean={dec_mean:.3f}px')
+    ax.set_xlabel('Decoder error (px)')
+    ax.set_ylabel('Count')
+    ax.set_title(f'Position Decoder Accuracy (mean={dec_mean:.3f}px)')
+    ax.legend()
+
+    plt.tight_layout()
+    plt.savefig('results/phase36b_planning.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\n│  Saved results/phase36b_planning.png", flush=True)
+
+    # Verdict
+    print(f"\n{'=' * 70}", flush=True)
+    if jepa_success > 50 and jepa_success > random_success * 2:
+        verdict = "SUCCESS"
+    elif jepa_success > 30 and jepa_success > random_success * 2:
+        verdict = "PARTIAL"
+    else:
+        verdict = "FAIL"
+    print(f"VERDICT: {verdict}", flush=True)
+    print(f"  JEPA success:   {jepa_success:.1f}% (target >50%)", flush=True)
+    print(f"  Random success: {random_success:.1f}% (expect <20%)", flush=True)
+    print(f"  Oracle success: {oracle_success:.1f}% (expect >80%)", flush=True)
+    print(f"  JEPA mean dist: {jepa_dists_np.mean():.2f}px", flush=True)
+    print(f"  Decoder error:  {dec_mean:.3f}px", flush=True)
+    print(f"{'=' * 70}", flush=True)
+
+
 def run_phase36a_action_jepa():
     """Phase 36a: Action-conditioned JEPA in slot space.
 
