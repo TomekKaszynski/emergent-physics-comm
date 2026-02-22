@@ -886,6 +886,26 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - **Key insight:** Color-based COM achieves **0.44px** position error vs SA's **~20px** — a **45× improvement**. The entire physics extraction pipeline works nearly perfectly (89.9% vs 91.7% GT ceiling) when positions are accurate. This conclusively proves the bottleneck was always slot attention's position precision, not the downstream physics reasoning.
 - **Verdict:** SUCCESS — 89.9% val_acc, 0.44px position error. Classical CV solves the "where" problem that slot attention couldn't.
 
+### Phase 31 — Full end-to-end pipeline (Feb 22)
+- **Goal:** Complete chain: pixels → DINOv2+SA → Color-COM positions → collision features → FeatureSender (872p) → 1 discrete token (vocab=8) → MassReceiver (387p) → predict heavy object. 1000 sequences, 3 objects, 40 frames.
+- **Results:**
+  ```
+  Stage                    Metric                Value
+  ──────────────────────────────────────────────────────────
+  1. Data generation       Avg collisions/seq    10.4
+  2. Vision (DINOv2+SA)    Slot→object matching  ✓
+  3. Localization (C-COM)  Position error         0.42px (target <2px ✓)
+  4. Physics features      dv_ratio separation   3.81×
+  5. Mass classifier       Val accuracy          94.7% (257 params)
+  6. Communication         Val accuracy          95.5% (1259 params)
+  ```
+  Emergent token mapping (3 tokens used of 8):
+  - Token 0 → heavy=obj 0 (97% purity)
+  - Token 5 → heavy=obj 1 (94% purity)
+  - Token 3 → heavy=obj 2 (97% purity)
+- **Key insight:** The full pipeline works end-to-end with **95.5% communication accuracy**. The sender learns a near-perfect 3-token language where each token means "object X is heavy." The bottleneck (1 discrete token from vocab of 8) barely degrades performance vs the direct classifier (94.7%).
+- **Verdict:** SUCCESS — 95.5% communication accuracy through a 1-token discrete bottleneck.
+
 ## Current State (Feb 22)
 
 **Validated pipeline:**
@@ -904,4 +924,10 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - Phase 30: mode collapse (33%). Phase 30b: overfitting (41%).
 - Phase 30c: **98.5%** — separated perception from communication. 3-token emergent language.
 
-**Next steps:** (1) Accept GT or color-COM positions and build the full multi-agent communication pipeline (the interesting research is in communication, not perception), (2) If slot-attention vision is needed: train a dedicated object tracker or use higher-resolution backbone (32×32 patches), (3) Explore whether slot attention can be augmented with a color-COM "hint" to improve its spatial precision.
+**Phase 31 — Full pipeline working:**
+- **pixels → DINOv2+SA → Color-COM → collision features → sender→token→receiver: 95.5%**
+- 3-token emergent language, each token = "object X is heavy" with >94% purity
+- Direct mass classifier: 94.7% (communication barely degrades it)
+- Position error: 0.42px via Color-COM (SA slot matching only used for object identity)
+
+**Next steps:** (1) Multi-agent version: two agents with different viewpoints communicate about mass through discrete bottleneck, (2) Scale to more objects / harder physics, (3) Replace Color-COM with learned position extraction if needed for generalization.

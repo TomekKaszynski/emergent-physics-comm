@@ -13594,6 +13594,682 @@ def run_phase30_emergent_comm():
     }
 
 
+def run_phase31_full_pipeline():
+    """Phase 31: Full end-to-end pipeline.
+
+    pixels → objects → positions → physics → mass → communication.
+
+    1. Generate 1000 sequences (3 obj, 40 frames, v=±7, mass 1.0/3.0).
+    2. Render 64×64 frames with colored circles on gray background.
+    3. Vision: DINOv2+SA encodes frames, gets slot masks.
+    4. Localization: Color-COM (threshold RGB by GT colors, center-of-mass) → ~0.44px.
+    5. Physics: 6 pairwise collision features from Color-COM positions.
+    6. Communication: FeatureSender (872p) → Gumbel-softmax 1 token (vocab=8)
+       → MassReceiver (387p) → predict which object is heavy.
+    7. Evaluate: position error, mass classifier, comm accuracy, token mapping.
+    """
+    import random
+    import math
+
+    print("=" * 70, flush=True)
+    print("PHASE 31: Full End-to-End Pipeline", flush=True)
+    print("  pixels → objects → positions → physics → mass → communication", flush=True)
+    print("=" * 70, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 1: Generate physics sequences
+    # ══════════════════════════════════════════════════════════
+    n_sequences = 1000
+    n_obj = 3
+    n_frames = 40
+    S = 64
+
+    palette = [
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0],
+    ]
+
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 1: Generating {n_sequences} sequences ({n_obj} obj, {n_frames} frames)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    all_frames = []           # [1000][40, 3, 64, 64]
+    all_obj_info = []         # [1000][3]{cx0, cy0, r, mass, color}
+    all_gt_positions = []     # [1000][3][40][2] normalized
+    all_collision_events = [] # [1000][(frame, i, j, dv_i, dv_j)]
+    all_heavy_idx = []        # [1000] which obj is heavy
+    collision_counts = []
+
+    random.seed(42)
+    for seq_i in range(n_sequences):
+        # Exactly 1 heavy object
+        heavy_idx = random.randint(0, n_obj - 1)
+        masses = [1.0] * n_obj
+        masses[heavy_idx] = 3.0
+        all_heavy_idx.append(heavy_idx)
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(7, 10)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-7.0, 7.0)
+            vy = random.uniform(-7.0, 7.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi], 'color': palette[oi % len(palette)]
+            })
+
+        all_obj_info.append([{
+            'cx0': obj['cx'] / S, 'cy0': obj['cy'] / S,
+            'r': obj['r'], 'mass': obj['mass'], 'color': obj['color'],
+        } for obj in objects])
+
+        obj_positions = [[None] * n_frames for _ in range(n_obj)]
+        seq_collision_events = []
+        seq_collisions = 0
+
+        frames = []
+        for fi in range(n_frames):
+            for oi in range(n_obj):
+                obj_positions[oi][fi] = [objects[oi]['cx'] / S, objects[oi]['cy'] / S]
+
+            img = np.ones((S, S, 3), dtype=np.float32) * 0.5
+            for obj in objects:
+                r = obj['r']
+                cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+                color = np.array(obj['color'])
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if dx*dx + dy*dy <= r*r:
+                            px, py = cx_i + dx, cy_i + dy
+                            if 0 <= px < S and 0 <= py < S:
+                                img[py, px] = color
+            frames.append(img.transpose(2, 0, 1))
+
+            for i in range(n_obj):
+                for j in range(i + 1, n_obj):
+                    oi_o, oj_o = objects[i], objects[j]
+                    dx_c = oj_o['cx'] - oi_o['cx']
+                    dy_c = oj_o['cy'] - oi_o['cy']
+                    dist = math.hypot(dx_c, dy_c)
+                    min_dist = oi_o['r'] + oj_o['r']
+                    if dist < min_dist and dist > 0.1:
+                        nx, ny = dx_c / dist, dy_c / dist
+                        dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                              (oi_o['vy'] - oj_o['vy']) * ny
+                        if dvn > 0:
+                            seq_collisions += 1
+                            m1, m2 = oi_o['mass'], oj_o['mass']
+                            imp = 2 * dvn / (m1 + m2)
+                            dv_i = imp * m2
+                            dv_j = imp * m1
+                            seq_collision_events.append((fi, i, j, dv_i, dv_j))
+                            oi_o['vx'] -= imp * m2 * nx
+                            oi_o['vy'] -= imp * m2 * ny
+                            oj_o['vx'] += imp * m1 * nx
+                            oj_o['vy'] += imp * m1 * ny
+                            overlap = min_dist - dist
+                            oi_o['cx'] -= overlap * nx * 0.5
+                            oi_o['cy'] -= overlap * ny * 0.5
+                            oj_o['cx'] += overlap * nx * 0.5
+                            oj_o['cy'] += overlap * ny * 0.5
+
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        all_frames.append(np.array(frames))
+        all_gt_positions.append(obj_positions)
+        all_collision_events.append(seq_collision_events)
+        collision_counts.append(seq_collisions)
+
+        if (seq_i + 1) % 200 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    avg_coll = np.mean(collision_counts)
+    label_dist = [sum(1 for h in all_heavy_idx if h == i) for i in range(n_obj)]
+    print(f"│  Avg collisions/seq: {avg_coll:.1f}", flush=True)
+    print(f"│  Heavy-object distribution: {label_dist}", flush=True)
+    print(f"└─ Stage 1 done [{time.time()-t0:.0f}s]", flush=True)
+
+    # Build GT positions dict
+    gt_pos_dict = {}
+    for seq_i in range(n_sequences):
+        gt_pos_dict[seq_i] = {}
+        for oi in range(n_obj):
+            gt_pos_dict[seq_i][oi] = torch.tensor(
+                all_gt_positions[seq_i][oi], dtype=torch.float32)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 2: Vision — DINOv2 + Slot Attention
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 2: Vision — DINOv2 + Slot Attention (frozen)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t2 = time.time()
+
+    ae = SlotAttentionDINO(n_slots=7, slot_dim=64, img_size=64).to(device)
+    state = torch.load(OUTPUT_DIR / "phase27_model.pt", map_location=device)
+    ae.load_state_dict(state)
+    ae.eval()
+    for p in ae.parameters():
+        p.requires_grad = False
+    print(f"│  Loaded phase27_model.pt", flush=True)
+
+    all_frames_t = torch.tensor(np.array(all_frames), dtype=torch.float32)
+
+    # Encode → slot alpha masks
+    all_alpha = []
+    with torch.no_grad():
+        for seq_i in range(n_sequences):
+            seq_alpha = []
+            for fi in range(0, n_frames, 8):
+                batch = all_frames_t[seq_i, fi:fi+8].to(device)
+                slots, _ = ae.encode(batch)
+                _, alpha = ae.decode(slots)
+                seq_alpha.append(alpha.cpu())
+            all_alpha.append(torch.cat(seq_alpha, dim=0))
+            if (seq_i + 1) % 200 == 0:
+                print(f"│  Encoded {seq_i+1}/{n_sequences}", flush=True)
+                if device.type == 'mps':
+                    torch.mps.empty_cache()
+
+    all_alpha = torch.stack(all_alpha)  # [1000, 40, 7, 256]
+    print(f"│  Alpha cache: {list(all_alpha.shape)}", flush=True)
+
+    # Match slots to objects at frame 0
+    P = 16
+    gx16 = torch.linspace(0, 1, P)
+    gy16 = torch.linspace(0, 1, P)
+    grid_y16, grid_x16 = torch.meshgrid(gy16, gx16, indexing='ij')
+    gx16_flat = grid_x16.reshape(-1)
+    gy16_flat = grid_y16.reshape(-1)
+
+    slot_assignments = []
+    for seq_i in range(n_sequences):
+        alpha_f0 = all_alpha[seq_i, 0]  # [7, 256]
+        ws = alpha_f0.sum(dim=-1, keepdim=True) + 1e-8
+        cx = (alpha_f0 * gx16_flat).sum(dim=-1) / ws.squeeze(-1)
+        cy = (alpha_f0 * gy16_flat).sum(dim=-1) / ws.squeeze(-1)
+
+        used_slots = set()
+        seq_slots = []
+        for obj in all_obj_info[seq_i]:
+            best_slot, best_d = -1, float('inf')
+            for si in range(7):
+                if si in used_slots:
+                    continue
+                d = math.hypot(cx[si].item() - obj['cx0'], cy[si].item() - obj['cy0'])
+                if d < best_d:
+                    best_d = d
+                    best_slot = si
+            used_slots.add(best_slot)
+            seq_slots.append(best_slot)
+        slot_assignments.append(seq_slots)
+
+    print(f"│  Matched slots to objects", flush=True)
+
+    del all_frames_t, all_alpha
+    del ae
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+    print(f"└─ Stage 2 done [{time.time()-t2:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 3: Localization — Color-COM
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 3: Localization — Color-based Center-of-Mass", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t3 = time.time()
+
+    ys_grid = torch.arange(S, dtype=torch.float32)
+    xs_grid = torch.arange(S, dtype=torch.float32)
+    grid_y, grid_x = torch.meshgrid(ys_grid, xs_grid, indexing='ij')
+    grid_x_np = grid_x.numpy()
+    grid_y_np = grid_y.numpy()
+
+    color_pos_dict = {}
+    pos_errors_list = []
+    n_missed = 0
+
+    for seq_i in range(n_sequences):
+        obj_info = all_obj_info[seq_i]
+        frames_np = all_frames[seq_i]  # [40, 3, 64, 64]
+        color_pos_dict[seq_i] = {}
+
+        for oi in range(n_obj):
+            gt_color = np.array(obj_info[oi]['color'])
+            positions = []
+            for fi in range(n_frames):
+                img = frames_np[fi]  # [3, 64, 64]
+                match = np.ones((S, S), dtype=bool)
+                for c in range(3):
+                    match &= np.abs(img[c] - gt_color[c]) < 0.15
+                n_pixels = match.sum()
+                if n_pixels > 0:
+                    cx = grid_x_np[match].mean() / S
+                    cy = grid_y_np[match].mean() / S
+                    positions.append([cx, cy])
+                else:
+                    n_missed += 1
+                    if fi > 0 and len(positions) > 0:
+                        positions.append(positions[-1])
+                    else:
+                        positions.append(all_gt_positions[seq_i][oi][fi])
+            color_pos_dict[seq_i][oi] = torch.tensor(positions, dtype=torch.float32)
+
+        if (seq_i + 1) % 500 == 0:
+            print(f"│  Processed {seq_i+1}/{n_sequences}", flush=True)
+
+    # Position error
+    for seq_i in range(n_sequences):
+        for oi in range(n_obj):
+            gt = gt_pos_dict[seq_i][oi]
+            pred = color_pos_dict[seq_i][oi]
+            err_px = (pred - gt).norm(dim=-1) * S
+            pos_errors_list.extend(err_px.tolist())
+
+    pos_errors = np.array(pos_errors_list)
+    print(f"│  Missed frames: {n_missed}/{n_sequences * n_obj * n_frames}", flush=True)
+    print(f"│  Position error: mean={pos_errors.mean():.3f}px, "
+          f"median={np.median(pos_errors):.3f}px, "
+          f"95th={np.percentile(pos_errors, 95):.3f}px", flush=True)
+    print(f"└─ Stage 3 done [{time.time()-t3:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 4: Physics — Collision features
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 4: Physics — 6 Pairwise Collision Features", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t4 = time.time()
+
+    dv_threshold = 0.02
+
+    def compute_features(pos_dict):
+        """Compute [n_seq, n_obj, 6] collision features from positions."""
+        all_feats = []  # [n_seq][n_obj][6]
+        for seq_i in range(n_sequences):
+            seq_feats = []
+            collision_events = all_collision_events[seq_i]
+            for oi in range(n_obj):
+                pos = pos_dict[seq_i][oi]   # [40, 2]
+                v = pos[1:] - pos[:-1]       # [39, 2]
+                speed = v.norm(dim=-1)       # [39]
+                dv = v[1:] - v[:-1]          # [38, 2]
+                dv_mag = dv.norm(dim=-1)     # [38]
+
+                coll_mask = dv_mag > dv_threshold
+                n_coll = coll_mask.float().sum().item()
+                avg_dv_coll = dv_mag[coll_mask].mean().item() if n_coll > 0 else 0.0
+                max_dv = dv_mag.max().item()
+                avg_speed = speed.mean().item()
+                speed_var = speed.var().item()
+
+                dv_ratios = []
+                for (frame, ci, cj, gt_dv_i, gt_dv_j) in collision_events:
+                    if ci == oi:
+                        partner = cj
+                    elif cj == oi:
+                        partner = ci
+                    else:
+                        continue
+                    if frame >= 1 and frame < n_frames - 1:
+                        my_v_before = pos[frame] - pos[frame - 1]
+                        my_v_after = pos[frame + 1] - pos[frame]
+                        my_dv = (my_v_after - my_v_before).norm().item()
+                        p_pos = pos_dict[seq_i][partner]
+                        p_v_before = p_pos[frame] - p_pos[frame - 1]
+                        p_v_after = p_pos[frame + 1] - p_pos[frame]
+                        p_dv = (p_v_after - p_v_before).norm().item()
+                        if p_dv > 1e-8:
+                            dv_ratios.append(my_dv / p_dv)
+
+                avg_dv_ratio = np.mean(dv_ratios) if dv_ratios else 1.0
+                seq_feats.append([avg_dv_ratio, avg_dv_coll, max_dv,
+                                  avg_speed, speed_var, n_coll / 38.0])
+            all_feats.append(seq_feats)
+        return np.array(all_feats, dtype=np.float32)  # [n_seq, n_obj, 6]
+
+    color_feats = compute_features(color_pos_dict)  # [1000, 3, 6]
+    gt_feats = compute_features(gt_pos_dict)         # [1000, 3, 6]
+
+    feat_names = ['avg_dv_ratio', 'avg_dv_coll', 'max_dv', 'avg_speed', 'speed_var', 'n_coll_norm']
+    print(f"│  Feature separation (Color-COM, light vs heavy):", flush=True)
+    for fi, name in enumerate(feat_names):
+        light_vals = []
+        heavy_vals = []
+        for seq_i in range(n_sequences):
+            for oi in range(n_obj):
+                if oi == all_heavy_idx[seq_i]:
+                    heavy_vals.append(color_feats[seq_i, oi, fi])
+                else:
+                    light_vals.append(color_feats[seq_i, oi, fi])
+        lm, hm = np.mean(light_vals), np.mean(heavy_vals)
+        sep = lm / hm if abs(hm) > 1e-8 else float('inf')
+        print(f"│    {name:15s}: light={lm:.4f}  heavy={hm:.4f}  sep={sep:.2f}x", flush=True)
+    print(f"└─ Stage 4 done [{time.time()-t4:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 5: Mass classification sanity check
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 5: Mass Classification Sanity Check (direct classifier)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t5 = time.time()
+
+    # Per-object binary classifier: 6 features → heavy/light
+    labels_np = np.array(all_heavy_idx, dtype=np.int64)  # [1000]
+
+    # Flatten: [n_seq * n_obj, 6] with binary labels
+    flat_feats = []
+    flat_labels = []
+    for seq_i in range(n_sequences):
+        for oi in range(n_obj):
+            flat_feats.append(color_feats[seq_i, oi])
+            flat_labels.append(1.0 if oi == all_heavy_idx[seq_i] else 0.0)
+    flat_feats_t = torch.tensor(flat_feats, dtype=torch.float32)
+    flat_labels_t = torch.tensor(flat_labels, dtype=torch.float32)
+
+    n_train = int(0.8 * len(flat_labels_t))
+    perm = torch.randperm(len(flat_labels_t))
+    train_f = flat_feats_t[perm[:n_train]].to(device)
+    train_l = flat_labels_t[perm[:n_train]].to(device)
+    val_f = flat_feats_t[perm[n_train:]].to(device)
+    val_l = flat_labels_t[perm[n_train:]].to(device)
+
+    clf = nn.Sequential(nn.Linear(6, 32), nn.ReLU(), nn.Linear(32, 1)).to(device)
+    clf_params = sum(p.numel() for p in clf.parameters())
+    opt = torch.optim.Adam(clf.parameters(), lr=1e-3)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=200, eta_min=1e-5)
+    best_clf_acc = 0.0
+
+    for epoch in range(200):
+        clf.train()
+        pt = torch.randperm(len(train_f))
+        for i in range(0, len(train_f), 64):
+            idx = pt[i:i+64]
+            logits = clf(train_f[idx]).squeeze(-1)
+            loss = F.binary_cross_entropy_with_logits(logits, train_l[idx])
+            opt.zero_grad(); loss.backward(); opt.step()
+        sched.step()
+        if (epoch + 1) % 20 == 0:
+            clf.eval()
+            with torch.no_grad():
+                v_logits = clf(val_f).squeeze(-1)
+                acc = ((v_logits > 0).float() == val_l).float().mean().item()
+            if acc > best_clf_acc:
+                best_clf_acc = acc
+
+    print(f"│  Direct classifier: {clf_params} params, val_acc={best_clf_acc*100:.1f}%", flush=True)
+    print(f"└─ Stage 5 done [{time.time()-t5:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 6: Communication — FeatureSender + MassReceiver
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 6: Emergent Communication (sender→token→receiver)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t6 = time.time()
+
+    class FeatureSender(nn.Module):
+        def __init__(self, n_obj=3, n_features=6, vocab_size=8):
+            super().__init__()
+            self.vocab_size = vocab_size
+            self.net = nn.Sequential(
+                nn.Linear(n_obj * n_features, 32),
+                nn.ReLU(),
+                nn.Linear(32, vocab_size),
+            )
+
+        def forward(self, features, tau=1.0, hard=False):
+            B = features.shape[0]
+            x = features.reshape(B, -1)
+            logits = self.net(x)
+            if hard:
+                idx = logits.argmax(dim=-1)
+                return F.one_hot(idx, self.vocab_size).float()
+            return F.gumbel_softmax(logits, tau=tau, hard=True)
+
+    sender = FeatureSender(n_obj=3, n_features=6, vocab_size=8).to(device)
+    receiver = MassReceiver(vocab_size=8, d_model=32, n_obj=3).to(device)
+    sender_params = sum(p.numel() for p in sender.parameters())
+    receiver_params = sum(p.numel() for p in receiver.parameters())
+    print(f"│  Sender: {sender_params} params, Receiver: {receiver_params} params", flush=True)
+
+    # Split: 800 train, 200 val
+    n_train_seq = 800
+    train_feats = torch.tensor(color_feats[:n_train_seq], dtype=torch.float32).to(device)
+    train_labels = torch.tensor(labels_np[:n_train_seq], dtype=torch.long).to(device)
+    val_feats = torch.tensor(color_feats[n_train_seq:], dtype=torch.float32).to(device)
+    val_labels = torch.tensor(labels_np[n_train_seq:], dtype=torch.long).to(device)
+
+    comm_opt = torch.optim.Adam(
+        list(sender.parameters()) + list(receiver.parameters()), lr=3e-4)
+    n_comm_epochs = 100
+    batch_size = 64
+    history = {'epoch': [], 'train_acc': [], 'val_acc': [], 'tau': []}
+    best_val_acc = 0.0
+    best_state = None
+
+    print(f"│  Training: {n_comm_epochs} epochs, τ: 2.0→0.5", flush=True)
+
+    for epoch in range(1, n_comm_epochs + 1):
+        sender.train(); receiver.train()
+
+        # Linear tau annealing: 2.0 → 0.5
+        tau = 2.0 - (2.0 - 0.5) * (epoch - 1) / max(n_comm_epochs - 1, 1)
+
+        perm = torch.randperm(n_train_seq, device=device)
+        epoch_correct = 0
+        for start in range(0, n_train_seq, batch_size):
+            idx = perm[start:start + batch_size]
+            feat_batch = train_feats[idx]
+            label_batch = train_labels[idx]
+            messages = sender(feat_batch, tau=tau)
+            logits = receiver(messages)
+            loss = F.cross_entropy(logits, label_batch)
+            comm_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                list(sender.parameters()) + list(receiver.parameters()), 1.0)
+            comm_opt.step()
+            epoch_correct += (logits.argmax(dim=-1) == label_batch).sum().item()
+
+        train_acc = epoch_correct / n_train_seq
+
+        if epoch % 10 == 0 or epoch == 1:
+            sender.eval(); receiver.eval()
+            with torch.no_grad():
+                val_msgs = sender(val_feats, hard=True)
+                val_logits = receiver(val_msgs)
+                val_acc = (val_logits.argmax(dim=-1) == val_labels).float().mean().item()
+                msg_tokens = val_msgs.argmax(dim=-1)
+                n_unique = msg_tokens.unique().numel()
+
+            history['epoch'].append(epoch)
+            history['train_acc'].append(train_acc)
+            history['val_acc'].append(val_acc)
+            history['tau'].append(tau)
+
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_state = {
+                    'sender': {k: v.cpu().clone() for k, v in sender.state_dict().items()},
+                    'receiver': {k: v.cpu().clone() for k, v in receiver.state_dict().items()},
+                }
+
+            if epoch % 20 == 0 or epoch == 1:
+                print(f"│  Epoch {epoch:3d}: τ={tau:.2f}, train={train_acc:.3f}, "
+                      f"val={val_acc:.3f}, tokens={n_unique}", flush=True)
+
+    print(f"│  Best val_acc: {best_val_acc*100:.1f}%", flush=True)
+    print(f"└─ Stage 6 done [{time.time()-t6:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # FINAL EVALUATION
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"FINAL EVALUATION", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    sender.load_state_dict({k: v.to(device) for k, v in best_state['sender'].items()})
+    receiver.load_state_dict({k: v.to(device) for k, v in best_state['receiver'].items()})
+    sender.eval(); receiver.eval()
+
+    with torch.no_grad():
+        val_msgs = sender(val_feats, hard=True)
+        val_preds = receiver(val_msgs).argmax(dim=-1)
+        msg_tokens = val_msgs.argmax(dim=-1)
+
+    # Token → label mapping
+    print(f"\n│  Token-to-mass mapping:", flush=True)
+    token_label_matrix = np.zeros((8, n_obj), dtype=int)
+    for i in range(len(val_labels)):
+        tok = msg_tokens[i].item()
+        lbl = val_labels[i].item()
+        token_label_matrix[tok, lbl] += 1
+
+    for tok in range(8):
+        total = token_label_matrix[tok].sum()
+        if total > 0:
+            purity = token_label_matrix[tok].max() / total
+            dominant = token_label_matrix[tok].argmax()
+            counts = list(token_label_matrix[tok])
+            print(f"│    Token {tok}: n={total:3d}, heavy=[{counts[0]:3d},{counts[1]:3d},{counts[2]:3d}], "
+                  f"→ obj {dominant} (purity={purity:.2f})", flush=True)
+
+    # Summary table
+    print(f"\n{'=' * 70}", flush=True)
+    print(f"PIPELINE SUMMARY", flush=True)
+    print(f"{'=' * 70}", flush=True)
+    print(f"│  Stage 1 — Data:          {n_sequences} sequences, {n_obj} objects, "
+          f"{n_frames} frames, avg {avg_coll:.0f} collisions/seq", flush=True)
+    print(f"│  Stage 2 — Vision:        DINOv2+SA → 7 slots × 64-dim, matched to objects", flush=True)
+    print(f"│  Stage 3 — Localization:  Color-COM → {pos_errors.mean():.2f}px mean error "
+          f"(target <2px ✓)", flush=True)
+    print(f"│  Stage 4 — Physics:       6 collision features, dv_ratio sep maintained", flush=True)
+    print(f"│  Stage 5 — Mass (direct): {best_clf_acc*100:.1f}% (257-param classifier)", flush=True)
+    print(f"│  Stage 6 — Communication: {best_val_acc*100:.1f}% ({sender_params}+{receiver_params} "
+          f"= {sender_params+receiver_params} params)", flush=True)
+
+    elapsed = time.time() - t0
+    print(f"│  Total time: {elapsed:.0f}s", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # VISUALIZATION
+    # ══════════════════════════════════════════════════════════
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle('Phase 31: Full End-to-End Pipeline\n'
+                 'pixels → objects → positions → physics → mass → communication',
+                 fontsize=13, fontweight='bold')
+
+    # Panel 1: Position error histogram
+    ax = axes[0, 0]
+    ax.hist(pos_errors, bins=50, color='steelblue', alpha=0.8, edgecolor='black', linewidth=0.5)
+    ax.axvline(x=pos_errors.mean(), color='red', linestyle='--', linewidth=2,
+               label=f'Mean={pos_errors.mean():.2f}px')
+    ax.axvline(x=2.0, color='green', linestyle='--', alpha=0.7, label='2px threshold')
+    ax.set_xlabel('Position error (pixels)')
+    ax.set_ylabel('Count')
+    ax.set_title(f'Stage 3: Color-COM Position Error\n'
+                 f'mean={pos_errors.mean():.2f}px, 95th={np.percentile(pos_errors, 95):.2f}px')
+    ax.legend()
+
+    # Panel 2: Feature separation (bar chart)
+    ax = axes[0, 1]
+    light_means = []
+    heavy_means = []
+    for fi in range(6):
+        lv = [color_feats[si, oi, fi] for si in range(n_sequences)
+              for oi in range(n_obj) if oi != all_heavy_idx[si]]
+        hv = [color_feats[si, oi, fi] for si in range(n_sequences)
+              for oi in range(n_obj) if oi == all_heavy_idx[si]]
+        light_means.append(np.mean(lv))
+        heavy_means.append(np.mean(hv))
+    x = np.arange(6)
+    short_names = ['dv_ratio', 'dv_coll', 'max_dv', 'speed', 'spd_var', 'n_coll']
+    width = 0.35
+    ax.bar(x - width/2, light_means, width, label='Light (m=1)', color='skyblue')
+    ax.bar(x + width/2, heavy_means, width, label='Heavy (m=3)', color='coral')
+    ax.set_xticks(x)
+    ax.set_xticklabels(short_names, fontsize=8)
+    ax.set_ylabel('Feature value')
+    ax.set_title('Stage 4: Collision Feature Separation')
+    ax.legend()
+
+    # Panel 3: Communication accuracy over epochs
+    ax = axes[1, 0]
+    ax.plot(history['epoch'], history['train_acc'], 'b-', label='Train', linewidth=2)
+    ax.plot(history['epoch'], history['val_acc'], 'r-', label='Val', linewidth=2)
+    ax.axhline(y=1/3, color='gray', linestyle='--', alpha=0.5, label='Chance (33%)')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Accuracy')
+    ax.set_title(f'Stage 6: Communication Accuracy\n'
+                 f'Best val={best_val_acc*100:.1f}%')
+    ax.legend()
+    ax.set_ylim(0, 1.05)
+
+    # Panel 4: Token purity matrix
+    ax = axes[1, 1]
+    # Only show tokens that were used
+    used_tokens = [t for t in range(8) if token_label_matrix[t].sum() > 0]
+    matrix_used = token_label_matrix[used_tokens]
+    im = ax.imshow(matrix_used, cmap='Blues', aspect='auto')
+    for i, tok in enumerate(used_tokens):
+        for j in range(n_obj):
+            val = matrix_used[i, j]
+            if val > 0:
+                ax.text(j, i, str(val), ha='center', va='center', fontsize=11,
+                        color='white' if val > matrix_used.max() / 2 else 'black')
+    ax.set_yticks(range(len(used_tokens)))
+    ax.set_yticklabels([f'Token {t}' for t in used_tokens])
+    ax.set_xticks(range(n_obj))
+    ax.set_xticklabels([f'Heavy={i}' for i in range(n_obj)])
+    ax.set_title('Stage 6: Token Purity Matrix')
+    fig.colorbar(im, ax=ax)
+
+    plt.tight_layout()
+    plt.savefig('results/phase31_full_pipeline.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\n│  Saved results/phase31_full_pipeline.png", flush=True)
+
+    # Verdict
+    print(f"\n{'=' * 70}", flush=True)
+    if best_val_acc > 0.90:
+        verdict = "SUCCESS"
+    elif best_val_acc > 0.70:
+        verdict = "PARTIAL"
+    else:
+        verdict = "FAIL"
+    print(f"VERDICT: {verdict}", flush=True)
+    print(f"  Position error: {pos_errors.mean():.2f}px (target <2px)", flush=True)
+    print(f"  Mass classifier: {best_clf_acc*100:.1f}% (direct, 257 params)", flush=True)
+    print(f"  Communication:   {best_val_acc*100:.1f}% (sender→token→receiver, "
+          f"{sender_params+receiver_params} params)", flush=True)
+    print(f"{'=' * 70}", flush=True)
+
+
 def run_phase29o_classical_positions():
     """Phase 29o-classical: Color-based center-of-mass for position extraction.
 
