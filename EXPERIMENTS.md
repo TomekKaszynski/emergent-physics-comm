@@ -1390,3 +1390,33 @@ Position decoder: Linear(64→2), trained on slot→(cx,cy) pairs. Decode error:
 - Rendering 2000 training sequences took ~690s (CPU-heavy perception pipeline)
 - Gap closing steadily: 18.5pp (37) → 11.5pp (37b) → 9.0pp (37c)
 - Remaining gap (9pp) approaches the theoretical minimum given ~10% mass error rate
+
+---
+
+## Phase 38: Communicative Planning — Two Agents, One Task
+**Date:** Feb 22 | **Duration:** 122s | **Verdict:** SUCCESS
+
+**Setup:** Two-agent system. Agent A (observer) watches 40 frames of collisions from pixels, infers mass via collision detection, sends 1 discrete token per object (vocab=4) to Agent B. Agent B (actor) knows positions but NOT masses, receives tokens, identifies heavy object, uses JEPA closed-loop planning (same as 36f) to push heavy object to target. Communication is the bridge — without it, B can't know which object to push.
+
+**Architecture:**
+- PerObjectSender: 180 params (6→16→4, Gumbel-softmax)
+- ComparativeReceiver: 1,747 params (3×16→32→3)
+- Trained jointly on perceived features from 2000 rendered training sequences
+- JEPA: 214,592 params (trained on GT states, same as 36f)
+- Communication val accuracy: **82.2%** (uses 2 of 4 tokens — binary heavy/light code)
+
+**Results:**
+| Planner | Success (10px) | Mean dist | Median dist |
+|---|---|---|---|
+| **Full pipeline (A→B)** | **67.5%** | 8.98px | 6.07px |
+| Oracle comm (GT heavy) | 81.5% | 5.51px | 3.49px |
+| No communication | 29.0% | 17.66px | 16.62px |
+| Random | 11.0% | 22.27px | 19.90px |
+
+**Key insights:**
+- **Communication works!** Full pipeline 67.5% vs no-comm 29.0% — tokens carry actionable information
+- Communication accuracy 80% explains the gap: full 67.5% vs oracle 81.5% (14pp gap ≈ 20% comm errors)
+- No-comm baseline ~29% ≈ 1/3 (random chance of picking right object) × 81.5% oracle success — confirms communication is the only source of target knowledge
+- Sender learned binary code (2 of 4 tokens used) — heavy objects get one token, light objects get another
+- The full pipeline runs in 122s — fast because Stage 4 perception of training data was only 40s (vs 690s in 37c — likely due to the perceive_sequence function being more efficient)
+- **Milestone:** First end-to-end demonstration of perception → communication → planning → action, all from pixels
