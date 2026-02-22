@@ -15793,6 +15793,560 @@ def run_phase33c_comparative_comm():
     print(f"{'=' * 70}", flush=True)
 
 
+def run_phase36a_action_jepa():
+    """Phase 36a: Action-conditioned JEPA in slot space.
+
+    Data: 3 objects with random force interventions at random frames.
+    Train action-conditioned predictor vs unconditional baseline.
+    Evaluate: prediction error on action frames (conditioned vs unconditioned).
+    Target: >30% improvement on action frames.
+    """
+    import random
+    import math
+
+    print("=" * 70, flush=True)
+    print("PHASE 36a: Action-Conditioned JEPA", flush=True)
+    print("  slot states + action → predict next slot states", flush=True)
+    print("=" * 70, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 1: Generate sequences with interventions
+    # ══════════════════════════════════════════════════════════
+    n_sequences = 2000
+    n_frames = 40
+    S = 64
+    n_obj = 3
+    slot_dim = 64  # we'll use ground-truth state vectors as "slots"
+
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 1: Generating {n_sequences} sequences ({n_obj} objects, interventions)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    # State vector per object: [cx/S, cy/S, vx/vmax, vy/vmax, r/S, mass/3]
+    # This gives us 6-dim "slot" per object. We'll project to slot_dim.
+
+    all_states = []    # [seq][frame] → [n_obj, 6]
+    all_actions = []   # [seq][frame] → (obj_idx, fx, fy) or None
+    all_action_frames = []  # [seq] → list of frame indices with actions
+
+    vmax = 10.0  # for normalization
+    random.seed(42)
+    np.random.seed(42)
+
+    for seq_i in range(n_sequences):
+        masses = [1.0, 1.0, 1.0]
+        heavy_idx = random.randint(0, n_obj - 1)
+        masses[heavy_idx] = 3.0
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(6, 9)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-5.0, 5.0)
+            vy = random.uniform(-5.0, 5.0)
+            objects.append({
+                'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                'r': r, 'mass': masses[oi],
+            })
+
+        # Decide intervention frames: 2-4 interventions per sequence
+        n_interventions = random.randint(2, 4)
+        # Pick frames in [5, n_frames-5] to avoid edge effects
+        intervention_frames = sorted(random.sample(range(5, n_frames - 5), n_interventions))
+        intervention_plan = {}
+        for fi in intervention_frames:
+            target_obj = random.randint(0, n_obj - 1)
+            # Force impulse: random direction, magnitude [2, 6]
+            mag = random.uniform(2.0, 6.0)
+            angle = random.uniform(0, 2 * math.pi)
+            fx = mag * math.cos(angle)
+            fy = mag * math.sin(angle)
+            intervention_plan[fi] = (target_obj, fx, fy)
+
+        seq_states = []
+        seq_actions = {}
+        action_frame_list = []
+
+        for fi in range(n_frames):
+            # Record state BEFORE physics step
+            state = np.zeros((n_obj, 6), dtype=np.float32)
+            for oi in range(n_obj):
+                obj = objects[oi]
+                state[oi] = [
+                    obj['cx'] / S, obj['cy'] / S,
+                    obj['vx'] / vmax, obj['vy'] / vmax,
+                    obj['r'] / S, obj['mass'] / 3.0,
+                ]
+            seq_states.append(state)
+
+            # Apply intervention BEFORE physics step
+            if fi in intervention_plan:
+                target_obj, fx, fy = intervention_plan[fi]
+                objects[target_obj]['vx'] += fx
+                objects[target_obj]['vy'] += fy
+                seq_actions[fi] = (target_obj, fx / vmax, fy / vmax)
+                action_frame_list.append(fi)
+
+            # Collision physics
+            for i in range(n_obj):
+                for j in range(i + 1, n_obj):
+                    oi_o, oj_o = objects[i], objects[j]
+                    dx_c = oj_o['cx'] - oi_o['cx']
+                    dy_c = oj_o['cy'] - oi_o['cy']
+                    dist = math.hypot(dx_c, dy_c)
+                    min_dist = oi_o['r'] + oj_o['r']
+                    if dist < min_dist and dist > 0.1:
+                        nx, ny = dx_c / dist, dy_c / dist
+                        dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                              (oi_o['vy'] - oj_o['vy']) * ny
+                        if dvn > 0:
+                            m1, m2 = oi_o['mass'], oj_o['mass']
+                            imp = 2 * dvn / (m1 + m2)
+                            oi_o['vx'] -= imp * m2 * nx
+                            oi_o['vy'] -= imp * m2 * ny
+                            oj_o['vx'] += imp * m1 * nx
+                            oj_o['vy'] += imp * m1 * ny
+                            overlap = min_dist - dist
+                            oi_o['cx'] -= overlap * nx * 0.5
+                            oi_o['cy'] -= overlap * ny * 0.5
+                            oj_o['cx'] += overlap * nx * 0.5
+                            oj_o['cy'] += overlap * ny * 0.5
+
+            # Position update
+            for obj in objects:
+                obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+                r = obj['r']
+                if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+                if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+                if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+                if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+        all_states.append(np.array(seq_states))  # [n_frames, n_obj, 6]
+        all_actions.append(seq_actions)
+        all_action_frames.append(action_frame_list)
+
+        if (seq_i + 1) % 500 == 0:
+            print(f"│  Generated {seq_i+1}/{n_sequences}", flush=True)
+
+    total_action_frames = sum(len(af) for af in all_action_frames)
+    total_no_action_frames = n_sequences * (n_frames - 1) - total_action_frames
+    print(f"│  Total action frames: {total_action_frames} "
+          f"({100*total_action_frames/(n_sequences*(n_frames-1)):.1f}%)", flush=True)
+    print(f"│  Total no-action frames: {total_no_action_frames}", flush=True)
+    print(f"└─ Stage 1 done [{time.time()-t0:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 2: Build training data (state t, action, state t+1)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 2: Build training pairs", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t2 = time.time()
+
+    # Project 6-dim state vectors to slot_dim using a fixed random projection
+    # This simulates having slot representations from an encoder
+    torch.manual_seed(42)
+    state_proj = nn.Linear(6, slot_dim, bias=False)
+    nn.init.orthogonal_(state_proj.weight)
+    state_proj = state_proj.to(device)
+    # Freeze projection
+    for p in state_proj.parameters():
+        p.requires_grad = False
+
+    # Build (state_t, action, state_t+1, is_action_frame) tuples
+    states_t_list = []
+    states_tp1_list = []
+    actions_list = []
+    is_action_list = []
+
+    for seq_i in range(n_sequences):
+        states = all_states[seq_i]  # [n_frames, n_obj, 6]
+        actions = all_actions[seq_i]
+
+        for fi in range(n_frames - 1):
+            states_t_list.append(states[fi])
+            states_tp1_list.append(states[fi + 1])
+
+            if fi in actions:
+                obj_idx, fx, fy = actions[fi]
+                action_vec = np.zeros(n_obj + 2, dtype=np.float32)
+                action_vec[obj_idx] = 1.0  # one-hot
+                action_vec[n_obj] = fx
+                action_vec[n_obj + 1] = fy
+                actions_list.append(action_vec)
+                is_action_list.append(True)
+            else:
+                # No action: zero vector
+                actions_list.append(np.zeros(n_obj + 2, dtype=np.float32))
+                is_action_list.append(False)
+
+    states_t_np = np.array(states_t_list)     # [N, n_obj, 6]
+    states_tp1_np = np.array(states_tp1_list)  # [N, n_obj, 6]
+    actions_np = np.array(actions_list)         # [N, n_obj+2]
+    is_action_np = np.array(is_action_list)     # [N]
+
+    N = len(states_t_np)
+    print(f"│  Total transition pairs: {N}", flush=True)
+    print(f"│  Action pairs: {is_action_np.sum()} ({100*is_action_np.mean():.1f}%)", flush=True)
+
+    # Project to slot space
+    states_t_raw = torch.tensor(states_t_np, dtype=torch.float32).to(device)
+    states_tp1_raw = torch.tensor(states_tp1_np, dtype=torch.float32).to(device)
+
+    with torch.no_grad():
+        # [N, n_obj, 6] → [N, n_obj, slot_dim]
+        slots_t = state_proj(states_t_raw)
+        slots_tp1 = state_proj(states_tp1_raw)
+
+    actions_t = torch.tensor(actions_np, dtype=torch.float32).to(device)
+    is_action_t = torch.tensor(is_action_np, dtype=torch.bool).to(device)
+
+    # Train/val split
+    n_train = int(0.8 * N)
+    perm = torch.randperm(N)
+    train_idx = perm[:n_train]
+    val_idx = perm[n_train:]
+
+    tr_slots_t = slots_t[train_idx]
+    tr_slots_tp1 = slots_tp1[train_idx]
+    tr_actions = actions_t[train_idx]
+    tr_is_action = is_action_t[train_idx]
+
+    vl_slots_t = slots_t[val_idx]
+    vl_slots_tp1 = slots_tp1[val_idx]
+    vl_actions = actions_t[val_idx]
+    vl_is_action = is_action_t[val_idx]
+
+    print(f"│  Train: {n_train}, Val: {N - n_train}", flush=True)
+    print(f"│  Val action frames: {vl_is_action.sum().item()}", flush=True)
+    print(f"└─ Stage 2 done [{time.time()-t2:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 3: Train both models
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 3: Train Action-Conditioned vs Unconditional Predictors", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t3 = time.time()
+
+    from world_model import ActionConditionedPredictor
+
+    # Unconditional baseline: same as SlotPredictor
+    class UnconditionalPredictor(nn.Module):
+        def __init__(self, n_slots=3, slot_dim=64, hidden_dim=256):
+            super().__init__()
+            self.n_slots = n_slots
+            self.slot_dim = slot_dim
+            total_dim = n_slots * slot_dim
+            self.net = nn.Sequential(
+                nn.Linear(total_dim, hidden_dim),
+                nn.LayerNorm(hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, total_dim),
+            )
+        def forward(self, slots_t):
+            B = slots_t.shape[0]
+            flat = slots_t.reshape(B, -1)
+            return self.net(flat).reshape(B, self.n_slots, self.slot_dim)
+
+    torch.manual_seed(42)
+    cond_model = ActionConditionedPredictor(
+        n_slots=n_obj, slot_dim=slot_dim, action_dim=64, hidden_dim=256).to(device)
+    uncond_model = UnconditionalPredictor(
+        n_slots=n_obj, slot_dim=slot_dim, hidden_dim=256).to(device)
+
+    cond_params = sum(p.numel() for p in cond_model.parameters())
+    uncond_params = sum(p.numel() for p in uncond_model.parameters())
+    print(f"│  Action-conditioned: {cond_params:,} params", flush=True)
+    print(f"│  Unconditional:      {uncond_params:,} params", flush=True)
+
+    n_epochs = 100
+    batch_size = 256
+    cond_opt = torch.optim.Adam(cond_model.parameters(), lr=3e-4)
+    uncond_opt = torch.optim.Adam(uncond_model.parameters(), lr=3e-4)
+
+    history = {
+        'epoch': [],
+        'cond_train_loss': [], 'cond_val_loss': [],
+        'uncond_train_loss': [], 'uncond_val_loss': [],
+        'cond_action_loss': [], 'uncond_action_loss': [],
+        'cond_noaction_loss': [], 'uncond_noaction_loss': [],
+    }
+
+    print(f"│  Training: {n_epochs} epochs, batch={batch_size}", flush=True)
+
+    for epoch in range(1, n_epochs + 1):
+        cond_model.train(); uncond_model.train()
+        ep_perm = torch.randperm(n_train, device=device)
+
+        cond_ep_loss = 0.0
+        uncond_ep_loss = 0.0
+        n_batches = 0
+
+        for start in range(0, n_train, batch_size):
+            idx = ep_perm[start:start + batch_size]
+            B = len(idx)
+
+            s_t = tr_slots_t[idx]
+            s_tp1 = tr_slots_tp1[idx]
+            act = tr_actions[idx]
+
+            # Conditioned model
+            pred_cond = cond_model(s_t, act)
+            loss_cond = F.mse_loss(pred_cond, s_tp1)
+            cond_opt.zero_grad()
+            loss_cond.backward()
+            torch.nn.utils.clip_grad_norm_(cond_model.parameters(), 1.0)
+            cond_opt.step()
+
+            # Unconditional model
+            pred_uncond = uncond_model(s_t)
+            loss_uncond = F.mse_loss(pred_uncond, s_tp1)
+            uncond_opt.zero_grad()
+            loss_uncond.backward()
+            torch.nn.utils.clip_grad_norm_(uncond_model.parameters(), 1.0)
+            uncond_opt.step()
+
+            cond_ep_loss += loss_cond.item() * B
+            uncond_ep_loss += loss_uncond.item() * B
+            n_batches += 1
+
+        cond_ep_loss /= n_train
+        uncond_ep_loss /= n_train
+
+        if epoch % 10 == 0 or epoch == 1:
+            cond_model.eval(); uncond_model.eval()
+            with torch.no_grad():
+                # Full val set
+                vl_pred_cond = cond_model(vl_slots_t, vl_actions)
+                vl_pred_uncond = uncond_model(vl_slots_t)
+                vl_loss_cond = F.mse_loss(vl_pred_cond, vl_slots_tp1).item()
+                vl_loss_uncond = F.mse_loss(vl_pred_uncond, vl_slots_tp1).item()
+
+                # Action frames only
+                if vl_is_action.any():
+                    act_mask = vl_is_action
+                    vl_act_cond = F.mse_loss(vl_pred_cond[act_mask], vl_slots_tp1[act_mask]).item()
+                    vl_act_uncond = F.mse_loss(vl_pred_uncond[act_mask], vl_slots_tp1[act_mask]).item()
+                else:
+                    vl_act_cond = vl_act_uncond = 0.0
+
+                # No-action frames
+                noact_mask = ~vl_is_action
+                vl_noact_cond = F.mse_loss(vl_pred_cond[noact_mask], vl_slots_tp1[noact_mask]).item()
+                vl_noact_uncond = F.mse_loss(vl_pred_uncond[noact_mask], vl_slots_tp1[noact_mask]).item()
+
+            history['epoch'].append(epoch)
+            history['cond_train_loss'].append(cond_ep_loss)
+            history['uncond_train_loss'].append(uncond_ep_loss)
+            history['cond_val_loss'].append(vl_loss_cond)
+            history['uncond_val_loss'].append(vl_loss_uncond)
+            history['cond_action_loss'].append(vl_act_cond)
+            history['uncond_action_loss'].append(vl_act_uncond)
+            history['cond_noaction_loss'].append(vl_noact_cond)
+            history['uncond_noaction_loss'].append(vl_noact_uncond)
+
+            improvement = (1.0 - vl_act_cond / vl_act_uncond) * 100 if vl_act_uncond > 0 else 0
+            print(f"│    Epoch {epoch:3d}: cond_val={vl_loss_cond:.6f}, uncond_val={vl_loss_uncond:.6f} | "
+                  f"action: cond={vl_act_cond:.6f}, uncond={vl_act_uncond:.6f} "
+                  f"({improvement:+.1f}%)", flush=True)
+
+    print(f"└─ Stage 3 done [{time.time()-t3:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 4: Final evaluation
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 4: Final Evaluation", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    cond_model.eval(); uncond_model.eval()
+    with torch.no_grad():
+        vl_pred_cond = cond_model(vl_slots_t, vl_actions)
+        vl_pred_uncond = uncond_model(vl_slots_t)
+
+        # Per-sample MSE
+        per_sample_cond = ((vl_pred_cond - vl_slots_tp1) ** 2).mean(dim=(1, 2))
+        per_sample_uncond = ((vl_pred_uncond - vl_slots_tp1) ** 2).mean(dim=(1, 2))
+
+        # Overall
+        overall_cond = per_sample_cond.mean().item()
+        overall_uncond = per_sample_uncond.mean().item()
+
+        # Action frames
+        act_mask = vl_is_action
+        n_act = act_mask.sum().item()
+        act_cond = per_sample_cond[act_mask].mean().item()
+        act_uncond = per_sample_uncond[act_mask].mean().item()
+
+        # No-action frames
+        noact_mask = ~vl_is_action
+        noact_cond = per_sample_cond[noact_mask].mean().item()
+        noact_uncond = per_sample_uncond[noact_mask].mean().item()
+
+    improvement_action = (1.0 - act_cond / act_uncond) * 100 if act_uncond > 0 else 0
+    improvement_noaction = (1.0 - noact_cond / noact_uncond) * 100 if noact_uncond > 0 else 0
+    improvement_overall = (1.0 - overall_cond / overall_uncond) * 100 if overall_uncond > 0 else 0
+
+    print(f"\n│  Val samples: {len(vl_is_action)} ({n_act} action, {len(vl_is_action)-n_act} no-action)", flush=True)
+    print(f"│", flush=True)
+    print(f"│  {'':20s} {'Conditioned':>12s} {'Unconditioned':>14s} {'Improvement':>12s}", flush=True)
+    print(f"│  {'─'*60}", flush=True)
+    print(f"│  {'Overall MSE':20s} {overall_cond:12.6f} {overall_uncond:14.6f} {improvement_overall:+11.1f}%", flush=True)
+    print(f"│  {'Action frames MSE':20s} {act_cond:12.6f} {act_uncond:14.6f} {improvement_action:+11.1f}%", flush=True)
+    print(f"│  {'No-action MSE':20s} {noact_cond:12.6f} {noact_uncond:14.6f} {improvement_noaction:+11.1f}%", flush=True)
+
+    # Per-object breakdown on action frames
+    print(f"\n│  Per-object MSE on action frames (action targets specific object):", flush=True)
+    with torch.no_grad():
+        act_actions = vl_actions[act_mask]
+        act_pred_c = vl_pred_cond[act_mask]
+        act_pred_u = vl_pred_uncond[act_mask]
+        act_target = vl_slots_tp1[act_mask]
+
+        for oi in range(n_obj):
+            # Frames where THIS object was acted on
+            obj_mask = act_actions[:, oi] > 0.5  # one-hot
+            if obj_mask.sum() == 0:
+                continue
+            c_err = ((act_pred_c[obj_mask, oi] - act_target[obj_mask, oi]) ** 2).mean().item()
+            u_err = ((act_pred_u[obj_mask, oi] - act_target[obj_mask, oi]) ** 2).mean().item()
+            other_c = ((act_pred_c[obj_mask] - act_target[obj_mask]) ** 2).mean(dim=-1)
+            # Non-acted objects
+            other_mask = torch.ones(n_obj, dtype=torch.bool, device=device)
+            other_mask[oi] = False
+            other_c_err = ((act_pred_c[obj_mask][:, other_mask] - act_target[obj_mask][:, other_mask]) ** 2).mean().item()
+            other_u_err = ((act_pred_u[obj_mask][:, other_mask] - act_target[obj_mask][:, other_mask]) ** 2).mean().item()
+            imp_acted = (1.0 - c_err / u_err) * 100 if u_err > 0 else 0
+            imp_other = (1.0 - other_c_err / other_u_err) * 100 if other_u_err > 0 else 0
+            print(f"│    Obj {oi} acted on ({obj_mask.sum().item()} frames): "
+                  f"acted_obj {imp_acted:+.1f}%, other_objs {imp_other:+.1f}%", flush=True)
+
+    elapsed = time.time() - t0
+    print(f"\n│  Total time: {elapsed:.0f}s", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # VISUALIZATION
+    # ══════════════════════════════════════════════════════════
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle('Phase 36a: Action-Conditioned JEPA\n'
+                 'slot states + action → predict next states',
+                 fontsize=13, fontweight='bold')
+
+    # Panel 1: Training curves (overall val loss)
+    ax = axes[0, 0]
+    ax.plot(history['epoch'], history['cond_val_loss'], 'b-', label='Conditioned', linewidth=2)
+    ax.plot(history['epoch'], history['uncond_val_loss'], 'r-', label='Unconditioned', linewidth=2)
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Val MSE')
+    ax.set_title('Overall Val Loss')
+    ax.legend()
+    ax.set_yscale('log')
+
+    # Panel 2: Action frame loss over training
+    ax = axes[0, 1]
+    ax.plot(history['epoch'], history['cond_action_loss'], 'b-', label='Cond (action)', linewidth=2)
+    ax.plot(history['epoch'], history['uncond_action_loss'], 'r-', label='Uncond (action)', linewidth=2)
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('MSE on Action Frames')
+    ax.set_title('Action Frame Prediction')
+    ax.legend()
+    ax.set_yscale('log')
+
+    # Panel 3: No-action frame loss
+    ax = axes[0, 2]
+    ax.plot(history['epoch'], history['cond_noaction_loss'], 'b-', label='Cond (no-action)', linewidth=2)
+    ax.plot(history['epoch'], history['uncond_noaction_loss'], 'r-', label='Uncond (no-action)', linewidth=2)
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('MSE on No-Action Frames')
+    ax.set_title('No-Action Frame Prediction')
+    ax.legend()
+    ax.set_yscale('log')
+
+    # Panel 4: Bar chart comparing final errors
+    ax = axes[1, 0]
+    categories = ['Overall', 'Action\nFrames', 'No-Action\nFrames']
+    cond_vals = [overall_cond, act_cond, noact_cond]
+    uncond_vals = [overall_uncond, act_uncond, noact_uncond]
+    x = np.arange(len(categories))
+    w = 0.3
+    bars1 = ax.bar(x - w/2, cond_vals, w, label='Conditioned', color='steelblue', alpha=0.8)
+    bars2 = ax.bar(x + w/2, uncond_vals, w, label='Unconditioned', color='lightcoral', alpha=0.8)
+    ax.set_xticks(x)
+    ax.set_xticklabels(categories)
+    ax.set_ylabel('MSE')
+    ax.set_title('Final Prediction Error')
+    ax.legend()
+    # Add improvement annotations
+    for i, (cv, uv) in enumerate(zip(cond_vals, uncond_vals)):
+        imp = (1.0 - cv / uv) * 100 if uv > 0 else 0
+        ax.text(x[i], max(cv, uv) * 1.05, f'{imp:+.0f}%',
+                ha='center', va='bottom', fontsize=10, fontweight='bold',
+                color='green' if imp > 0 else 'red')
+
+    # Panel 5: Per-sample error distribution (action frames)
+    ax = axes[1, 1]
+    with torch.no_grad():
+        cond_errs = per_sample_cond[act_mask].cpu().numpy()
+        uncond_errs = per_sample_uncond[act_mask].cpu().numpy()
+    bins = np.linspace(0, max(np.percentile(uncond_errs, 99), np.percentile(cond_errs, 99)), 40)
+    ax.hist(uncond_errs, bins=bins, alpha=0.6, label='Unconditioned', color='lightcoral')
+    ax.hist(cond_errs, bins=bins, alpha=0.6, label='Conditioned', color='steelblue')
+    ax.set_xlabel('Per-sample MSE')
+    ax.set_ylabel('Count')
+    ax.set_title('Error Distribution (action frames)')
+    ax.legend()
+
+    # Panel 6: Improvement over time
+    ax = axes[1, 2]
+    improvements = [(1.0 - c / u) * 100 if u > 0 else 0
+                    for c, u in zip(history['cond_action_loss'], history['uncond_action_loss'])]
+    ax.plot(history['epoch'], improvements, 'g-', linewidth=2)
+    ax.axhline(y=30, color='red', linestyle='--', alpha=0.7, label='30% target')
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Improvement (%)')
+    ax.set_title('Action Frame Improvement Over Training')
+    ax.legend()
+
+    plt.tight_layout()
+    plt.savefig('results/phase36a_action_jepa.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\n│  Saved results/phase36a_action_jepa.png", flush=True)
+
+    # Verdict
+    print(f"\n{'=' * 70}", flush=True)
+    if improvement_action > 30:
+        verdict = "SUCCESS"
+    elif improvement_action > 15:
+        verdict = "PARTIAL"
+    else:
+        verdict = "FAIL"
+    print(f"VERDICT: {verdict}", flush=True)
+    print(f"  Action frame improvement: {improvement_action:+.1f}% (target >30%)", flush=True)
+    print(f"  No-action improvement:    {improvement_noaction:+.1f}%", flush=True)
+    print(f"  Overall improvement:      {improvement_overall:+.1f}%", flush=True)
+    print(f"  Cond params: {cond_params:,}, Uncond params: {uncond_params:,}", flush=True)
+    print(f"{'=' * 70}", flush=True)
+
+
 def run_phase35c_corner_bg():
     """Phase 35c: Corner-based background subtraction on colored backgrounds.
 

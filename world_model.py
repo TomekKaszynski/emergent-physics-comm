@@ -2250,6 +2250,61 @@ class SlotPredictor(nn.Module):
         return pred_flat.reshape(B, self.n_slots, self.slot_dim)
 
 
+class ActionConditionedPredictor(nn.Module):
+    """Phase 36a: Action-conditioned slot dynamics predictor.
+
+    Takes slot states at time t and an action (which object, force vector),
+    predicts slot states at time t+1. Compares against unconditional baseline
+    to measure whether model learns to use action information.
+
+    Action encoding: [n_slots (one-hot which obj), 2 (fx, fy)] → Linear → 64-dim
+    Each slot gets concatenated with action embedding: [n_slots, slot_dim + action_dim]
+    MLP predicts next slot states: [n_slots, slot_dim]
+    """
+
+    def __init__(self, n_slots=3, slot_dim=64, action_dim=64, hidden_dim=256):
+        super().__init__()
+        self.n_slots = n_slots
+        self.slot_dim = slot_dim
+        self.action_dim = action_dim
+
+        # Action encoder: one-hot(n_slots) + force(2) → action_dim
+        self.action_encoder = nn.Sequential(
+            nn.Linear(n_slots + 2, action_dim),
+            nn.ReLU(),
+        )
+
+        # Predictor: flattened (slot_dim + action_dim) * n_slots → n_slots * slot_dim
+        input_dim = n_slots * (slot_dim + action_dim)
+        output_dim = n_slots * slot_dim
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_dim),
+        )
+
+    def forward(self, slots_t, action):
+        """Predict slots at t+1 from slots at t and action.
+
+        Args:
+            slots_t: [B, n_slots, slot_dim]
+            action: [B, n_slots + 2] — one-hot object index + (fx, fy)
+        Returns:
+            slots_pred: [B, n_slots, slot_dim]
+        """
+        B = slots_t.shape[0]
+        act_emb = self.action_encoder(action)  # [B, action_dim]
+        # Broadcast action to each slot
+        act_bc = act_emb.unsqueeze(1).expand(B, self.n_slots, self.action_dim)
+        combined = torch.cat([slots_t, act_bc], dim=-1)  # [B, n_slots, slot_dim + action_dim]
+        flat = combined.reshape(B, -1)
+        pred_flat = self.net(flat)
+        return pred_flat.reshape(B, self.n_slots, self.slot_dim)
+
+
 class MassClassifier(nn.Module):
     """Phase 29b: Classify object mass from centroid trajectory.
 

@@ -1123,4 +1123,30 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
   - 59 seconds total. No neural network for perception. Pure classical CV.
   - Key insight: uniform bg means corners always show bg color. Simple L2 distance cleanly separates fg/bg.
 
-**Next steps:** (1) Multi-agent version: two agents with different viewpoints communicate about mass through discrete bottleneck, (2) Non-uniform backgrounds (textured bg, gradients) — will need learned fg detection.
+---
+
+## Phase 36: Action-Conditioned Prediction
+
+### Phase 36a: Action-Conditioned JEPA
+**Date:** Feb 22 | **Duration:** 99s | **Verdict:** SUCCESS
+
+**Setup:** 3 objects, 2000 sequences, 2-4 random force interventions per sequence (7.8% of frames). Ground-truth state vectors → random orthogonal projection to 64-dim "slots". Action encoding: one-hot(3) + force(2) → Linear → 64-dim, broadcast to all slots.
+
+**Architecture:**
+- ActionConditionedPredictor: 214K params. Slots [3×64] concat action embedding [3×64] → flatten → MLP(384→256→256→192) → predicted slots [3×64]
+- Unconditional baseline: 165K params. Same MLP but without action input (192→256→256→192)
+
+**Results:**
+| Metric | Conditioned | Unconditioned | Improvement |
+|---|---|---|---|
+| Overall MSE | 0.001029 | 0.001118 | +7.9% |
+| **Action frames MSE** | **0.001084** | **0.001972** | **+45.0%** |
+| No-action MSE | 0.001024 | 0.001045 | +2.0% |
+
+- Per-object: acted object prediction improves **+65-73%**, other objects slightly worse (-6 to -8%)
+- Model correctly learns that action affects the targeted object and adjusts predictions accordingly
+- On no-action frames, conditioned model is ~equivalent to unconditional (action=zero vector → learned to ignore it)
+
+**Key insight:** The conditioned model specifically learns the effect of force on the targeted object, with per-object improvement of 65-73%. The overall improvement (7.9%) is modest because only 7.8% of frames have actions, but on those specific frames the improvement is dramatic (45%).
+
+**Next steps:** (1) Multi-agent communication with action conditioning, (2) Test with pixel-level slot representations (not just state projections).
