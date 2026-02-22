@@ -1108,4 +1108,10 @@ Shared init `N(μ, σ)` relies on random noise to differentiate slots. With 7 sl
 - SA is learning to reconstruct DINOv2 features (loss drops 3.6→1.7) but attention maps are too diffuse for binary fg/bg
 - Need: either (a) dedicated fg/bg classifier instead of SA-based separation, or (b) much sharper SA training (more epochs, stronger entropy penalty), or (c) combine SA with hue-saturation thresholding (objects are saturated, bg is desaturated)
 
-**Next steps:** (1) Phase 35b: try saturation-based fg detection (objects have high saturation from hue_to_rgb, bg has low saturation from uniform RGB), (2) Multi-agent version with different viewpoints.
+- **35b: Saturation FG FAIL** — sat>0.3 threshold gives 77% FG coverage (BG mean saturation=0.41, max=0.65!)
+  - Uniform RGB [0.2,0.6] is NOT desaturated: e.g. [0.2,0.2,0.6] has sat=0.67
+  - Count discovery 55.6%, position error 7.74px, communication 45.0%
+  - Ran in 55s (no DINOv2), but the fundamental assumption was wrong
+  - Key insight: need to constrain bg generation to be genuinely desaturated, or use a different fg detection strategy
+
+**Next steps:** (1) Fix bg generation: use grayscale or low-saturation bg (HSV with S<0.1), then saturation thresholding will work, (2) Or: directly match object hues against known palette without fg detection (objects have well-separated vivid hues, bg is random — cluster all saturated pixels by hue regardless of fg/bg).
