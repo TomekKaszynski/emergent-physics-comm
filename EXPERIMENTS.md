@@ -2529,3 +2529,104 @@ Fix Phase 45's slot consistency problem by adding temporal consistency loss. Tes
 **Key Insight**: For BO-QSA (per-slot learnable init), temporal consistency via SAVi propagation is counterproductive. The learnable init IS the mechanism for stable identity — it's already temporally consistent by construction. The real problem from Phase 45 was insufficient decomposition quality, not tracking methodology.
 
 **Runtime**: 1410s (~23.5 min). DINOv2 extraction: cached. SA training: 1358s.
+
+---
+
+## Phase 45c: Contrastive Slot Attention (InfoNCE, α=1.0, τ=0.1)
+
+**Date**: 2026-02-24
+**Code**: `run_phase45c_contrastive_perception()` in run_all.py
+**Status**: FAIL (collapsed to 1/7 active slots by epoch 20)
+
+### Goal
+
+Replace MSE temporal loss (dead gradients in 45b) with InfoNCE contrastive loss. Cross-video negatives should give strong gradients even between similar slots. Based on SlotContrast (CVPR 2025).
+
+### Config
+
+α=1.0 (contrastive weight, warmup 10ep), τ=0.1 (temperature), SAVi propagation with detach, cross-video batch sampling via round-robin, 100 videos, 100 epochs.
+
+### Training (killed at epoch 60)
+
+| Epoch | Recon | Ctr | Active | Entropy |
+|-------|-------|-----|--------|---------|
+| 1 | 6.122 | 4.97 | 7/7 | 1.000 |
+| 10 | 3.036 | 1.25 | 1/7 | 0.259 |
+| 20 | 2.269 | 0.83 | 1/7 | 0.005 |
+| 40 | 1.981 | 0.87 | 1/7 | 0.000 |
+| 60 | 1.871 | 0.66 | 1/7 | 0.000 |
+
+### Analysis
+
+**Mode collapse**: InfoNCE at α=1.0 with τ=0.1 is too aggressive. The peaky softmax (τ=0.1) creates extreme gradients that kill all but one slot by epoch 10. One slot reconstructs everything; the other 6 are dormant. The contrastive loss is trivially satisfied with one active slot.
+
+**VERDICT: FAIL** — Complete slot collapse. α=1.0 + τ=0.1 is too strong for this architecture/data.
+
+**Runtime**: Killed at epoch 60 (~14 min).
+
+---
+
+## Phase 45d: Contrastive Slot Attention (softer τ=0.5, α=0.3, entropy reg β=0.1)
+
+**Date**: 2026-02-24
+**Code**: `run_phase45d_contrastive_perception()` in run_all.py
+**Visualization**: results/phase45d_contrastive_perception.png
+**Status**: FAIL
+
+### Goal
+
+Fix 45c's collapse with three changes: (1) softer temperature τ=0.5, (2) lower contrastive weight α=0.3, (3) attention entropy regularization β=0.1 to prevent slot collapse.
+
+### Config
+
+| Parameter | 45d | 45c |
+|-----------|-----|-----|
+| α (contrastive) | 0.3 | 1.0 |
+| τ (temperature) | 0.5 | 0.1 |
+| β (entropy reg) | 0.1 | — |
+| Warmup | 10 ep | 10 ep |
+
+### Training Progression
+
+| Epoch | Recon | Ctr | Ent Loss | Sim | Active | Entropy |
+|-------|-------|-----|----------|-----|--------|---------|
+| 1 | 6.121 | 5.36 | -5.545 | 0.958 | 5/7 | 1.000 |
+| 10 | 3.034 | 4.58 | -5.545 | 0.951 | 5/7 | 0.998 |
+| 20 | 2.207 | 4.05 | -5.539 | 0.967 | 7/7 | 0.882 |
+| 30 | 2.004 | 3.89 | -5.533 | 0.972 | 7/7 | 0.724 |
+| 40 | 1.893 | 3.83 | -5.536 | 0.973 | 7/7 | 0.662 |
+| 50 | 1.824 | 3.80 | -5.529 | 0.974 | 7/7 | 0.629 |
+| 60 | 1.766 | 3.76 | -5.519 | 0.972 | 7/7 | 0.598 |
+| 70 | 1.730 | 3.75 | -5.515 | 0.972 | 7/7 | 0.556 |
+| 80 | 1.710 | 3.73 | -5.513 | 0.973 | 7/7 | 0.540 |
+| 90 | 1.702 | 3.73 | -5.513 | 0.973 | 7/7 | 0.540 |
+| 100 | 1.699 | 3.73 | -5.513 | 0.973 | 7/7 | 0.544 |
+
+### Results
+
+| Metric | 45d | 45c | 45b | 45 | Target |
+|--------|-----|-----|-----|-----|--------|
+| Tracking error | 31.9% | — | 31.1% | 28.8% | <20% |
+| Consistency | 0.5% | — | 0.9% | 3.4% | >30% |
+| Binding | 100% | — | 100% | 100% | >85% |
+| Final entropy | 0.544 | 0.000 | 0.862 | 0.488 | — |
+| Active slots | 7/7 | 1/7 | 5/7 | 7/7 | — |
+
+### Analysis
+
+**No collapse — entropy reg works**: All 7 slots active throughout, entropy 0.544 at epoch 100. Comparable to Phase 45's 0.488. The β=0.1 entropy regularization successfully prevents the contrastive collapse seen in 45c.
+
+**Positive similarity high (0.97)**: The contrastive loss is learning temporal consistency — slot vectors are stable across consecutive frames. This is the first experiment where temporal consistency is actively being learned.
+
+**But tracking is WORSE than Phase 45**: Despite healthy training metrics, tracking error (31.9%) and consistency (0.5%) are worse than Phase 45's baseline (28.8% / 3.4%). The SAVi propagation at inference time (Stage 4) produces different attention patterns than the learnable init used at training time.
+
+**Root cause — train/test mismatch**: During training, frame t always uses learnable init (clean decomposition). Frame t+1 uses SAVi propagation from detached slots. But at inference, ALL frames except the first use SAVi propagation (128 consecutive frames). Error accumulates over 128 steps of sequential propagation, even though the model only trained on 1-step propagation.
+
+**VERDICT: FAIL** — The contrastive + entropy approach successfully solves the collapse problem and learns temporal consistency, but the sequential inference propagation degrades over 128 frames. The fundamental issue is the gap between training (1-step propagation) and inference (128-step propagation).
+
+**Possible fixes for future phases**:
+1. Use learnable init for ALL frames at inference (no SAVi propagation) + Hungarian matching for tracking
+2. Train with multi-step propagation (not just 1-step)
+3. Remove SAVi propagation entirely — use contrastive loss with Hungarian-matched slot pairs
+
+**Runtime**: 1409s (~23.5 min). DINOv2 extraction: cached. SA training: 1351s.
