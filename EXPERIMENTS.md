@@ -1912,10 +1912,51 @@ Two fully independent sender/receiver pairs. No shared parameters. No joint trai
 | 41f | 89.5% | 64.0% | 22.5% | 76.5% | Separate pathways |
 | 41g | 89.5% | 62.9% | 24.0% | 78.5% | Direct restitution |
 
-**Key insights:**
-- **Separate pathways fixed stability**: mass sender (356 params) never collapsed with τ 2.0→0.5. Simpler models are more Gumbel-stable
-- **Mass test accuracy recovered**: 89.5% (vs 86.5% in 41d), approaching Phase 41's 92.5%. No shared embed corruption
-- **Elasticity overfitting is fundamental**: all variants show ~63-67% val → ~22-26% test gap regardless of feature choice (4 hand-crafted features in 41f vs 1 direct restitution in 41g). The noise is in the perception pipeline, not the features
-- **Direct restitution measurement doesn't help**: e = |v_rel_after/v_rel_before| from perceived positions is equally noisy as hand-crafted features. Hue-centroid position noise (~1-2px) propagates through velocity estimation and collision normal computation
-- **Mass communication is the key capability**: planning success (76-82%) is driven entirely by mass identification. Elasticity adds negligible value over 5-step horizons
-- **The elasticity problem is a perception limit**: to solve it, need either (a) much better position estimation (<0.5px), (b) learned temporal features (CNN on trajectories), or (c) direct pixel-level physics inference bypassing the perception bottleneck
+## Phase 41h: GT Position Diagnostic
+**Date:** Feb 23 | **Duration:** ~4min (245s)
+
+**DEFINITIVE TEST**: Identical to 41g (direct restitution, separate pathways) except perception uses ground-truth positions and GT-derived velocities instead of hue-centroid estimates. If elasticity jumps above 60% test → perception is bottleneck. If stays ~25% → problem is elsewhere.
+
+**Training:**
+- Mass pathway: peaked at 87.0% (epoch 200), stable throughout
+- Elast pathway: peaked at 57.0% (epoch 80), val accuracy similar to perceived-position variants
+
+**Results:**
+
+| Metric | 41g (perceived) | 41h (GT) | Delta |
+|---|---|---|---|
+| Mass accuracy | 89.5% | 82.5% | -7.0% |
+| Elasticity accuracy | 24.0% | 21.5% | -2.5% |
+| Joint accuracy | 22.0% | 18.0% | -4.0% |
+| Full pipeline | 78.5% | 72.5% | -6.0% |
+| Oracle comm | 86.5% | 86.0% | -0.5% |
+
+**Verdict: FAIL** — GT positions did NOT help elasticity. 21.5% test is virtually identical to 24% with perceived positions.
+
+**CONCLUSION: Perception noise is NOT the bottleneck.**
+
+The overfitting gap (57% val → 21.5% test with GT) persists even with perfect positions. The root cause is:
+1. **Restitution is inherently hard to communicate via discrete tokens**: e is a continuous value (0.5 vs 1.0) that must be quantized into 4 Gumbel tokens. The sender learns to map training-set restitution distributions but fails to generalize.
+2. **Small collision sample size**: each sequence has 2-4 interventions, and not all produce clean collisions. The restitution estimate from 1-3 collision measurements per object is inherently noisy even with GT positions.
+3. **The communication bottleneck is the limit**: 4-token vocabulary (2 bits) may simply be insufficient for encoding a continuous physical property that varies subtly between objects.
+
+**Phase 41 series summary (final):**
+
+| Phase | Mass (test) | Elast (val) | Elast (test) | Plan | Key change |
+|---|---|---|---|---|---|
+| 41 | **92.5%** | 61.0% | 19.0% | **82.0%** | Joint training |
+| 41b | 76.5% | 59.7% | 21.5% | 69.0% | Wider gap + temp floor |
+| 41c | 32.0% | — | 12.5% | 35.0% | Sequential (bug) |
+| 41d | 86.5% | 66.7% | 26.0% | 77.5% | Checkpoint + τ floor |
+| 41e | 80.5% | 66.5% | 25.0% | 78.0% | More data + dropout |
+| 41f | 89.5% | 64.0% | 22.5% | 76.5% | Separate pathways |
+| 41g | 89.5% | 62.9% | 24.0% | 78.5% | Direct restitution |
+| 41h | 82.5% | 57.0% | 21.5% | 72.5% | **GT positions** |
+
+**Key insights across 8 experiments:**
+- **Elasticity test accuracy is ~20-26% regardless of EVERYTHING**: architecture, training procedure, features, data amount, regularization, and even perfect GT positions
+- **The val→test gap is NOT perception noise**: it persists with GT data (57% → 21.5%)
+- **Restitution communication via Gumbel-softmax is fundamentally limited**: the 4-token discrete bottleneck cannot reliably encode a continuous property from noisy collision statistics
+- **Mass communication works well**: 82-92% across all variants, stable with separate pathways
+- **Planning success (72-82%) is driven by mass identification**: elasticity adds negligible value over 5-step horizons
+- **Recommendation**: stop grinding on elasticity communication. Either (a) increase token vocabulary substantially (16+ tokens), (b) use continuous communication for elasticity, or (c) accept mass-only communication and move to other capabilities
