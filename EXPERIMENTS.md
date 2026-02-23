@@ -2448,3 +2448,84 @@ Entropy: 1.000 → 0.975 → 0.927 → 0.600 → 0.488 over 100 epochs. All 7 sl
 **VERDICT: FAIL** — Tracking error 28.8% (target <10%), consistency 3.4% (target >80%). However, DINOv2 features are strong and slot attention shows partial decomposition. More data, more epochs, and potentially augmentation or temporal consistency losses would improve results.
 
 **Runtime**: 580s (~10 min). DINOv2 extraction: 16s (cached). SA training: 561s.
+
+---
+
+## Phase 45b: Temporal Slot Attention on CLEVRER (SAVi-style)
+
+**Date**: 2026-02-23
+**Code**: `run_phase45b_temporal_perception()` in run_all.py
+**Visualization**: results/phase45b_temporal_perception.png
+**Status**: FAIL
+
+### Goal
+
+Fix Phase 45's slot consistency problem by adding temporal consistency loss. Test on 100 CLEVRER videos (5× Phase 45) with SAVi-style slot propagation — frame t+1's slot attention is initialized from frame t's output slots instead of learnable init.
+
+### Key Changes from Phase 45
+
+1. **5× more data**: 100 videos / 12,800 frames (vs 20 videos / 2,560 frames)
+2. **Temporal loss**: MSE between consecutive frame slot vectors, λ=0.1 with 20-epoch warmup
+3. **SAVi-style slot propagation**: Frame t+1 SA initialized from slots_t.detach()
+4. **Stride-4 frame pairs**: 2,480 train pairs, 620 val pairs (not all consecutive pairs)
+5. **Batch 32**: vs 16 in Phase 45
+
+### Config
+
+| Parameter | Value |
+|-----------|-------|
+| Videos | 100 |
+| Frames | 12,800 |
+| Slots | 7 |
+| Slot dim | 64 |
+| SA iterations | 5 |
+| Epochs | 100 |
+| Batch size | 32 |
+| LR | 1e-4 (cosine schedule) |
+| λ_temporal | 0.1 (warmup 0→0.1 over 20 epochs) |
+| Pair stride | 4 |
+| Temporal mechanism | SAVi-style slot propagation |
+
+### Training Progression
+
+| Epoch | Recon | Temp | λ_eff | Active | Entropy |
+|-------|-------|------|-------|--------|---------|
+| 1 | 6.121 | 0.028 | 0.005 | 4/7 | 1.000 |
+| 10 | 3.115 | 0.008 | 0.050 | 3/7 | 1.000 |
+| 20 | 2.385 | 0.014 | 0.100 | 2/7 | 1.000 |
+| 30 | 2.089 | 0.020 | 0.100 | 5/7 | 1.000 |
+| 40 | 1.933 | 0.022 | 0.100 | 7/7 | 1.000 |
+| 50 | 1.856 | 0.024 | 0.100 | 7/7 | 1.000 |
+| 60 | 1.813 | 0.024 | 0.100 | 7/7 | 0.997 |
+| 70 | 1.783 | 0.026 | 0.100 | 4/7 | 0.929 |
+| 80 | 1.759 | 0.029 | 0.100 | 7/7 | 0.887 |
+| 90 | 1.748 | 0.030 | 0.100 | 5/7 | 0.867 |
+| 100 | 1.745 | 0.030 | 0.100 | 5/7 | 0.862 |
+
+### Results
+
+| Metric | Phase 45b | Phase 45 | Target |
+|--------|-----------|----------|--------|
+| Tracking error (mean) | 31.1% | 28.8% | <15% |
+| Tracking error (median) | 29.2% | 26.8% | <15% |
+| Slot consistency | 0.9% | 3.4% | >50% |
+| Binding accuracy | 100.0% | 100.0% | >85% |
+| Final entropy | 0.862 | 0.488 | — |
+| Active slots | 5/7 | 7/7 | — |
+| Best val loss | 1.711 | 1.679 | — |
+
+### Analysis
+
+**SAVi propagation slows decomposition**: Entropy only reached 0.862 (vs 0.488 in Phase 45). By replacing the per-slot learnable init with propagated slots for frame t+1, we lose the symmetry-breaking mechanism that drives differentiation. The learned init vectors break symmetry because each slot starts in a different region of representation space; propagated slots from uniform frame t outputs are all similar, preventing specialization.
+
+**Temporal loss is non-zero but double-edged**: Unlike the dead temporal loss in failed IoU-matching attempts (0.0000), SAVi gives real gradient (0.03). But the temporal consistency objective conflicts with the reconstruction objective — it regularizes slots toward similarity across frames, directly opposing the pressure to specialize.
+
+**More data didn't help**: Despite 5× more videos, all metrics are worse than Phase 45. The additional data diversity may actually make decomposition harder — more varied scenes require stronger specialization pressure.
+
+**Consistency dropped to 0.9%**: With SAVi propagation and no Hungarian matching, slot identity should be stable by construction. The 0.9% consistency shows slots are consistently assigned to the same regions but those regions don't correspond to objects — the decomposition is too coarse (entropy 0.862 = near-uniform attention).
+
+**VERDICT: FAIL** — All metrics worse than Phase 45. SAVi-style slot propagation hurts the BO-QSA decomposition mechanism by removing per-slot learnable init from half the training forward passes. The temporal consistency loss, while non-zero, opposes slot specialization.
+
+**Key Insight**: For BO-QSA (per-slot learnable init), temporal consistency via SAVi propagation is counterproductive. The learnable init IS the mechanism for stable identity — it's already temporally consistent by construction. The real problem from Phase 45 was insufficient decomposition quality, not tracking methodology.
+
+**Runtime**: 1410s (~23.5 min). DINOv2 extraction: cached. SA training: 1358s.
