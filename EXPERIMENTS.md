@@ -1841,3 +1841,35 @@ Fixed 41c bugs: (1) save best checkpoint during each step, (2) τ floor at 1.0 (
 - **Mass still can't reach 92.5%**: Phase 41's joint training reached 92.5% mass, but sequential training plateaus at ~86%. The shared embedding layer may benefit from joint optimization signals
 - **Planning remains strong despite weak elasticity**: 77.5% comes almost entirely from mass communication. Over 5 steps, elasticity barely matters — confirming that mass identification is the key capability for planning
 - **The 66.7% val elasticity is real but fragile**: the receiver learned to decode elasticity features for the training distribution but these features don't transfer to unseen scenes. Need either: (a) more robust elasticity features, (b) data augmentation, or (c) fundamentally different approach to elasticity observation
+
+---
+
+## Phase 41e: Best of Everything
+**Date:** Feb 23 | **Duration:** ~8min (483s)
+
+Combined best approaches: aggressive τ for mass (2.0→0.5 + checkpoint), 4000 sequences (2× more diversity), dropout(0.2) on elasticity features.
+
+**Training:**
+- Step 1 (mass, τ 2.0→0.5): collapsed at epoch 60 (τ=1.56) — earlier than usual with 4000 seqs. Best: 84.1%
+- Step 2 (elast, τ 2.0→1.0): collapsed at epoch 140 (τ=1.30, above floor). Best: elast=66.5%, mass=81.4%
+- Step 3 (joint, τ=1.0): collapsed immediately at epoch 10
+
+**Results:**
+
+| Metric | Phase 41d | Phase 41e | Target |
+|---|---|---|---|
+| Mass accuracy | **86.5%** | 80.5% | >93% |
+| Elasticity accuracy | 26.0% | 25.0% | >40% |
+| Joint accuracy | 22.5% | 18.0% | — |
+| Full pipeline | 77.5% | 78.0% | >80% |
+| Oracle comm | 87.0% | **91.5%** | — |
+
+**Verdict: FAIL** — Worse than 41d on mass (80.5% vs 86.5%). Aggressive τ + more data = earlier collapse.
+
+**Key insights:**
+- **Shared embedding layer is a critical bug**: `receiver.embed` is in `elast_params` — training elasticity changes mass embedding, causing mass to drop from 81.5%→34.1% during Step 2 even though mass_head was "frozen". Fix: separate embeddings for mass/elasticity tokens
+- **More data accelerates collapse**: with 4000 seqs, Step 1 collapsed at epoch 60 (vs epoch 180 with 2000). More gradient steps per epoch → faster instability accumulation
+- **Aggressive τ (2.0→0.5) is worse for mass**: best was only 84.1% (vs 85.8% with 2.0→1.0). The checkpoint saved too early before the model had converged
+- **Dropout didn't help elasticity generalization**: 25.0% test (vs 26.0% in 41d). The overfitting is at a deeper level than feature noise
+- **Oracle planning improved to 91.5%**: JEPA benefited from 4000 sequences (loss 0.000278 vs 0.000459). More data helps the dynamics model even if communication doesn't improve
+- **The Gumbel-softmax instability is the dominant problem**: every experiment variant collapses. The architecture needs fundamental change: either (a) separate embed layers, (b) no Gumbel (use continuous messages), or (c) much larger capacity to absorb gradient noise
