@@ -1873,3 +1873,47 @@ Combined best approaches: aggressive τ for mass (2.0→0.5 + checkpoint), 4000 
 - **Dropout didn't help elasticity generalization**: 25.0% test (vs 26.0% in 41d). The overfitting is at a deeper level than feature noise
 - **Oracle planning improved to 91.5%**: JEPA benefited from 4000 sequences (loss 0.000278 vs 0.000459). More data helps the dynamics model even if communication doesn't improve
 - **The Gumbel-softmax instability is the dominant problem**: every experiment variant collapses. The architecture needs fundamental change: either (a) separate embed layers, (b) no Gumbel (use continuous messages), or (c) much larger capacity to absorb gradient noise
+
+---
+
+## Phase 41f: Completely Separate Pathways
+**Date:** Feb 23 | **Duration:** ~4min (230s)
+
+Two fully independent sender/receiver pairs. No shared parameters. No joint training.
+- Mass: MassSender(6→32→4) + MassReceiver, 3,767 params, τ 2.0→0.5
+- Elast: ElastSender(4→32→4) + ElastReceiver, 3,703 params, τ 2.0→1.0
+
+**Training:**
+- Mass pathway: peaked at 86.3% (epoch 80), **no collapse** — simpler model is stable
+- Elast pathway: peaked at 64.0% (epoch 40), collapsed at epoch 140 (τ=1.30)
+- Total Stage 5 time: 25s (fast — no joint training overhead)
+
+**Results:**
+
+| Metric | 41d | 41f | Target |
+|---|---|---|---|
+| Mass accuracy | 86.5% | **89.5%** | >93% |
+| Elasticity accuracy | 26.0% | 22.5% | >60% val |
+| Joint accuracy | 22.5% | 19.5% | — |
+| Full pipeline | 77.5% | 76.5% | >80% |
+| Oracle comm | 87.0% | 86.0% | — |
+
+**Verdict: PARTIAL** — Mass stable and close to target (89.5%), but elasticity test accuracy still ~random.
+
+**Phase 41 series summary:**
+
+| Phase | Mass (test) | Elast (val) | Elast (test) | Plan | Key change |
+|---|---|---|---|---|---|
+| 41 | **92.5%** | 61.0% | 19.0% | **82.0%** | Joint training |
+| 41b | 76.5% | 59.7% | 21.5% | 69.0% | Wider gap + temp floor |
+| 41c | 32.0% | — | 12.5% | 35.0% | Sequential (bug) |
+| 41d | 86.5% | 66.7% | 26.0% | 77.5% | Checkpoint + τ floor |
+| 41e | 80.5% | 66.5% | 25.0% | 78.0% | More data + dropout |
+| 41f | 89.5% | 64.0% | 22.5% | 76.5% | Separate pathways |
+
+**Key insights:**
+- **Separate pathways fixed stability**: mass sender (356 params) never collapsed with τ 2.0→0.5. Simpler models are more Gumbel-stable
+- **Mass test accuracy recovered**: 89.5% (vs 86.5% in 41d), approaching Phase 41's 92.5%. No shared embed corruption
+- **Elasticity overfitting is fundamental**: all variants show ~64% val → ~22-26% test gap. The 4 elasticity features (speed retention, decay) are not generalizable visual signals — they capture scene-specific noise patterns
+- **Elasticity from visual perception may be unsolvable with current features**: the features were hand-designed based on what collisions look like. A learned feature extractor (e.g., temporal CNN on position trajectories) might extract more robust signals
+- **Mass communication is the key capability**: planning success (76-82%) is driven entirely by mass identification. Elasticity adds negligible value over 5-step horizons
