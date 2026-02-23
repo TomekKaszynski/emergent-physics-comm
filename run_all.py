@@ -18132,6 +18132,1270 @@ def run_phase41j_fsq():
 
 
 
+def run_phase43_uncertainty():
+    """Phase 43: Communication under uncertainty — train on 3, test on 5.
+
+    Variable observation quality. Emergent epistemic signaling.
+    Topographic similarity. Target: full obs matches 41m, partial degrades gracefully.
+    """
+    import random
+    import math
+    import copy
+
+    print("=" * 70, flush=True)
+    print("PHASE 43: Communication Under Uncertainty", flush=True)
+    print("  Variable observation, emergent epistemic signaling", flush=True)
+    print("=" * 70, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    n_obj = 3
+    slot_dim = 64
+    S = 64
+    vmax = 10.0
+    K = 5
+    n_candidates = 128
+    n_elite = 16
+    n_rounds = 3
+    force_range = 0.5
+    success_thresh = 10.0
+    n_frames = 80
+    vocab_size = 4
+    texture_types = ['checkerboard', 'stripes', 'gradient', 'noise', 'dots']
+
+    # ── Rendering helpers ──────────────────────────────────────
+    def hue_to_rgb(h):
+        h6 = h * 6.0
+        sector = int(h6) % 6
+        frac = h6 - int(h6)
+        if sector == 0: base = np.array([1.0, frac, 0.0])
+        elif sector == 1: base = np.array([1.0 - frac, 1.0, 0.0])
+        elif sector == 2: base = np.array([0.0, 1.0, frac])
+        elif sector == 3: base = np.array([0.0, 1.0 - frac, 1.0])
+        elif sector == 4: base = np.array([frac, 0.0, 1.0])
+        else: base = np.array([1.0, 0.0, 1.0 - frac])
+        return np.clip(base * 0.7 + 0.3, 0.15, 1.0)
+
+    def generate_texture(radius, texture_type, base_hue):
+        d = 2 * radius + 1
+        base = hue_to_rgb(base_hue)
+        yy, xx = np.mgrid[:d, :d]
+        cy_t, cx_t = radius, radius
+        if texture_type == 'checkerboard':
+            freq = random.choice([3, 4, 5])
+            pattern = ((xx // freq + yy // freq) % 2).astype(np.float32) * 0.6 + 0.4
+        elif texture_type == 'stripes':
+            freq = random.choice([3, 4, 5])
+            angle = random.uniform(0, np.pi)
+            rotated = xx * np.cos(angle) + yy * np.sin(angle)
+            pattern = (np.sin(rotated * 2 * np.pi / freq) * 0.3 + 0.7).astype(np.float32)
+        elif texture_type == 'gradient':
+            angle = random.uniform(0, 2 * np.pi)
+            grad = (xx - cx_t) * np.cos(angle) + (yy - cy_t) * np.sin(angle)
+            grad = grad / (radius + 1e-8)
+            pattern = (grad * 0.3 + 0.7).astype(np.float32)
+        elif texture_type == 'noise':
+            pattern = np.random.uniform(0.3, 1.0, (d, d)).astype(np.float32)
+        elif texture_type == 'dots':
+            pattern = np.ones((d, d), dtype=np.float32) * 0.5
+            spacing = random.choice([4, 5, 6])
+            for dy in range(0, d, spacing):
+                for dx in range(0, d, spacing):
+                    dist_sq = (yy - dy) ** 2 + (xx - dx) ** 2
+                    pattern[dist_sq <= 1] = 1.0
+        else:
+            pattern = np.ones((d, d), dtype=np.float32) * 0.8
+        patch = np.zeros((3, d, d), dtype=np.float32)
+        for c in range(3):
+            patch[c] = base[c] * pattern
+        dist_sq = (xx - cx_t) ** 2 + (yy - cy_t) ** 2
+        mask = dist_sq <= radius ** 2
+        return patch, mask
+
+    def render_frame(objects, obj_textures, bg_color):
+        img = np.zeros((3, S, S), dtype=np.float32)
+        for c in range(3):
+            img[c, :, :] = bg_color[c]
+        for oi_idx, obj in enumerate(objects):
+            r = obj['r']
+            cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+            patch, mask = obj_textures[oi_idx]
+            d = 2 * r + 1
+            for dy in range(d):
+                for dx in range(d):
+                    if mask[dy, dx]:
+                        px = cx_i - r + dx
+                        py = cy_i - r + dy
+                        if 0 <= px < S and 0 <= py < S:
+                            for c in range(3):
+                                img[c, py, px] = patch[c, dy, dx]
+        return img
+
+    def physics_step(objects, track_collisions=False):
+        """Physics with elasticity: coefficient of restitution."""
+        n = len(objects)
+        collisions = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                oi_o, oj_o = objects[i], objects[j]
+                dx_c = oj_o['cx'] - oi_o['cx']
+                dy_c = oj_o['cy'] - oi_o['cy']
+                dist = math.hypot(dx_c, dy_c)
+                min_dist = oi_o['r'] + oj_o['r']
+                if dist < min_dist and dist > 0.1:
+                    nx, ny = dx_c / dist, dy_c / dist
+                    dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                          (oi_o['vy'] - oj_o['vy']) * ny
+                    if dvn > 0:
+                        m1, m2 = oi_o['mass'], oj_o['mass']
+                        e = (oi_o['elasticity'] + oj_o['elasticity']) / 2
+                        imp_f = (1 + e) * dvn / (m1 + m2)
+                        dv_i = imp_f * m2
+                        dv_j = imp_f * m1
+                        if track_collisions:
+                            collisions.append((i, j, dv_i, dv_j))
+                        oi_o['vx'] -= imp_f * m2 * nx
+                        oi_o['vy'] -= imp_f * m2 * ny
+                        oj_o['vx'] += imp_f * m1 * nx
+                        oj_o['vy'] += imp_f * m1 * ny
+                        overlap = min_dist - dist
+                        oi_o['cx'] -= overlap * nx * 0.5
+                        oi_o['cy'] -= overlap * ny * 0.5
+                        oj_o['cx'] += overlap * nx * 0.5
+                        oj_o['cy'] += overlap * ny * 0.5
+        for obj in objects:
+            obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+            r = obj['r']
+            e = obj['elasticity']
+            if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -e
+            if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -e
+            if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -e
+            if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -e
+        return collisions if track_collisions else None
+
+    def objects_to_state(objects):
+        """7-dim state: cx, cy, vx, vy, r, mass, elasticity."""
+        state = np.zeros((len(objects), 7), dtype=np.float32)
+        for oi, obj in enumerate(objects):
+            state[oi] = [obj['cx'] / S, obj['cy'] / S, obj['vx'] / vmax,
+                         obj['vy'] / vmax, obj['r'] / S, obj['mass'] / 3.0,
+                         obj['elasticity']]
+        return state
+
+    def extract_features(positions, collision_dvs, restitution_measurements):
+        """7-dim features: 6 mass-related + 1 restitution."""
+        pos = torch.tensor(positions, dtype=torch.float32)
+        v = pos[1:] - pos[:-1]
+        speed = v.norm(dim=-1)
+        dv = v[1:] - v[:-1]
+        dv_mag = dv.norm(dim=-1)
+        dv_threshold = 0.02
+        coll_mask = dv_mag > dv_threshold
+        n_coll = coll_mask.float().sum().item()
+        avg_dv_coll = dv_mag[coll_mask].mean().item() if n_coll > 0 else 0.0
+        max_dv = dv_mag.max().item()
+        avg_speed = speed.mean().item()
+        speed_var = speed.var().item()
+        if len(collision_dvs) > 0:
+            ratios = [my / partner for my, partner in collision_dvs if partner > 1e-8]
+            avg_dv_ratio = np.mean(ratios) if ratios else 1.0
+        else:
+            avg_dv_ratio = 1.0
+        nf = len(positions)
+        # Mass features (6)
+        mass_feats = [avg_dv_ratio, avg_dv_coll, max_dv,
+                      avg_speed, speed_var, n_coll / max(nf - 2, 1)]
+        # Restitution feature (1): mean measured e
+        if len(restitution_measurements) > 0:
+            mean_restitution = float(np.mean(restitution_measurements))
+        else:
+            mean_restitution = 0.75  # default midpoint
+        return mass_feats + [mean_restitution]
+
+    def rgb_to_hue_vectorized(rgb):
+        r, g, b = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+        cmax = np.maximum(np.maximum(r, g), b)
+        cmin = np.minimum(np.minimum(r, g), b)
+        delta = cmax - cmin
+        hue = np.zeros(len(rgb), dtype=np.float32)
+        mask_r = (cmax == r) & (delta > 0.01)
+        hue[mask_r] = (((g[mask_r] - b[mask_r]) / delta[mask_r]) % 6) / 6.0
+        mask_g = (cmax == g) & (delta > 0.01) & ~mask_r
+        hue[mask_g] = ((b[mask_g] - r[mask_g]) / delta[mask_g] + 2) / 6.0
+        mask_b = (cmax == b) & (delta > 0.01) & ~mask_r & ~mask_g
+        hue[mask_b] = ((r[mask_b] - g[mask_b]) / delta[mask_b] + 4) / 6.0
+        achromatic = delta <= 0.01
+        hue[achromatic] = -1.0
+        sat = np.where(cmax > 0.01, delta / cmax, 0.0)
+        return hue, sat, cmax
+
+    def hue_distance(h1, h2):
+        d = np.abs(h1 - h2)
+        return np.minimum(d, 1.0 - d)
+
+    def get_corner_bg(img):
+        corners = []
+        for cy_s, cx_s in [(0, 0), (0, S-2), (S-2, 0), (S-2, S-2)]:
+            for dy in range(2):
+                for dx in range(2):
+                    corners.append(img[:, cy_s + dy, cx_s + dx])
+        return np.mean(corners, axis=0)
+
+    pixel_coords_y = np.repeat(np.arange(S, dtype=np.float32)[:, None], S, axis=1).flatten()
+    pixel_coords_x = np.repeat(np.arange(S, dtype=np.float32)[None, :], S, axis=0).flatten()
+    bg_dist_threshold = 0.15
+
+    def smooth_positions(pos_arr):
+        if len(pos_arr) < 3:
+            return pos_arr.copy()
+        smoothed = pos_arr.copy()
+        for t in range(1, len(pos_arr) - 1):
+            smoothed[t] = (pos_arr[t-1] + pos_arr[t] + pos_arr[t+1]) / 3
+        return smoothed
+
+    def perceive_sequence(objects_init, n_frames_p, seed_offset, obs_starts=None):
+        """Render + perceive, returning 8-dim features per object.
+        obs_starts: list of start frames per object (0=full, 40=partial, n_frames=unobserved).
+        Returns 8-dim features: 7 physics + 1 obs_confidence."""
+        n_obj_p = len(objects_init)
+        if obs_starts is None:
+            obs_starts = [0] * n_obj_p  # full observation for all
+        rng_state = random.getstate()
+        np_rng_state = np.random.get_state()
+        random.seed(seed_offset)
+        np.random.seed(seed_offset)
+
+        bg_color = np.array([random.uniform(0.2, 0.6),
+                             random.uniform(0.2, 0.6),
+                             random.uniform(0.2, 0.6)], dtype=np.float32)
+        hue_offset = random.uniform(0, 1)
+        obj_hues = [(hue_offset + oi / n_obj_p) % 1.0 for oi in range(n_obj_p)]
+
+        objects = copy.deepcopy(objects_init)
+        obj_textures = []
+        for oi in range(n_obj_p):
+            tex_type = random.choice(texture_types)
+            patch, mask = generate_texture(objects[oi]['r'], tex_type, obj_hues[oi])
+            obj_textures.append((patch, mask))
+
+        random.setstate(rng_state)
+        np.random.set_state(np_rng_state)
+
+        gt_positions = [[None] * n_frames_p for _ in range(n_obj_p)]
+        frames = []
+        for fi in range(n_frames_p):
+            for oi in range(n_obj_p):
+                gt_positions[oi][fi] = [objects[oi]['cx'] / S, objects[oi]['cy'] / S]
+            frames.append(render_frame(objects, obj_textures, bg_color))
+            physics_step(objects)
+
+        # Perceive: discover hues
+        n_bins = 72
+        hue_thresh = 0.5 / n_obj_p
+        img0 = frames[0]
+        bg_est = get_corner_bg(img0)
+        pix_rgb0 = img0.transpose(1, 2, 0).reshape(-1, 3)
+        rgb_dist0 = np.sqrt(((pix_rgb0 - bg_est[None, :]) ** 2).sum(axis=1))
+        fg0 = rgb_dist0 > bg_dist_threshold
+        pix_hues0, pix_sats0, _ = rgb_to_hue_vectorized(pix_rgb0)
+        good = fg0 & (pix_hues0 >= 0) & (pix_sats0 > 0.1)
+        good_hues0 = pix_hues0[good]
+
+        hist, bin_edges = np.histogram(good_hues0, bins=n_bins, range=(0, 1))
+        kernel = np.array([1, 2, 3, 2, 1], dtype=np.float32)
+        kernel /= kernel.sum()
+        hist_smooth = np.convolve(np.tile(hist, 3), kernel, mode='same')[n_bins:2*n_bins]
+        min_height = max(hist_smooth.max() * 0.05, 3)
+        peaks = []
+        for bi in range(n_bins):
+            left = hist_smooth[(bi - 1) % n_bins]
+            right = hist_smooth[(bi + 1) % n_bins]
+            if hist_smooth[bi] > left and hist_smooth[bi] > right and hist_smooth[bi] >= min_height:
+                peaks.append(((bin_edges[bi] + bin_edges[bi + 1]) / 2, hist_smooth[bi]))
+        merged = []
+        used = set()
+        for i, (h1, c1) in enumerate(peaks):
+            if i in used: continue
+            group = [(h1, c1)]
+            for j, (h2, c2) in enumerate(peaks):
+                if j <= i or j in used: continue
+                if hue_distance(h1, h2) < 0.05:
+                    group.append((h2, c2))
+                    used.add(j)
+            merged.append(max(group, key=lambda x: x[1])[0])
+
+        disc_hue_to_obj = {}
+        gt_used = set()
+        disc_coms = []
+        for dh in merged:
+            h_dist = hue_distance(pix_hues0, dh)
+            sel = fg0 & (pix_hues0 >= 0) & (h_dist < hue_thresh)
+            if sel.sum() > 0:
+                disc_coms.append((dh, pixel_coords_x[sel].mean() / S,
+                                  pixel_coords_y[sel].mean() / S))
+            else:
+                disc_coms.append((dh, 0.5, 0.5))
+        for dh, dcx, dcy in disc_coms:
+            best_oi = -1
+            best_d = float('inf')
+            for oi in range(n_obj_p):
+                if oi in gt_used: continue
+                gx, gy = gt_positions[oi][0]
+                d = math.hypot(dcx - gx, dcy - gy)
+                if d < best_d:
+                    best_d = d
+                    best_oi = oi
+            if best_oi >= 0:
+                disc_hue_to_obj[dh] = best_oi
+                gt_used.add(best_oi)
+
+        perceived_positions = {oi: [] for oi in range(n_obj_p)}
+        perceived_radii = {oi: [] for oi in range(n_obj_p)}
+        for fi in range(n_frames_p):
+            img = frames[fi]
+            pix_rgb = img.transpose(1, 2, 0).reshape(-1, 3)
+            bg_fi = get_corner_bg(img)
+            rgb_dist_fi = np.sqrt(((pix_rgb - bg_fi[None, :]) ** 2).sum(axis=1))
+            pix_fg = rgb_dist_fi > bg_dist_threshold
+            pix_hues, pix_sats, _ = rgb_to_hue_vectorized(pix_rgb)
+            for dh, oi in disc_hue_to_obj.items():
+                h_dist = hue_distance(pix_hues, dh)
+                sel = pix_fg & (pix_hues >= 0) & (pix_sats > 0.1) & (h_dist < hue_thresh)
+                if sel.sum() > 5:
+                    perceived_positions[oi].append([pixel_coords_x[sel].mean() / S,
+                                                    pixel_coords_y[sel].mean() / S])
+                    perceived_radii[oi].append(math.sqrt(sel.sum() / math.pi))
+                else:
+                    if perceived_positions[oi]:
+                        perceived_positions[oi].append(perceived_positions[oi][-1])
+                        perceived_radii[oi].append(perceived_radii[oi][-1])
+                    else:
+                        perceived_positions[oi].append(gt_positions[oi][fi])
+                        perceived_radii[oi].append(objects_init[oi]['r'])
+            for oi in range(n_obj_p):
+                if oi not in disc_hue_to_obj.values():
+                    perceived_positions[oi].append(gt_positions[oi][fi])
+                    perceived_radii[oi].append(objects_init[oi]['r'])
+
+        # Smooth positions, compute velocities
+        perceived_velocities = {oi: [] for oi in range(n_obj_p)}
+        for oi in range(n_obj_p):
+            pos_arr = np.array(perceived_positions[oi])
+            pos_smooth = smooth_positions(pos_arr)
+            vel_pix = np.diff(pos_smooth, axis=0) * S
+            perceived_velocities[oi] = vel_pix
+
+        # Extract features per object, respecting observation windows
+        mean_radii = {oi: np.mean(perceived_radii[oi]) for oi in range(n_obj_p)}
+        obj_feats = []
+        for oi in range(n_obj_p):
+            os_frame = obs_starts[oi]
+            obs_frac = max(0.0, (n_frames_p - os_frame) / n_frames_p)
+
+            if os_frame >= n_frames_p:
+                # Unobserved: zero features + zero confidence
+                obj_feats.append([0.0] * 7 + [0.0])
+                continue
+
+            # Windowed positions and velocities
+            win_pos = perceived_positions[oi][os_frame:]
+            win_vel = perceived_velocities[oi]
+            # vel index t corresponds to pos[t] -> pos[t+1], so vel[os_frame:] for windowed
+            if os_frame > 0 and os_frame < len(win_vel):
+                win_vel = win_vel[os_frame:]
+            elif os_frame == 0:
+                pass  # use all velocities
+            else:
+                win_vel = np.zeros((0, 2))
+
+            # Windowed collision detection
+            coll_dvs = []
+            for oj in range(n_obj_p):
+                if oj == oi:
+                    continue
+                oj_start = max(obs_starts[oi], obs_starts[oj])  # both must be observed
+                ri, rj = mean_radii[oi], mean_radii[oj]
+                threshold = (ri + rj) * 1.2 / S
+                pos_i = np.array(perceived_positions[oi])
+                pos_j = np.array(perceived_positions[oj])
+                vel_i = perceived_velocities[oi]
+                vel_j = perceived_velocities[oj]
+                for t in range(max(oj_start, 1), min(len(vel_i) - 1, n_frames_p)):
+                    diff = pos_i[t] - pos_j[t]
+                    dist_c = np.linalg.norm(diff)
+                    if dist_c < threshold and dist_c > 1e-6:
+                        dv_i = vel_i[t + 1] - vel_i[t] if t + 1 < len(vel_i) else np.zeros(2)
+                        dv_j = vel_j[t + 1] - vel_j[t] if t + 1 < len(vel_j) else np.zeros(2)
+                        dv_i_mag = np.linalg.norm(dv_i)
+                        dv_j_mag = np.linalg.norm(dv_j)
+                        if dv_i_mag > 0.3 and dv_j_mag > 0.3:
+                            coll_dvs.append((dv_i_mag, dv_j_mag))
+
+            # Windowed wall-bounce restitution
+            restitutions = []
+            r_norm = mean_radii[oi] / S
+            wall_margin = r_norm * 1.5
+            vel_full = perceived_velocities[oi]
+            pos_full = np.array(perceived_positions[oi])
+            for t in range(max(os_frame, 1), len(vel_full)):
+                px, py = pos_full[t]
+                vx_before, vy_before = vel_full[t - 1]
+                vx_after, vy_after = vel_full[t]
+                if px < wall_margin or px > 1.0 - wall_margin:
+                    if abs(vx_before) > 0.3 and vx_before * vx_after < 0:
+                        e_meas = min(abs(vx_after / vx_before), 2.0)
+                        restitutions.append(e_meas)
+                if py < wall_margin or py > 1.0 - wall_margin:
+                    if abs(vy_before) > 0.3 and vy_before * vy_after < 0:
+                        e_meas = min(abs(vy_after / vy_before), 2.0)
+                        restitutions.append(e_meas)
+
+            feat7 = extract_features(win_pos, coll_dvs, restitutions)
+            obj_feats.append(feat7 + [obs_frac])  # 8-dim: 7 physics + obs_confidence
+
+        return obj_feats, perceived_positions
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 1: Generate training data (mass + elasticity)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 1: Generate 4000 training sequences (mass + elasticity)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t1 = time.time()
+
+    n_train_seq = 4000
+    random.seed(42)
+    np.random.seed(42)
+    all_states, all_actions = [], []
+    all_objects_init = []
+    all_heavy_idx = []
+    all_elasticities = []
+
+    for seq_i in range(n_train_seq):
+        masses = [1.0, 1.0, 1.0]
+        heavy_idx = random.randint(0, n_obj - 1)
+        masses[heavy_idx] = 3.0
+        elasticities = [random.choice([0.5, 1.0]) for _ in range(n_obj)]
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(6, 9)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-5.0, 5.0)
+            vy = random.uniform(-5.0, 5.0)
+            objects.append({'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                            'r': r, 'mass': masses[oi], 'elasticity': elasticities[oi]})
+        all_objects_init.append(copy.deepcopy(objects))
+
+        intervention_plan = {}
+        n_interventions = random.randint(2, 4)
+        intervention_frames = sorted(random.sample(range(5, n_frames - 5), n_interventions))
+        for fi in intervention_frames:
+            target_obj = random.randint(0, n_obj - 1)
+            mag = random.uniform(2.0, 6.0)
+            angle = random.uniform(0, 2 * math.pi)
+            intervention_plan[fi] = (target_obj, mag * math.cos(angle), mag * math.sin(angle))
+
+        seq_states, seq_actions = [], {}
+        for fi in range(n_frames):
+            seq_states.append(objects_to_state(objects))
+            if fi in intervention_plan:
+                target_obj, fx, fy = intervention_plan[fi]
+                objects[target_obj]['vx'] += fx
+                objects[target_obj]['vy'] += fy
+                seq_actions[fi] = (target_obj, fx / vmax, fy / vmax)
+            physics_step(objects)
+        all_states.append(np.array(seq_states))
+        all_actions.append(seq_actions)
+        all_heavy_idx.append(heavy_idx)
+        all_elasticities.append(elasticities)
+        if (seq_i + 1) % 500 == 0:
+            print(f"│  Generated {seq_i+1}/{n_train_seq}", flush=True)
+    print(f"└─ Stage 1 done [{time.time()-t1:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 2: Train JEPA on 7-dim GT states
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 2: Train JEPA on GT states (7-dim with elasticity)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t2 = time.time()
+
+    states_t_list, states_tp1_list, actions_list_j = [], [], []
+    for seq_i in range(n_train_seq):
+        states = all_states[seq_i]
+        actions = all_actions[seq_i]
+        for fi in range(n_frames - 1):
+            states_t_list.append(states[fi])
+            states_tp1_list.append(states[fi + 1])
+            if fi in actions:
+                obj_idx, fx, fy = actions[fi]
+                action_vec = np.zeros(n_obj + 2, dtype=np.float32)
+                action_vec[obj_idx] = 1.0
+                action_vec[n_obj] = fx
+                action_vec[n_obj + 1] = fy
+                actions_list_j.append(action_vec)
+            else:
+                actions_list_j.append(np.zeros(n_obj + 2, dtype=np.float32))
+
+    states_t_np = np.array(states_t_list)
+    states_tp1_np = np.array(states_tp1_list)
+    actions_np = np.array(actions_list_j)
+
+    torch.manual_seed(42)
+    state_proj = nn.Linear(7, slot_dim, bias=False)
+    nn.init.orthogonal_(state_proj.weight)
+    state_proj = state_proj.to(device)
+    for p in state_proj.parameters():
+        p.requires_grad = False
+
+    states_t_raw = torch.tensor(states_t_np, dtype=torch.float32).to(device)
+    states_tp1_raw = torch.tensor(states_tp1_np, dtype=torch.float32).to(device)
+    with torch.no_grad():
+        slots_t = state_proj(states_t_raw)
+        slots_tp1 = state_proj(states_tp1_raw)
+    actions_t = torch.tensor(actions_np, dtype=torch.float32).to(device)
+
+    N = len(states_t_np)
+    n_train = int(0.8 * N)
+    perm = torch.randperm(N)
+    tr_slots_t = slots_t[perm[:n_train]]
+    tr_slots_tp1 = slots_tp1[perm[:n_train]]
+    tr_actions = actions_t[perm[:n_train]]
+
+    from world_model import ActionConditionedPredictor
+    torch.manual_seed(42)
+    jepa = ActionConditionedPredictor(
+        n_slots=n_obj, slot_dim=slot_dim, action_dim=64, hidden_dim=256).to(device)
+    jepa_opt = torch.optim.Adam(jepa.parameters(), lr=3e-4)
+    print(f"│  JEPA: {sum(p.numel() for p in jepa.parameters()):,} params", flush=True)
+
+    batch_size = 256
+    for epoch in range(1, 101):
+        jepa.train()
+        ep_perm = torch.randperm(n_train, device=device)
+        ep_loss = 0.0
+        for start in range(0, n_train, batch_size):
+            idx = ep_perm[start:start + batch_size]
+            pred = jepa(tr_slots_t[idx], tr_actions[idx])
+            loss = F.mse_loss(pred, tr_slots_tp1[idx])
+            jepa_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(jepa.parameters(), 1.0)
+            jepa_opt.step()
+            ep_loss += loss.item() * len(idx)
+        if epoch % 25 == 0 or epoch == 1:
+            print(f"│    JEPA Epoch {epoch:3d}: loss={ep_loss/n_train:.6f}", flush=True)
+    print(f"└─ Stage 2 done [{time.time()-t2:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 3: Train Position Decoder
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 3: Train Position Decoder", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t3 = time.time()
+
+    gt_pos = states_t_raw[:, :, :2]
+    all_slots_flat = slots_t.reshape(-1, slot_dim)
+    all_pos_flat = gt_pos.reshape(-1, 2)
+    n_dec_train = int(0.8 * len(all_slots_flat))
+    dec_perm = torch.randperm(len(all_slots_flat))
+    tr_dec_slots = all_slots_flat[dec_perm[:n_dec_train]]
+    tr_dec_pos = all_pos_flat[dec_perm[:n_dec_train]]
+    vl_dec_slots = all_slots_flat[dec_perm[n_dec_train:]]
+    vl_dec_pos = all_pos_flat[dec_perm[n_dec_train:]]
+
+    pos_decoder = nn.Linear(slot_dim, 2).to(device)
+    dec_opt = torch.optim.Adam(pos_decoder.parameters(), lr=1e-3)
+    for epoch in range(1, 51):
+        pos_decoder.train()
+        ep_perm_d = torch.randperm(n_dec_train, device=device)
+        for start in range(0, n_dec_train, 1024):
+            idx = ep_perm_d[start:start + 1024]
+            pred = pos_decoder(tr_dec_slots[idx])
+            loss = F.mse_loss(pred, tr_dec_pos[idx])
+            dec_opt.zero_grad()
+            loss.backward()
+            dec_opt.step()
+    pos_decoder.eval()
+    with torch.no_grad():
+        vl_pred = pos_decoder(vl_dec_slots)
+        dec_err = ((vl_pred - vl_dec_pos) * S).norm(dim=-1).mean().item()
+    print(f"│  Decoder val error: {dec_err:.3f}px", flush=True)
+    print(f"└─ Stage 3 done [{time.time()-t3:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 4: Perceive with variable observation quality
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 4: Perceive 4000 seqs with variable observation", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t4 = time.time()
+
+    del states_t_raw, states_tp1_raw, slots_t, slots_tp1, actions_t
+    del tr_slots_t, tr_slots_tp1, tr_actions
+    del all_slots_flat, all_pos_flat, gt_pos
+    del tr_dec_slots, tr_dec_pos, vl_dec_slots, vl_dec_pos
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    def sample_obs_levels(n_objs):
+        """Sample obs level per object: full(0.6), partial(0.25), unobserved(0.15).
+        Returns obs_starts list and obs_levels list."""
+        obs_starts_out = []
+        obs_levels_out = []
+        for _ in range(n_objs):
+            r = random.random()
+            if r < 0.6:
+                obs_starts_out.append(0)
+                obs_levels_out.append('full')
+            elif r < 0.85:
+                obs_starts_out.append(40)
+                obs_levels_out.append('partial')
+            else:
+                obs_starts_out.append(n_frames)
+                obs_levels_out.append('unobserved')
+        return obs_starts_out, obs_levels_out
+
+    train_perceived_feats = []
+    train_obs_levels = []
+    for seq_i in range(n_train_seq):
+        obs_s, obs_l = sample_obs_levels(n_obj)
+        obj_feats, _ = perceive_sequence(
+            all_objects_init[seq_i], n_frames, seed_offset=10000 + seq_i,
+            obs_starts=obs_s)
+        train_perceived_feats.append(obj_feats)
+        train_obs_levels.append(obs_l)
+        if (seq_i + 1) % 500 == 0:
+            n_full = sum(1 for sl in train_obs_levels for o in sl if o == 'full')
+            n_part = sum(1 for sl in train_obs_levels for o in sl if o == 'partial')
+            n_unobs = sum(1 for sl in train_obs_levels for o in sl if o == 'unobserved')
+            total = n_full + n_part + n_unobs
+            print(f"│  Perceived {seq_i+1}/{n_train_seq} "
+                  f"(full={n_full/total*100:.0f}% partial={n_part/total*100:.0f}% "
+                  f"unobs={n_unobs/total*100:.0f}%)", flush=True)
+    print(f"└─ Stage 4 done [{time.time()-t4:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 5: Train Separate Mass + Elasticity Pathways
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 5: Separate Pathways — Mass + Restitution", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t5 = time.time()
+
+    n_feat = 8  # 6 mass + 1 restitution + 1 obs_confidence
+    n_mass_feat = 6
+    n_elast_feat = 1
+
+    # ── Mass pathway (sees ALL 8 features, deeper) ──
+    class MassSender(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.head = nn.Sequential(
+                nn.Linear(n_feat, 64), nn.ReLU(),
+                nn.Linear(64, 32), nn.ReLU(),
+                nn.Linear(32, vocab_size))
+        def forward(self, x, tau=1.0, hard=False):
+            logits = self.head(x)  # all 8 features
+            if hard:
+                return F.one_hot(logits.argmax(-1), vocab_size).float()
+            return F.gumbel_softmax(logits, tau=tau, hard=True)
+
+    class MassReceiver(nn.Module):
+        """Count-agnostic: per-object scoring, works for any N."""
+        def __init__(self, embed_dim=32, hidden=64):
+            super().__init__()
+            self.embed = nn.Linear(vocab_size, embed_dim)
+            self.head = nn.Sequential(
+                nn.Linear(embed_dim, hidden), nn.ReLU(), nn.Linear(hidden, 1))
+        def forward(self, tokens):
+            # tokens: [B, N, vocab_size] — N can be any count
+            emb = F.relu(self.embed(tokens))  # [B, N, embed_dim]
+            scores = self.head(emb).squeeze(-1)  # [B, N]
+            return scores
+
+    # ── Elasticity pathway (FSQ, sees ALL 8 features, deeper) ──
+    class ElastSender(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.head = nn.Sequential(
+                nn.Linear(n_feat, 64), nn.ReLU(),
+                nn.Linear(64, 32), nn.ReLU(),
+                nn.Linear(32, 1))
+        def forward(self, x, hard=False, **kwargs):
+            raw = self.head(x)  # all 8 features → [B, 1]
+            scaled = torch.sigmoid(raw.squeeze(-1)) * (vocab_size - 1)  # [B] in [0, 3]
+            quantized = torch.round(scaled).clamp(0, vocab_size - 1)
+            if hard:
+                return quantized  # [B] integer bin indices
+            # Straight-through gradient
+            return scaled + (quantized - scaled).detach()  # [B] quantized but gradients flow
+
+    class ElastReceiver(nn.Module):
+        """Count-agnostic: per-object classification, works for any N."""
+        def __init__(self, embed_dim=32, hidden=64):
+            super().__init__()
+            self.embed = nn.Linear(1, embed_dim)
+            self.drop = nn.Dropout(0.3)
+            self.head = nn.Sequential(
+                nn.Linear(embed_dim, hidden), nn.ReLU(),
+                nn.Dropout(0.3), nn.Linear(hidden, 1))
+        def forward(self, tokens):
+            # tokens: [B, N] scalars — N can be any count
+            emb = F.relu(self.embed(tokens.unsqueeze(-1)))  # [B, N, embed_dim]
+            emb = self.drop(emb)
+            logits = self.head(emb).squeeze(-1)  # [B, N]
+            return logits
+
+    torch.manual_seed(42)
+    mass_sender = MassSender().to(device)
+    mass_receiver = MassReceiver().to(device)
+    elast_sender = ElastSender().to(device)
+    elast_receiver = ElastReceiver().to(device)
+
+    ms_p = sum(p.numel() for p in mass_sender.parameters())
+    mr_p = sum(p.numel() for p in mass_receiver.parameters())
+    es_p = sum(p.numel() for p in elast_sender.parameters())
+    er_p = sum(p.numel() for p in elast_receiver.parameters())
+    print(f"│  Mass pathway: {ms_p}+{mr_p} = {ms_p+mr_p} params", flush=True)
+    print(f"│  Elast pathway: {es_p}+{er_p} = {es_p+er_p} params", flush=True)
+
+    n_comm_train = int(0.8 * n_train_seq)
+    train_feats_tensor = torch.tensor(train_perceived_feats, dtype=torch.float32).to(device)
+    train_heavy_tensor = torch.tensor(all_heavy_idx, dtype=torch.long).to(device)
+    # Elasticity labels: 1 if elastic (1.0), 0 if inelastic (0.5)
+    train_elast_tensor = torch.tensor(
+        [[1.0 if e == 1.0 else 0.0 for e in el] for el in all_elasticities],
+        dtype=torch.float32).to(device)
+
+    tr_feats = train_feats_tensor[:n_comm_train]
+    tr_heavy = train_heavy_tensor[:n_comm_train]
+    tr_elast = train_elast_tensor[:n_comm_train]
+    vl_feats = train_feats_tensor[n_comm_train:]
+    vl_heavy = train_heavy_tensor[n_comm_train:]
+    vl_elast = train_elast_tensor[n_comm_train:]
+
+    comm_batch = 64
+
+    # ── Train mass pathway (400 epochs, τ 2.0→0.5) ──
+    print(f"│  Training mass pathway (400 epochs, τ 2.0→0.5)", flush=True)
+    mass_params = list(mass_sender.parameters()) + list(mass_receiver.parameters())
+    mass_opt = torch.optim.Adam(mass_params, lr=3e-4)
+    best_mass_acc = 0.0
+    best_mass_state = None
+
+    for epoch in range(1, 401):
+        mass_sender.train(); mass_receiver.train()
+        tau = 2.0 - (2.0 - 0.5) * (epoch - 1) / 399
+        ep_perm = torch.randperm(n_comm_train, device=device)
+        for start in range(0, n_comm_train, comm_batch):
+            idx = ep_perm[start:start + comm_batch]
+            B = len(idx)
+            feats_batch = tr_feats[idx]
+            heavy_batch = tr_heavy[idx]
+            tokens = torch.zeros(B, n_obj, vocab_size, device=device)
+            for oi in range(n_obj):
+                tokens[:, oi, :] = mass_sender(feats_batch[:, oi, :], tau=tau)
+            logits = mass_receiver(tokens)
+            loss = F.cross_entropy(logits, heavy_batch)
+            mass_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(mass_params, 1.0)
+            mass_opt.step()
+        if epoch % 40 == 0 or epoch == 1:
+            mass_sender.eval(); mass_receiver.eval()
+            with torch.no_grad():
+                vl_tokens = torch.zeros(len(vl_heavy), n_obj, vocab_size, device=device)
+                for oi in range(n_obj):
+                    vl_tokens[:, oi, :] = mass_sender(vl_feats[:, oi, :], hard=True)
+                vl_logits = mass_receiver(vl_tokens)
+                ma = (vl_logits.argmax(-1) == vl_heavy).float().mean().item()
+            if ma > best_mass_acc:
+                best_mass_acc = ma
+                best_mass_state = {
+                    'sender': {k: v.cpu().clone() for k, v in mass_sender.state_dict().items()},
+                    'receiver': {k: v.cpu().clone() for k, v in mass_receiver.state_dict().items()},
+                }
+            print(f"│    Mass Epoch {epoch:3d}: τ={tau:.2f}, acc={ma:.3f} "
+                  f"(best={best_mass_acc:.3f})", flush=True)
+
+    mass_sender.load_state_dict(best_mass_state['sender'])
+    mass_receiver.load_state_dict(best_mass_state['receiver'])
+    mass_sender.to(device).eval(); mass_receiver.to(device).eval()
+    print(f"│  Mass done: best={best_mass_acc*100:.1f}%", flush=True)
+
+    # ── Train elasticity pathway (400 epochs, FSQ, reinit receiver every 100) ──
+    print(f"│  Training elasticity pathway (400 epochs, FSQ, reinit every 100)", flush=True)
+
+    def make_elast_opt():
+        return torch.optim.Adam([
+            {'params': elast_sender.parameters(), 'lr': 3e-4, 'weight_decay': 0.0},
+            {'params': elast_receiver.parameters(), 'lr': 3e-4, 'weight_decay': 0.01},
+        ])
+
+    elast_opt = make_elast_opt()
+    best_elast_acc = 0.0
+    best_elast_state = None
+
+    for epoch in range(1, 401):
+        # Reinitialize receiver every 100 epochs (but keep sender)
+        if epoch > 1 and (epoch - 1) % 100 == 0:
+            print(f"│    Reinit ElastReceiver at epoch {epoch}", flush=True)
+            elast_receiver = ElastReceiver().to(device)
+            elast_opt = make_elast_opt()
+
+        elast_sender.train(); elast_receiver.train()
+        ep_perm = torch.randperm(n_comm_train, device=device)
+        for start in range(0, n_comm_train, comm_batch):
+            idx = ep_perm[start:start + comm_batch]
+            B = len(idx)
+            feats_batch = tr_feats[idx]
+            elast_batch = tr_elast[idx]
+            tokens = torch.zeros(B, n_obj, device=device)
+            for oi in range(n_obj):
+                tokens[:, oi] = elast_sender(feats_batch[:, oi, :])
+            logits = elast_receiver(tokens)
+            loss = F.binary_cross_entropy_with_logits(logits, elast_batch)
+            elast_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(list(elast_sender.parameters()) + list(elast_receiver.parameters()), 1.0)
+            elast_opt.step()
+        if epoch % 40 == 0 or epoch == 1:
+            elast_sender.eval(); elast_receiver.eval()
+            with torch.no_grad():
+                vl_tokens = torch.zeros(len(vl_elast), n_obj, device=device)
+                for oi in range(n_obj):
+                    vl_tokens[:, oi] = elast_sender(vl_feats[:, oi, :], hard=True)
+                vl_logits = elast_receiver(vl_tokens)
+                ea = ((vl_logits > 0).float() == vl_elast).float().mean().item()
+            if ea > best_elast_acc:
+                best_elast_acc = ea
+                best_elast_state = {
+                    'sender': {k: v.cpu().clone() for k, v in elast_sender.state_dict().items()},
+                    'receiver': {k: v.cpu().clone() for k, v in elast_receiver.state_dict().items()},
+                }
+            print(f"│    Elast Epoch {epoch:3d}: acc={ea:.3f} "
+                  f"(best={best_elast_acc:.3f})", flush=True)
+
+    elast_sender.load_state_dict(best_elast_state['sender'])
+    elast_receiver.load_state_dict(best_elast_state['receiver'])
+    elast_sender.to(device).eval(); elast_receiver.to(device).eval()
+    print(f"│  Elast done: best={best_elast_acc*100:.1f}%", flush=True)
+
+    # Combined eval
+    best_mass_acc_final = best_mass_acc
+    best_elast_acc_final = best_elast_acc
+    print(f"│  Final: mass={best_mass_acc_final*100:.1f}%, elast={best_elast_acc_final*100:.1f}%", flush=True)
+    print(f"└─ Stage 5 done [{time.time()-t5:.0f}s]", flush=True)
+
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 6: Test on 200 scenarios with variable observation
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 6: Test 200 scenarios with variable observation", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t6 = time.time()
+
+    del train_feats_tensor, tr_feats, tr_heavy, tr_elast, vl_feats, vl_heavy, vl_elast
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    cpu = torch.device('cpu')
+    jepa.to(cpu).eval()
+    pos_decoder.to(cpu).eval()
+    mass_sender.to(cpu).eval()
+    mass_receiver.to(cpu).eval()
+    elast_sender.to(cpu).eval()
+    elast_receiver.to(cpu).eval()
+    state_proj = state_proj.to(cpu)
+
+    n_test_seq = 200
+    random.seed(999)
+    np.random.seed(999)
+
+    test_scenarios = []
+    for si in range(n_test_seq):
+        masses = [1.0, 1.0, 1.0]
+        heavy_idx = random.randint(0, n_obj - 1)
+        masses[heavy_idx] = 3.0
+        elasticities = [random.choice([0.5, 1.0]) for _ in range(n_obj)]
+
+        objects = []
+        for oi in range(n_obj):
+            r = random.randint(6, 9)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-5.0, 5.0)
+            vy = random.uniform(-5.0, 5.0)
+            objects.append({'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                            'r': r, 'mass': masses[oi], 'elasticity': elasticities[oi]})
+
+        # Sample obs levels for test
+        obs_s, obs_l = sample_obs_levels(n_obj)
+        obj_feats, _ = perceive_sequence(objects, n_frames, seed_offset=50000 + si,
+                                          obs_starts=obs_s)
+        test_scenarios.append({
+            'gt_heavy': heavy_idx,
+            'elasticities': elasticities,
+            'objects_init': copy.deepcopy(objects),
+            'masses': masses,
+            'obj_feats': obj_feats,
+            'obs_levels': obs_l,
+        })
+        if (si + 1) % 50 == 0:
+            print(f"│  Processed {si+1}/{n_test_seq}", flush=True)
+    print(f"└─ Stage 6 done [{time.time()-t6:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 7: Evaluation by observation level + Planning
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 7: Evaluation by observation level + Planning", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t7 = time.time()
+
+    random.seed(777)
+    np.random.seed(777)
+    test_targets = []
+    for si in range(n_test_seq):
+        test_targets.append(np.array([
+            random.uniform(0.2, 0.8), random.uniform(0.2, 0.8)], dtype=np.float32))
+
+    def cem_plan(current_state, target_obj_idx, target_pos_norm):
+        cur_slots = state_proj(
+            torch.tensor(current_state, dtype=torch.float32).unsqueeze(0))
+        target_t = torch.tensor(target_pos_norm, dtype=torch.float32)
+        mu = torch.zeros(2)
+        sigma = torch.ones(2) * 0.3
+        for round_i in range(n_rounds):
+            forces = mu + sigma * torch.randn(n_candidates, 2)
+            forces = forces.clamp(-force_range, force_range)
+            with torch.no_grad():
+                cand_actions = torch.zeros(n_candidates, n_obj + 2)
+                cand_actions[:, target_obj_idx] = 1.0
+                cand_actions[:, n_obj] = forces[:, 0]
+                cand_actions[:, n_obj + 1] = forces[:, 1]
+                pred_slots = jepa(cur_slots.expand(n_candidates, -1, -1).clone(),
+                                  cand_actions)
+                target_slots = pred_slots[:, target_obj_idx, :]
+                pred_pos = pos_decoder(target_slots)
+                scores = -((pred_pos - target_t) ** 2).sum(dim=-1)
+            elite_idx = torch.topk(scores, n_elite).indices
+            elite_forces = forces[elite_idx]
+            mu = elite_forces.mean(dim=0)
+            sigma = elite_forces.std(dim=0).clamp(min=0.01)
+        return mu[0].item(), mu[1].item()
+
+    def run_closed_loop(objects_init, target_obj_idx, target_pos):
+        objs = copy.deepcopy(objects_init)
+        for step in range(K):
+            current_state = objects_to_state(objs)
+            fx, fy = cem_plan(current_state, target_obj_idx, target_pos)
+            objs[target_obj_idx]['vx'] += fx * vmax
+            objs[target_obj_idx]['vy'] += fy * vmax
+            physics_step(objs)
+        gt_heavy = None
+        for oi in range(n_obj):
+            if objs[oi]['mass'] == 3.0:
+                gt_heavy = oi
+        final_pos = np.array([objs[gt_heavy]['cx'] / S, objs[gt_heavy]['cy'] / S])
+        return np.linalg.norm((final_pos - target_pos) * S)
+
+    # Per-object tracking by obs level
+    # For mass: track if heavy object's obs_level → correct identification
+    mass_by_obs = {'full': [0, 0], 'partial': [0, 0], 'unobserved': [0, 0]}  # [correct, total]
+    # For elast: per-object accuracy by obs level
+    elast_by_obs = {'full': [0, 0], 'partial': [0, 0], 'unobserved': [0, 0]}
+    # Token distributions by (property, obs_level)
+    mass_tokens_by_obs = {'full': {'heavy': [], 'light': []},
+                          'partial': {'heavy': [], 'light': []},
+                          'unobserved': {'heavy': [], 'light': []}}
+    elast_tokens_by_obs = {'full': {'elastic': [], 'inelastic': []},
+                           'partial': {'elastic': [], 'inelastic': []},
+                           'unobserved': {'elastic': [], 'inelastic': []}}
+
+    mass_correct = 0
+    elast_correct_count = 0
+    joint_correct = 0
+    full_dists = []
+    oracle_dists = []
+
+    for si in range(n_test_seq):
+        sc = test_scenarios[si]
+        gt_heavy = sc['gt_heavy']
+        target_pos = test_targets[si]
+        gt_elast = [1.0 if e == 1.0 else 0.0 for e in sc['elasticities']]
+
+        feat_tensor = torch.tensor(sc['obj_feats'], dtype=torch.float32)
+        with torch.no_grad():
+            m_tok = torch.zeros(1, n_obj, vocab_size)
+            e_tok = torch.zeros(1, n_obj)
+            for oi in range(n_obj):
+                m_tok[0, oi, :] = mass_sender(feat_tensor[oi:oi+1], hard=True)
+                e_tok[0, oi] = elast_sender(feat_tensor[oi:oi+1], hard=True)
+            mass_logits = mass_receiver(m_tok)
+            elast_logits = elast_receiver(e_tok)
+            comm_heavy = mass_logits[0].argmax().item()
+            comm_elast = (elast_logits[0] > 0).float()
+
+        # Track mass accuracy by heavy object's obs level
+        heavy_obs = sc['obs_levels'][gt_heavy]
+        mass_ok = comm_heavy == gt_heavy
+        mass_correct += int(mass_ok)
+        mass_by_obs[heavy_obs][1] += 1
+        mass_by_obs[heavy_obs][0] += int(mass_ok)
+
+        # Track elast accuracy per object by obs level
+        elast_ok = True
+        for oi in range(n_obj):
+            obs_l = sc['obs_levels'][oi]
+            obj_elast_ok = comm_elast[oi].item() == gt_elast[oi]
+            elast_by_obs[obs_l][1] += 1
+            elast_by_obs[obs_l][0] += int(obj_elast_ok)
+            if not obj_elast_ok:
+                elast_ok = False
+        elast_correct_count += int(elast_ok)
+        joint_correct += int(mass_ok and elast_ok)
+
+        # Track token distributions by obs level
+        for oi in range(n_obj):
+            obs_l = sc['obs_levels'][oi]
+            m_id = m_tok[0, oi].argmax().item()
+            e_id = int(round(e_tok[0, oi].item()))
+            prop_mass = 'heavy' if sc['masses'][oi] == 3.0 else 'light'
+            prop_elast = 'elastic' if sc['elasticities'][oi] == 1.0 else 'inelastic'
+            mass_tokens_by_obs[obs_l][prop_mass].append(m_id)
+            elast_tokens_by_obs[obs_l][prop_elast].append(e_id)
+
+        # Planning
+        fc_dist = run_closed_loop(sc['objects_init'], comm_heavy, target_pos)
+        full_dists.append(fc_dist)
+        oc_dist = run_closed_loop(sc['objects_init'], gt_heavy, target_pos)
+        oracle_dists.append(oc_dist)
+
+        if (si + 1) % 50 == 0:
+            ma = mass_correct / (si + 1) * 100
+            ea = elast_correct_count / (si + 1) * 100
+            ja = joint_correct / (si + 1) * 100
+            fc_s = sum(1 for d in full_dists if d < success_thresh) / len(full_dists) * 100
+            print(f"│    {si+1}/{n_test_seq}: mass={ma:.0f}%, elast={ea:.0f}%, "
+                  f"joint={ja:.0f}%, plan={fc_s:.0f}%", flush=True)
+
+    mass_acc = mass_correct / n_test_seq * 100
+    elast_acc = elast_correct_count / n_test_seq * 100
+    joint_acc = joint_correct / n_test_seq * 100
+    plan_success = sum(1 for d in full_dists if d < success_thresh) / n_test_seq * 100
+    oracle_success = sum(1 for d in oracle_dists if d < success_thresh) / n_test_seq * 100
+
+    print(f"\n│  Overall: mass={mass_acc:.1f}%, elast={elast_acc:.1f}%, "
+          f"joint={joint_acc:.1f}%, plan={plan_success:.1f}%", flush=True)
+    print(f"│  By observation level:", flush=True)
+    for obs_l in ['full', 'partial', 'unobserved']:
+        mc, mt = mass_by_obs[obs_l]
+        ma_l = mc / mt * 100 if mt > 0 else 0
+        ec, et = elast_by_obs[obs_l]
+        ea_l = ec / et * 100 if et > 0 else 0
+        print(f"│    {obs_l:12s}: mass={ma_l:.1f}% ({mt} heavy objs), "
+              f"elast={ea_l:.1f}% ({et} obj-level)", flush=True)
+    print(f"└─ Stage 7 done [{time.time()-t7:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 8: Visualization + Summary
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 8: Visualization", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    elapsed = time.time() - t0
+
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+
+    # 1. Accuracy by observation level (grouped bars)
+    ax = axes[0, 0]
+    obs_labels = ['Full', 'Partial', 'Unobserved']
+    mass_accs_by_obs = []
+    elast_accs_by_obs = []
+    for obs_l in ['full', 'partial', 'unobserved']:
+        mc, mt = mass_by_obs[obs_l]
+        mass_accs_by_obs.append(mc / mt * 100 if mt > 0 else 0)
+        ec, et = elast_by_obs[obs_l]
+        elast_accs_by_obs.append(ec / et * 100 if et > 0 else 0)
+    x = np.arange(3)
+    w = 0.35
+    bars1 = ax.bar(x - w/2, mass_accs_by_obs, w, label='Mass', color='#2196F3',
+                   edgecolor='black', linewidth=0.5)
+    bars2 = ax.bar(x + w/2, elast_accs_by_obs, w, label='Elasticity', color='#FF9800',
+                   edgecolor='black', linewidth=0.5)
+    for bar, val in zip(bars1, mass_accs_by_obs):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                f'{val:.0f}%', ha='center', fontsize=9, color='#2196F3')
+    for bar, val in zip(bars2, elast_accs_by_obs):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                f'{val:.0f}%', ha='center', fontsize=9, color='#FF9800')
+    ax.set_xticks(x)
+    ax.set_xticklabels(obs_labels)
+    ax.set_ylabel('Accuracy (%)')
+    ax.set_title('Accuracy by Observation Level')
+    ax.set_ylim(0, 105)
+    ax.axhline(y=50, color='gray', linestyle='--', alpha=0.3, label='Chance')
+    ax.legend()
+
+    # 2. Mass token distribution by obs level
+    ax = axes[0, 1]
+    obs_colors = {'full': '#2196F3', 'partial': '#FF9800', 'unobserved': '#9E9E9E'}
+    x_tok = np.arange(vocab_size)
+    width = 0.25
+    for idx, obs_l in enumerate(['full', 'partial', 'unobserved']):
+        all_toks = mass_tokens_by_obs[obs_l]['heavy'] + mass_tokens_by_obs[obs_l]['light']
+        if len(all_toks) > 0:
+            counts = [all_toks.count(i) / len(all_toks) for i in range(vocab_size)]
+        else:
+            counts = [0] * vocab_size
+        ax.bar(x_tok + idx * width - width, counts, width,
+               label=obs_l.capitalize(), color=obs_colors[obs_l], alpha=0.8)
+    ax.set_xticks(x_tok)
+    ax.set_xticklabels([f'Tok {i}' for i in range(vocab_size)])
+    ax.set_ylabel('Frequency')
+    ax.set_title('Mass Token Distribution by Obs Level')
+    ax.legend(fontsize=8)
+
+    # 3. Elasticity token distribution by obs level
+    ax = axes[0, 2]
+    for idx, obs_l in enumerate(['full', 'partial', 'unobserved']):
+        all_toks = elast_tokens_by_obs[obs_l]['elastic'] + elast_tokens_by_obs[obs_l]['inelastic']
+        if len(all_toks) > 0:
+            counts = [all_toks.count(i) / len(all_toks) for i in range(vocab_size)]
+        else:
+            counts = [0] * vocab_size
+        ax.bar(x_tok + idx * width - width, counts, width,
+               label=obs_l.capitalize(), color=obs_colors[obs_l], alpha=0.8)
+    ax.set_xticks(x_tok)
+    ax.set_xticklabels([f'Bin {i}' for i in range(vocab_size)])
+    ax.set_ylabel('Frequency')
+    ax.set_title('Elast Token Distribution by Obs Level')
+    ax.legend(fontsize=8)
+
+    # 4. Planning success
+    ax = axes[1, 0]
+    planners = ['Full\npipeline', 'Oracle']
+    successes = [plan_success, oracle_success]
+    colors_p = ['#2196F3', '#4CAF50']
+    bars = ax.bar(planners, successes, color=colors_p, edgecolor='black', linewidth=0.5)
+    for bar, val in zip(bars, successes):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                f'{val:.1f}%', ha='center', fontsize=10, fontweight='bold')
+    ax.set_ylabel('Success Rate (%)')
+    ax.set_title('Planning Success (< 10px)')
+    ax.set_ylim(0, 105)
+
+    # 5. Confidence (8th feature) vs per-object accuracy scatter
+    ax = axes[1, 1]
+    conf_acc_data = {'full': [], 'partial': [], 'unobserved': []}
+    for si in range(n_test_seq):
+        sc = test_scenarios[si]
+        for oi in range(n_obj):
+            obs_l = sc['obs_levels'][oi]
+            conf = sc['obj_feats'][oi][7]  # 8th feature = obs_confidence
+            gt_e = 1.0 if sc['elasticities'][oi] == 1.0 else 0.0
+            feat_t = torch.tensor(sc['obj_feats'][oi:oi+1], dtype=torch.float32)
+            with torch.no_grad():
+                e_pred = elast_sender(feat_t, hard=True)
+            # Check mass: harder to assess per-object, use elast per-object
+            with torch.no_grad():
+                e_logit = elast_receiver(e_pred.unsqueeze(0))
+            e_correct = int((e_logit[0, 0] > 0).float().item() == gt_e)
+            conf_acc_data[obs_l].append((conf, e_correct))
+    for obs_l, color in [('full', '#2196F3'), ('partial', '#FF9800'), ('unobserved', '#9E9E9E')]:
+        if conf_acc_data[obs_l]:
+            confs = [c for c, _ in conf_acc_data[obs_l]]
+            accs = [a for _, a in conf_acc_data[obs_l]]
+            # Jitter for visualization
+            jitter_c = np.array(confs) + np.random.uniform(-0.02, 0.02, len(confs))
+            jitter_a = np.array(accs, dtype=float) + np.random.uniform(-0.05, 0.05, len(accs))
+            ax.scatter(jitter_c, jitter_a, alpha=0.3, s=10, color=color, label=obs_l.capitalize())
+    ax.set_xlabel('Observation Confidence (8th feature)')
+    ax.set_ylabel('Per-object Elast Correct')
+    ax.set_title('Confidence vs Accuracy')
+    ax.legend()
+
+    # 6. Summary
+    ax = axes[1, 2]
+    ax.axis('off')
+    summary_lines = [
+        f"Phase 43: Communication Under Uncertainty\n",
+        f"Overall:",
+        f"  Mass:  {mass_acc:.1f}%  Elast: {elast_acc:.1f}%",
+        f"  Joint: {joint_acc:.1f}%  Plan:  {plan_success:.1f}%\n",
+        f"By observation level:",
+    ]
+    for obs_l in ['full', 'partial', 'unobserved']:
+        mc, mt = mass_by_obs[obs_l]
+        ma_l = mc / mt * 100 if mt > 0 else 0
+        ec, et = elast_by_obs[obs_l]
+        ea_l = ec / et * 100 if et > 0 else 0
+        summary_lines.append(f"  {obs_l:12s}: mass={ma_l:.0f}% elast={ea_l:.0f}%")
+    summary_lines.append(f"\nTotal time: {elapsed:.0f}s")
+    ax.text(0.05, 0.5, '\n'.join(summary_lines), transform=ax.transAxes, fontsize=11,
+            fontfamily='monospace', verticalalignment='center')
+
+    fig.suptitle(f'Phase 43: Communication Under Uncertainty\n'
+                 f'mass={mass_acc:.0f}% elast={elast_acc:.0f}% joint={joint_acc:.0f}% '
+                 f'plan={plan_success:.0f}%',
+                 fontsize=13, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig('results/phase43_uncertainty.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\n│  Saved results/phase43_uncertainty.png", flush=True)
+
+    print(f"\n{'=' * 70}", flush=True)
+    if mass_accs_by_obs[0] > 75 and elast_accs_by_obs[0] > 60:
+        if mass_accs_by_obs[2] < mass_accs_by_obs[0] - 10:
+            verdict = "SUCCESS"
+        else:
+            verdict = "PARTIAL"
+    elif mass_acc > 60:
+        verdict = "PARTIAL"
+    else:
+        verdict = "FAIL"
+    print(f"VERDICT: {verdict}", flush=True)
+    print(f"\n  Overall:", flush=True)
+    print(f"  Mass accuracy:        {mass_acc:.1f}%", flush=True)
+    print(f"  Elasticity accuracy:  {elast_acc:.1f}%", flush=True)
+    print(f"  Joint accuracy:       {joint_acc:.1f}%", flush=True)
+    print(f"  Planning success:     {plan_success:.1f}%", flush=True)
+    print(f"  Oracle planning:      {oracle_success:.1f}%", flush=True)
+    print(f"\n  By observation level:", flush=True)
+    for obs_l in ['full', 'partial', 'unobserved']:
+        mc, mt = mass_by_obs[obs_l]
+        ma_l = mc / mt * 100 if mt > 0 else 0
+        ec, et = elast_by_obs[obs_l]
+        ea_l = ec / et * 100 if et > 0 else 0
+        print(f"    {obs_l:12s}: mass={ma_l:.1f}% ({mt}), elast={ea_l:.1f}% ({et})", flush=True)
+    print(f"\n  Total time: {elapsed:.0f}s", flush=True)
+    print(f"{'=' * 70}", flush=True)
+
+
 def run_phase42_compositional():
     """Phase 42: Compositional transfer — train on 3, test on 5.
 
