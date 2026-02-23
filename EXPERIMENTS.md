@@ -1781,3 +1781,30 @@ Attempted fixes for Phase 41's elasticity failure: wider elasticity gap (0.2 vs 
 - **Higher velocities hurt mass accuracy**: faster objects increase perception noise (smoothing can't keep up), degrading mass features. Best mass accuracy dropped from 92% to 84.5%
 - **Wider elasticity gap didn't help**: 0.2 vs 1.0 gives marginal improvement (21.5% vs 19.0%) — still near random. The features extracted from visual perception are too noisy regardless of the underlying gap
 - **The collapse is the core problem**: both Phase 41 and 41b reach ~85-92% mass accuracy and ~60% elasticity before collapsing. The fix needed is training stability (e.g., separate optimizers, no Gumbel for elasticity, or straight-through estimator), not data changes
+
+---
+
+## Phase 41c: Sequential Training — Mass Then Elasticity
+**Date:** Feb 23 | **Duration:** ~4min (245s)
+
+Sequential 3-step training: (1) mass-only 200 epochs, (2) freeze mass + train elasticity 200 epochs, (3) joint fine-tune 50 epochs at τ=1.5.
+
+**Training:**
+- Step 1 (mass): peaked at 85.8% (epoch 100), then **collapsed at epoch 180 (τ=0.65)** to 35.2%
+- Step 2 (elasticity): started from collapsed mass state → never learned (52.1% ≈ random)
+- Step 3 (joint): couldn't recover from collapsed state
+
+**Results:**
+
+| Metric | Phase 41 | Phase 41c | Target |
+|---|---|---|---|
+| Mass accuracy | **92.5%** | 32.0% | >90% |
+| Elasticity accuracy | 19.0% | 12.5% | >65% |
+| Joint accuracy | 17.0% | 5.5% | >55% |
+| Full pipeline | **82.0%** | 35.0% | >65% |
+
+**Verdict: FAIL** — Bug: no best-checkpoint saving during Step 1. Mass collapsed at epoch 180 and final state was used for Steps 2-3. The sequential idea is sound but implementation needs best-checkpoint saving per step.
+
+**Key insight:**
+- **The Gumbel-softmax collapse is consistent**: happens at ~epoch 180 regardless of training setup (joint in 41, temp-floored in 41b, mass-only in 41c). Root cause is likely the `hard=True` straight-through gradient becoming unstable as temperature drops below ~0.7
+- **Fix for 41d**: save best checkpoint per step, OR use temperature floor of 1.0 (never anneal below 1.0) which worked in prior phases for mass-only communication
