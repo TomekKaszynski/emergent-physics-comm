@@ -1619,3 +1619,41 @@ Position decoding: 17.1px error from slot centroids (S=64), predicted slots 12.4
 - **Action sparsity remains a bottleneck**: only 7.7% of training pairs have actions. The JEPA mostly learns to copy, with weak force-effect signal
 - **The hybrid approach works**: neural features (first 64 dims) handle object identity/tracking, explicit position (last 2 dims) enables spatial planning. This validates the architecture direction
 - **Next steps**: (a) More action-dense training data to strengthen force learning, (b) separate position vs appearance prediction heads, (c) larger force range or more interventions per sequence
+
+---
+
+## Phase 40c: Dense Action Training
+**Date:** Feb 23 | **Duration:** 1738s (~29 min) | **Verdict:** FAIL
+
+**Setup:** Same as Phase 40b except every frame gets a random force on a random object (100% action density vs 7.7%). Force magnitude Uniform(-0.3, 0.3) × vmax = [-3, 3] velocity units. Everything else identical: position-augmented slots (66-dim), L2 scoring, CEM planning.
+
+**Architecture:**
+- SlotAttentionDINO: same (640K params, 40 epochs, entropy=0.297)
+- ActionConditionedPredictor: 419K params (slot_dim=66)
+- 100 JEPA epochs: best val MSE=0.112921 (+17.0% vs copy)
+- Copy baseline MSE: 0.135992 (higher than 40b's 0.088 — dense forces cause more frame-to-frame change)
+- Action pairs: 39000/39000 (100.0%)
+
+**Results:**
+
+| Planner | Success (10px) | Mean dist | Median dist |
+|---|---|---|---|
+| **Visual JEPA** | **18.0%** | 20.55px | 18.10px |
+| Oracle (GT physics) | 86.5% | 4.46px | 2.62px |
+| Random | 11.0% | 23.75px | 22.87px |
+
+**Progression 40 → 40b → 40c:**
+| Metric | 40 (cosine) | 40b (pos-aug) | 40c (dense) |
+|---|---|---|---|
+| Action density | 7.7% | 7.7% | **100%** |
+| JEPA vs copy | +6.0% | +11.8% | **+17.0%** |
+| Copy baseline MSE | 0.083 | 0.088 | **0.136** |
+| Planning success | 13.0% | **24.5%** | 18.0% |
+| Mean distance | 25.61px | **18.63px** | 20.55px |
+
+**Key insights:**
+- **Paradox: better JEPA (+17% vs copy) but worse planning (18% vs 24.5%)**. Dense random forces make the environment more chaotic — objects move unpredictably between frames. The JEPA learns stronger dynamics but the copy baseline is much worse (0.136 vs 0.088), meaning the absolute prediction quality may not be better
+- **The JEPA's absolute MSE is higher** (0.113 vs 0.078 in 40b) even though relative improvement is better. Dense forces introduce more variance that's hard to predict
+- **Training distribution mismatch**: JEPA was trained on many small random forces, but planning applies targeted forces to specific objects. The JEPA may not generalize well from "random noise on random objects" to "deliberate force on target object"
+- **Sparse actions (40b) were actually better for planning** because the training distribution is closer to the test distribution: occasional targeted forces, mostly passive dynamics
+- **Next direction**: Hybrid approach — sparse but stronger targeted interventions (like 40b) with more of them, or train on the same force distribution used in planning

@@ -15793,6 +15793,725 @@ def run_phase33c_comparative_comm():
     print(f"{'=' * 70}", flush=True)
 
 
+def run_phase40c_dense_actions():
+    """Phase 40c: Dense action training with position-augmented slots.
+
+    Same as 40b except every frame gets a random force (100% action density).
+    Target: >40% success, JEPA >20% vs copy."""
+    import random
+    import math
+    import copy
+    from scipy.optimize import linear_sum_assignment
+
+    print("=" * 70, flush=True)
+    print("PHASE 40c: Dense Action Training — Position-Augmented Slots", flush=True)
+    print("  100% action density → stronger JEPA → better planning", flush=True)
+    print("=" * 70, flush=True)
+    t0 = time.time()
+
+    device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    n_obj = 3
+    S = 64
+    n_slots = 7
+    slot_dim = 64
+    augmented_dim = 66
+    vmax = 10.0
+    K = 5
+    n_candidates = 128
+    n_elite = 16
+    n_rounds = 3
+    force_range = 0.5
+    success_thresh = 10.0
+    texture_types = ['checkerboard', 'stripes', 'gradient', 'noise', 'dots']
+
+    # ── Rendering helpers (same as 40b) ──────────────────────
+    def hue_to_rgb(h):
+        h6 = h * 6.0
+        sector = int(h6) % 6
+        frac = h6 - int(h6)
+        if sector == 0: base = np.array([1.0, frac, 0.0])
+        elif sector == 1: base = np.array([1.0 - frac, 1.0, 0.0])
+        elif sector == 2: base = np.array([0.0, 1.0, frac])
+        elif sector == 3: base = np.array([0.0, 1.0 - frac, 1.0])
+        elif sector == 4: base = np.array([frac, 0.0, 1.0])
+        else: base = np.array([1.0, 0.0, 1.0 - frac])
+        return np.clip(base * 0.7 + 0.3, 0.15, 1.0)
+
+    def generate_texture(radius, texture_type, base_hue):
+        d = 2 * radius + 1
+        base = hue_to_rgb(base_hue)
+        yy, xx = np.mgrid[:d, :d]
+        cy_t, cx_t = radius, radius
+        if texture_type == 'checkerboard':
+            freq = random.choice([3, 4, 5])
+            pattern = ((xx // freq + yy // freq) % 2).astype(np.float32) * 0.6 + 0.4
+        elif texture_type == 'stripes':
+            freq = random.choice([3, 4, 5])
+            angle = random.uniform(0, np.pi)
+            rotated = xx * np.cos(angle) + yy * np.sin(angle)
+            pattern = (np.sin(rotated * 2 * np.pi / freq) * 0.3 + 0.7).astype(np.float32)
+        elif texture_type == 'gradient':
+            angle = random.uniform(0, 2 * np.pi)
+            grad = (xx - cx_t) * np.cos(angle) + (yy - cy_t) * np.sin(angle)
+            grad = grad / (radius + 1e-8)
+            pattern = (grad * 0.3 + 0.7).astype(np.float32)
+        elif texture_type == 'noise':
+            pattern = np.random.uniform(0.3, 1.0, (d, d)).astype(np.float32)
+        elif texture_type == 'dots':
+            pattern = np.ones((d, d), dtype=np.float32) * 0.5
+            spacing = random.choice([4, 5, 6])
+            for dy in range(0, d, spacing):
+                for dx in range(0, d, spacing):
+                    dist_sq = (yy - dy) ** 2 + (xx - dx) ** 2
+                    pattern[dist_sq <= 1] = 1.0
+        else:
+            pattern = np.ones((d, d), dtype=np.float32) * 0.8
+        patch = np.zeros((3, d, d), dtype=np.float32)
+        for c in range(3):
+            patch[c] = base[c] * pattern
+        dist_sq = (xx - cx_t) ** 2 + (yy - cy_t) ** 2
+        mask = dist_sq <= radius ** 2
+        return patch, mask
+
+    def render_frame_img(objects, obj_textures, bg_color):
+        img = np.zeros((3, S, S), dtype=np.float32)
+        for c in range(3):
+            img[c, :, :] = bg_color[c]
+        for oi_idx, obj in enumerate(objects):
+            r = obj['r']
+            cx_i, cy_i = int(round(obj['cx'])), int(round(obj['cy']))
+            patch, mask = obj_textures[oi_idx]
+            d = 2 * r + 1
+            for dy in range(d):
+                for dx in range(d):
+                    if mask[dy, dx]:
+                        px = cx_i - r + dx
+                        py = cy_i - r + dy
+                        if 0 <= px < S and 0 <= py < S:
+                            for c in range(3):
+                                img[c, py, px] = patch[c, dy, dx]
+        return img
+
+    def physics_step(objects):
+        n = len(objects)
+        for i in range(n):
+            for j in range(i + 1, n):
+                oi_o, oj_o = objects[i], objects[j]
+                dx_c = oj_o['cx'] - oi_o['cx']
+                dy_c = oj_o['cy'] - oi_o['cy']
+                dist = math.hypot(dx_c, dy_c)
+                min_dist = oi_o['r'] + oj_o['r']
+                if dist < min_dist and dist > 0.1:
+                    nx, ny = dx_c / dist, dy_c / dist
+                    dvn = (oi_o['vx'] - oj_o['vx']) * nx + \
+                          (oi_o['vy'] - oj_o['vy']) * ny
+                    if dvn > 0:
+                        m1, m2 = oi_o['mass'], oj_o['mass']
+                        imp = 2 * dvn / (m1 + m2)
+                        oi_o['vx'] -= imp * m2 * nx
+                        oi_o['vy'] -= imp * m2 * ny
+                        oj_o['vx'] += imp * m1 * nx
+                        oj_o['vy'] += imp * m1 * ny
+                        overlap = min_dist - dist
+                        oi_o['cx'] -= overlap * nx * 0.5
+                        oi_o['cy'] -= overlap * ny * 0.5
+                        oj_o['cx'] += overlap * nx * 0.5
+                        oj_o['cy'] += overlap * ny * 0.5
+        for obj in objects:
+            obj['cx'] += obj['vx']; obj['cy'] += obj['vy']
+            r = obj['r']
+            if obj['cx'] - r < 0: obj['cx'] = r; obj['vx'] *= -1
+            if obj['cx'] + r >= S: obj['cx'] = S - r - 1; obj['vx'] *= -1
+            if obj['cy'] - r < 0: obj['cy'] = r; obj['vy'] *= -1
+            if obj['cy'] + r >= S: obj['cy'] = S - r - 1; obj['vy'] *= -1
+
+    def make_scene(rng_seed):
+        rng_state = random.getstate()
+        np_state = np.random.get_state()
+        random.seed(rng_seed)
+        np.random.seed(rng_seed)
+        masses = [1.0, 1.0, 1.0]
+        heavy_idx = random.randint(0, n_obj - 1)
+        masses[heavy_idx] = 3.0
+        bg_color = np.array([random.uniform(0.15, 0.55),
+                             random.uniform(0.15, 0.55),
+                             random.uniform(0.15, 0.55)], dtype=np.float32)
+        hue_offset = random.uniform(0, 1)
+        obj_hues = [(hue_offset + oi / n_obj) % 1.0 for oi in range(n_obj)]
+        objects = []
+        obj_textures = []
+        for oi in range(n_obj):
+            r = random.randint(6, 9)
+            for _attempt in range(100):
+                cx = random.uniform(r + 3, S - r - 4)
+                cy = random.uniform(r + 3, S - r - 4)
+                ok = True
+                for prev in objects:
+                    if math.hypot(cx - prev['cx'], cy - prev['cy']) < r + prev['r'] + 3:
+                        ok = False; break
+                if ok: break
+            vx = random.uniform(-5.0, 5.0)
+            vy = random.uniform(-5.0, 5.0)
+            objects.append({'cx': cx, 'cy': cy, 'vx': vx, 'vy': vy,
+                            'r': r, 'mass': masses[oi]})
+            tex_type = random.choice(texture_types)
+            patch, mask = generate_texture(r, tex_type, obj_hues[oi])
+            obj_textures.append((patch, mask))
+        random.setstate(rng_state)
+        np.random.set_state(np_state)
+        return objects, obj_textures, bg_color
+
+    def compute_slot_centroids(alpha):
+        n_p = 16
+        gy = torch.arange(n_p).float() / (n_p - 1)
+        gx = torch.arange(n_p).float() / (n_p - 1)
+        gy, gx = torch.meshgrid(gy, gx, indexing='ij')
+        gx_flat = gx.reshape(-1)
+        gy_flat = gy.reshape(-1)
+        K = alpha.shape[0]
+        centroids = torch.zeros(K, 2)
+        for k in range(K):
+            a = alpha[k]
+            a_sum = a.sum()
+            if a_sum > 0.01:
+                centroids[k, 0] = (a * gx_flat).sum() / a_sum
+                centroids[k, 1] = (a * gy_flat).sum() / a_sum
+            else:
+                centroids[k] = 0.5
+        return centroids
+
+    def match_obj_to_slots(gt_pos_frame, centroids):
+        mapping = {}
+        used_slots = set()
+        for oi in range(n_obj):
+            gt_xy = torch.tensor(gt_pos_frame[oi])
+            best_slot = -1
+            best_d = float('inf')
+            for si in range(centroids.shape[0]):
+                if si in used_slots:
+                    continue
+                d = (centroids[si] - gt_xy).norm().item()
+                if d < best_d:
+                    best_d = d
+                    best_slot = si
+            mapping[oi] = best_slot
+            used_slots.add(best_slot)
+        return mapping
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 1: Train SlotAttentionDINO (same as 40b)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 1: Generate SA training data + Train SlotAttentionDINO", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t1 = time.time()
+
+    random.seed(42)
+    np.random.seed(42)
+
+    n_sa_scenes = 1000
+    n_sa_frames_per = 5
+    sa_frames = []
+    for si in range(n_sa_scenes):
+        objects, obj_textures, bg_color = make_scene(rng_seed=42000 + si)
+        objs = copy.deepcopy(objects)
+        for fi in range(n_sa_frames_per):
+            sa_frames.append(render_frame_img(objs, obj_textures, bg_color))
+            physics_step(objs)
+        if (si + 1) % 250 == 0:
+            print(f"│  Generated {(si+1)*n_sa_frames_per} SA training frames", flush=True)
+    sa_frames = np.array(sa_frames)
+    print(f"│  SA training frames: {sa_frames.shape}", flush=True)
+
+    sa_tensor = torch.tensor(sa_frames, dtype=torch.float32)
+    del sa_frames
+
+    from world_model import SlotAttentionDINO
+    ae = SlotAttentionDINO(n_slots=n_slots, slot_dim=slot_dim, img_size=S).to(device)
+    ae_params = sum(p.numel() for p in ae.parameters() if p.requires_grad)
+    print(f"│  SlotAttentionDINO trainable params: {ae_params:,}", flush=True)
+
+    ae_opt = torch.optim.Adam(
+        [p for p in ae.parameters() if p.requires_grad], lr=4e-4)
+    ae_epochs = 40
+    batch_size = 32
+    n_sa_total = len(sa_tensor)
+    n_sa_train = int(0.9 * n_sa_total)
+    sa_perm = torch.randperm(n_sa_total)
+    sa_train_idx = sa_perm[:n_sa_train]
+    sa_val_idx = sa_perm[n_sa_train:]
+
+    for epoch in range(1, ae_epochs + 1):
+        ae.train()
+        ae.dino.eval()
+        ep_perm = sa_train_idx[torch.randperm(n_sa_train)]
+        ep_loss = 0.0
+        for start in range(0, n_sa_train, batch_size):
+            idx = ep_perm[start:start + batch_size]
+            batch = sa_tensor[idx].to(device)
+            loss, recon_loss, entropy, _, _, _ = ae(batch)
+            ae_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                [p for p in ae.parameters() if p.requires_grad], 1.0)
+            ae_opt.step()
+            ep_loss += loss.item() * len(idx)
+        if epoch % 10 == 0 or epoch == 1:
+            ae.eval()
+            with torch.no_grad():
+                vl_batch = sa_tensor[sa_val_idx[:64]].to(device)
+                vl_loss, _, vl_ent, _, _, vl_alpha = ae(vl_batch)
+                ownership = vl_alpha.argmax(dim=1)
+                active = len(set(ownership.reshape(-1).cpu().tolist()))
+            print(f"│    SA Epoch {epoch:3d}: train_loss={ep_loss/n_sa_train:.4f}, "
+                  f"val_loss={vl_loss.item():.4f}, entropy={vl_ent.item():.3f}, "
+                  f"active={active}/{n_slots}", flush=True)
+        if device.type == 'mps':
+            torch.mps.empty_cache()
+
+    ae.eval()
+    del sa_tensor
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+    print(f"└─ Stage 1 done [{time.time()-t1:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 2: Generate + encode JEPA sequences (DENSE actions)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 2: Generate + encode 1000 sequences (DENSE actions)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t2 = time.time()
+
+    n_jepa_seq = 1000
+    n_jepa_frames = 40
+    encode_batch = 8
+
+    all_slots = []
+    all_gt_pos = []
+    all_interventions = []
+    all_obj_to_slot = []
+
+    for si in range(n_jepa_seq):
+        objects, obj_textures, bg_color = make_scene(rng_seed=80000 + si)
+        objs = copy.deepcopy(objects)
+
+        # DENSE actions: every frame, random force on random object
+        interventions = {}
+        for fi in range(n_jepa_frames):
+            target_obj = random.randint(0, n_obj - 1)
+            fx = random.uniform(-0.3, 0.3) * vmax  # force in velocity units
+            fy = random.uniform(-0.3, 0.3) * vmax
+            interventions[fi] = (target_obj, fx, fy)
+
+        frames = []
+        gt_pos = []
+        for fi in range(n_jepa_frames):
+            gt_pos.append([[o['cx'] / S, o['cy'] / S] for o in objs])
+            frames.append(render_frame_img(objs, obj_textures, bg_color))
+            if fi in interventions:
+                tgt, fx, fy = interventions[fi]
+                objs[tgt]['vx'] += fx
+                objs[tgt]['vy'] += fy
+            physics_step(objs)
+
+        gt_pos = np.array(gt_pos, dtype=np.float32)
+        all_gt_pos.append(gt_pos)
+        all_interventions.append(interventions)
+
+        frames_t = torch.tensor(np.array(frames), dtype=torch.float32)
+        seq_aug_slots = []
+        with torch.no_grad():
+            for fi in range(0, n_jepa_frames, encode_batch):
+                batch = frames_t[fi:fi + encode_batch].to(device)
+                slots, _ = ae.encode(batch)
+                _, alpha = ae.decode(slots)
+                batch_centroids = []
+                for b in range(slots.shape[0]):
+                    c = compute_slot_centroids(alpha[b].cpu())
+                    batch_centroids.append(c)
+                centroids_t = torch.stack(batch_centroids)
+                aug = torch.cat([slots.cpu(), centroids_t], dim=-1)
+                seq_aug_slots.append(aug)
+        seq_aug_slots = torch.cat(seq_aug_slots, dim=0)
+        all_slots.append(seq_aug_slots)
+
+        centroids_f0 = seq_aug_slots[0, :, -2:]
+        mapping = match_obj_to_slots(gt_pos[0], centroids_f0)
+        all_obj_to_slot.append(mapping)
+
+        if device.type == 'mps' and (si + 1) % 25 == 0:
+            torch.mps.empty_cache()
+        if (si + 1) % 100 == 0:
+            print(f"│  Encoded {si+1}/{n_jepa_seq} sequences", flush=True)
+
+    all_slots = torch.stack(all_slots)
+    all_gt_pos = np.array(all_gt_pos)
+    print(f"│  Augmented slot cache: {list(all_slots.shape)}", flush=True)
+    print(f"└─ Stage 2 done [{time.time()-t2:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 3: Train action-conditioned JEPA (augmented dim=66)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 3: Train action-conditioned JEPA (dense actions)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t3 = time.time()
+
+    ae.to('cpu')
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    slots_t_list, slots_tp1_list, actions_list = [], [], []
+    for si in range(n_jepa_seq):
+        interventions = all_interventions[si]
+        mapping = all_obj_to_slot[si]
+        for fi in range(n_jepa_frames - 1):
+            slots_t_list.append(all_slots[si, fi])
+            slots_tp1_list.append(all_slots[si, fi + 1])
+            if fi in interventions:
+                tgt_obj, fx, fy = interventions[fi]
+                tgt_slot = mapping[tgt_obj]
+                action_vec = torch.zeros(n_slots + 2)
+                action_vec[tgt_slot] = 1.0
+                action_vec[n_slots] = fx / vmax
+                action_vec[n_slots + 1] = fy / vmax
+                actions_list.append(action_vec)
+            else:
+                actions_list.append(torch.zeros(n_slots + 2))
+
+    train_slots_t = torch.stack(slots_t_list)
+    train_slots_tp1 = torch.stack(slots_tp1_list)
+    train_actions = torch.stack(actions_list)
+
+    n_train = int(0.8 * len(train_slots_t))
+    perm = torch.randperm(len(train_slots_t))
+    tr_t = train_slots_t[perm[:n_train]].to(device)
+    tr_tp1 = train_slots_tp1[perm[:n_train]].to(device)
+    tr_act = train_actions[perm[:n_train]].to(device)
+    vl_t = train_slots_t[perm[n_train:]].to(device)
+    vl_tp1 = train_slots_tp1[perm[n_train:]].to(device)
+    vl_act = train_actions[perm[n_train:]].to(device)
+
+    copy_mse = F.mse_loss(vl_t, vl_tp1).item()
+    n_action_pairs = (train_actions.abs().sum(dim=-1) > 0).sum().item()
+    print(f"│  Train pairs: {n_train}, Val pairs: {len(vl_t)}", flush=True)
+    print(f"│  Copy baseline MSE: {copy_mse:.6f}", flush=True)
+    print(f"│  Action pairs: {n_action_pairs}/{len(train_actions)} "
+          f"({n_action_pairs/len(train_actions)*100:.1f}%)", flush=True)
+
+    from world_model import ActionConditionedPredictor
+    torch.manual_seed(42)
+    jepa = ActionConditionedPredictor(
+        n_slots=n_slots, slot_dim=augmented_dim, action_dim=64, hidden_dim=256).to(device)
+    jepa_params = sum(p.numel() for p in jepa.parameters())
+    print(f"│  ActionConditionedPredictor: {jepa_params:,} params", flush=True)
+
+    jepa_opt = torch.optim.Adam(jepa.parameters(), lr=3e-4)
+    jepa_epochs = 100
+    jepa_batch = 256
+    best_val_mse = float('inf')
+    best_jepa_state = None
+
+    for epoch in range(1, jepa_epochs + 1):
+        jepa.train()
+        ep_perm = torch.randperm(n_train, device=device)
+        ep_loss = 0.0
+        for start in range(0, n_train, jepa_batch):
+            idx = ep_perm[start:start + jepa_batch]
+            pred = jepa(tr_t[idx], tr_act[idx])
+            loss = F.mse_loss(pred, tr_tp1[idx])
+            jepa_opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(jepa.parameters(), 1.0)
+            jepa_opt.step()
+            ep_loss += loss.item() * len(idx)
+        if epoch % 10 == 0 or epoch == 1:
+            jepa.eval()
+            with torch.no_grad():
+                vl_pred = jepa(vl_t, vl_act)
+                val_mse = F.mse_loss(vl_pred, vl_tp1).item()
+            imp = (1 - val_mse / copy_mse) * 100
+            print(f"│    Epoch {epoch:3d}: train={ep_loss/n_train:.6f}, "
+                  f"val={val_mse:.6f}, vs copy: {imp:+.1f}%", flush=True)
+            if val_mse < best_val_mse:
+                best_val_mse = val_mse
+                best_jepa_state = {k: v.cpu().clone()
+                                   for k, v in jepa.state_dict().items()}
+
+    jepa.load_state_dict(best_jepa_state)
+    jepa.to('cpu').eval()
+    imp = (1 - best_val_mse / copy_mse) * 100
+    print(f"│  Best val MSE: {best_val_mse:.6f} ({imp:+.1f}% vs copy)", flush=True)
+
+    del tr_t, tr_tp1, tr_act, vl_t, vl_tp1, vl_act
+    del train_slots_t, train_slots_tp1, train_actions
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+    print(f"└─ Stage 3 done [{time.time()-t3:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 4: Planning on 200 test scenarios
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 4: Planning — position-augmented JEPA + L2 scoring", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    t4 = time.time()
+
+    ae.to(device).eval()
+
+    n_test = 200
+    random.seed(999)
+    np.random.seed(999)
+
+    visual_dists = []
+    oracle_dists = []
+    random_dists = []
+
+    for si in range(n_test):
+        objects, obj_textures, bg_color = make_scene(rng_seed=90000 + si)
+        target_obj = random.randint(0, n_obj - 1)
+        target_pos = np.array([random.uniform(0.2, 0.8),
+                               random.uniform(0.2, 0.8)], dtype=np.float32)
+
+        # Encode initial frame → identify target slot
+        init_frame = render_frame_img(objects, obj_textures, bg_color)
+        with torch.no_grad():
+            init_t = torch.tensor(init_frame, dtype=torch.float32).unsqueeze(0).to(device)
+            init_slots, _ = ae.encode(init_t)
+            _, init_alpha = ae.decode(init_slots)
+        init_centroids = compute_slot_centroids(init_alpha[0].cpu())
+        init_gt = [[o['cx'] / S, o['cy'] / S] for o in objects]
+        obj_slot_map = match_obj_to_slots(init_gt, init_centroids)
+        target_slot_idx = obj_slot_map[target_obj]
+
+        target_pos_t = torch.tensor(target_pos)
+
+        # A. Visual JEPA closed-loop planning (position-augmented)
+        plan_objs = copy.deepcopy(objects)
+        for step in range(K):
+            cur_frame = render_frame_img(plan_objs, obj_textures, bg_color)
+            with torch.no_grad():
+                cur_t = torch.tensor(cur_frame, dtype=torch.float32).unsqueeze(0).to(device)
+                cur_slots, _ = ae.encode(cur_t)
+                _, cur_alpha = ae.decode(cur_slots)
+                cur_centroids = compute_slot_centroids(cur_alpha[0].cpu())
+                cur_aug = torch.cat([cur_slots.cpu(), cur_centroids.unsqueeze(0)], dim=-1)
+
+            mu = torch.zeros(2)
+            sigma = torch.ones(2) * 0.3
+            for round_i in range(n_rounds):
+                forces = mu + sigma * torch.randn(n_candidates, 2)
+                forces = forces.clamp(-force_range, force_range)
+                actions = torch.zeros(n_candidates, n_slots + 2)
+                actions[:, target_slot_idx] = 1.0
+                actions[:, n_slots] = forces[:, 0]
+                actions[:, n_slots + 1] = forces[:, 1]
+                with torch.no_grad():
+                    pred_slots = jepa(
+                        cur_aug.expand(n_candidates, -1, -1), actions)
+                    pred_target = pred_slots[:, target_slot_idx]
+                    pred_pos = pred_target[:, -2:]
+                    scores = -((pred_pos - target_pos_t.unsqueeze(0)) ** 2).sum(dim=-1)
+                elite_idx = torch.topk(scores, n_elite).indices
+                elite_forces = forces[elite_idx]
+                mu = elite_forces.mean(dim=0)
+                sigma = elite_forces.std(dim=0).clamp(min=0.01)
+
+            fx, fy = mu[0].item(), mu[1].item()
+            plan_objs[target_obj]['vx'] += fx * vmax
+            plan_objs[target_obj]['vy'] += fy * vmax
+            physics_step(plan_objs)
+
+        final_pos = np.array([plan_objs[target_obj]['cx'] / S,
+                              plan_objs[target_obj]['cy'] / S])
+        visual_dists.append(np.linalg.norm((final_pos - target_pos) * S))
+
+        # B. Oracle: CEM with GT physics, position scoring
+        oracle_objs = copy.deepcopy(objects)
+        for step in range(K):
+            mu_o = torch.zeros(2)
+            sigma_o = torch.ones(2) * 0.3
+            for round_i in range(n_rounds):
+                forces = mu_o + sigma_o * torch.randn(n_candidates, 2)
+                forces = forces.clamp(-force_range, force_range)
+                scores_o = torch.zeros(n_candidates)
+                for ci in range(n_candidates):
+                    sim_objs = copy.deepcopy(oracle_objs)
+                    sim_objs[target_obj]['vx'] += forces[ci, 0].item() * vmax
+                    sim_objs[target_obj]['vy'] += forces[ci, 1].item() * vmax
+                    physics_step(sim_objs)
+                    pp = np.array([sim_objs[target_obj]['cx'] / S,
+                                   sim_objs[target_obj]['cy'] / S])
+                    scores_o[ci] = -((pp - target_pos) ** 2).sum()
+                elite_idx = torch.topk(scores_o, n_elite).indices
+                elite_forces = forces[elite_idx]
+                mu_o = elite_forces.mean(dim=0)
+                sigma_o = elite_forces.std(dim=0).clamp(min=0.01)
+            oracle_objs[target_obj]['vx'] += mu_o[0].item() * vmax
+            oracle_objs[target_obj]['vy'] += mu_o[1].item() * vmax
+            physics_step(oracle_objs)
+        o_final = np.array([oracle_objs[target_obj]['cx'] / S,
+                            oracle_objs[target_obj]['cy'] / S])
+        oracle_dists.append(np.linalg.norm((o_final - target_pos) * S))
+
+        # C. Random
+        rand_objs = copy.deepcopy(objects)
+        for step in range(K):
+            rand_objs[random.randint(0, n_obj-1)]['vx'] += \
+                random.uniform(-force_range, force_range) * vmax
+            rand_objs[random.randint(0, n_obj-1)]['vy'] += \
+                random.uniform(-force_range, force_range) * vmax
+            physics_step(rand_objs)
+        r_final = np.array([rand_objs[target_obj]['cx'] / S,
+                            rand_objs[target_obj]['cy'] / S])
+        random_dists.append(np.linalg.norm((r_final - target_pos) * S))
+
+        if device.type == 'mps' and (si + 1) % 25 == 0:
+            torch.mps.empty_cache()
+        if (si + 1) % 50 == 0:
+            v_s = sum(1 for d in visual_dists if d < success_thresh) / len(visual_dists) * 100
+            o_s = sum(1 for d in oracle_dists if d < success_thresh) / len(oracle_dists) * 100
+            r_s = sum(1 for d in random_dists if d < success_thresh) / len(random_dists) * 100
+            print(f"│    {si+1}/{n_test}: visual={v_s:.0f}%, oracle={o_s:.0f}%, "
+                  f"random={r_s:.0f}%", flush=True)
+
+    print(f"└─ Stage 4 done [{time.time()-t4:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 5: Visualization + Final Results
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 5: Final Evaluation", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    elapsed = time.time() - t0
+
+    v_success = sum(1 for d in visual_dists if d < success_thresh) / n_test * 100
+    o_success = sum(1 for d in oracle_dists if d < success_thresh) / n_test * 100
+    r_success = sum(1 for d in random_dists if d < success_thresh) / n_test * 100
+    v_mean, o_mean, r_mean = np.mean(visual_dists), np.mean(oracle_dists), np.mean(random_dists)
+    v_med, o_med, r_med = np.median(visual_dists), np.median(oracle_dists), np.median(random_dists)
+
+    print(f"\n│  Success rate (within {success_thresh}px):", flush=True)
+    print(f"│    Visual JEPA:         {v_success:.1f}%  (target >40%)", flush=True)
+    print(f"│    Oracle (GT physics): {o_success:.1f}%  (ceiling)", flush=True)
+    print(f"│    Random:              {r_success:.1f}%", flush=True)
+    print(f"│    State-vector ref:    ~81% (Phase 36f/38d)", flush=True)
+    print(f"\n│  Mean distance (px):", flush=True)
+    print(f"│    Visual JEPA:         {v_mean:.2f}px (median {v_med:.2f})", flush=True)
+    print(f"│    Oracle:              {o_mean:.2f}px (median {o_med:.2f})", flush=True)
+    print(f"│    Random:              {r_mean:.2f}px (median {r_med:.2f})", flush=True)
+    print(f"\n│  Total time: {elapsed:.0f}s", flush=True)
+
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+
+    ax = axes[0, 0]
+    planners = ['Visual\nJEPA', 'Oracle\n(GT phys)', 'State-vec\n(ref)', 'Random']
+    successes = [v_success, o_success, 81.0, r_success]
+    colors = ['#2196F3', '#4CAF50', '#FF9800', '#9E9E9E']
+    bars = ax.bar(planners, successes, color=colors, edgecolor='black', linewidth=0.5)
+    for bar, val in zip(bars, successes):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                f'{val:.1f}%', ha='center', fontsize=10, fontweight='bold')
+    ax.set_ylabel('Success Rate (%)')
+    ax.set_title('Planning Success (< 10px)')
+    ax.set_ylim(0, 105)
+    ax.axhline(y=40, color='red', linestyle='--', alpha=0.5, label='40% target')
+    ax.legend()
+
+    ax = axes[0, 1]
+    ax.hist(visual_dists, bins=30, alpha=0.6, label=f'Visual (med={v_med:.1f})', color='#2196F3')
+    ax.hist(oracle_dists, bins=30, alpha=0.6, label=f'Oracle (med={o_med:.1f})', color='#4CAF50')
+    ax.hist(random_dists, bins=30, alpha=0.6, label=f'Random (med={r_med:.1f})', color='#9E9E9E')
+    ax.axvline(x=success_thresh, color='red', linestyle='--', label='10px threshold')
+    ax.set_xlabel('Distance to target (px)')
+    ax.set_ylabel('Count')
+    ax.set_title('Distance Distributions')
+    ax.legend(fontsize=8)
+
+    ax = axes[0, 2]
+    for dists, label, color in [(visual_dists, 'Visual JEPA', '#2196F3'),
+                                 (oracle_dists, 'Oracle', '#4CAF50'),
+                                 (random_dists, 'Random', '#9E9E9E')]:
+        sorted_d = np.sort(dists)
+        cdf = np.arange(1, len(sorted_d) + 1) / len(sorted_d)
+        ax.plot(sorted_d, cdf * 100, label=label, color=color, linewidth=2)
+    ax.axvline(x=success_thresh, color='red', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Distance to target (px)')
+    ax.set_ylabel('Cumulative %')
+    ax.set_title('CDF of Distance to Target')
+    ax.legend()
+    ax.set_xlim(0, 40)
+
+    ax = axes[1, 0]
+    ax.scatter(oracle_dists, visual_dists, alpha=0.3, s=10, color='#2196F3')
+    ax.plot([0, 40], [0, 40], 'k--', alpha=0.3, label='y=x')
+    ax.axhline(y=success_thresh, color='red', linestyle='--', alpha=0.3)
+    ax.axvline(x=success_thresh, color='red', linestyle='--', alpha=0.3)
+    ax.set_xlabel('Oracle distance (px)')
+    ax.set_ylabel('Visual JEPA distance (px)')
+    ax.set_title('Visual vs Oracle (per scenario)')
+    ax.set_xlim(0, 40); ax.set_ylim(0, 40)
+    ax.legend()
+
+    ax = axes[1, 1]
+    ax.axhline(y=copy_mse, color='#9E9E9E', linestyle='--',
+               label=f'Copy baseline ({copy_mse:.6f})')
+    ax.axhline(y=best_val_mse, color='#2196F3', linestyle='-',
+               label=f'Best JEPA ({best_val_mse:.6f})')
+    ax.set_title(f'JEPA: {imp:+.1f}% vs Copy')
+    ax.set_ylabel('MSE')
+    ax.legend()
+
+    ax = axes[1, 2]
+    ax.axis('off')
+    summary = (
+        f"Phase 40c: Dense Action Training\n\n"
+        f"Visual JEPA:  {v_success:.1f}% success\n"
+        f"Oracle:       {o_success:.1f}% success\n"
+        f"State-vec:    ~81% (ref)\n"
+        f"Random:       {r_success:.1f}% success\n\n"
+        f"Gap visual-oracle: {o_success - v_success:.1f}pp\n"
+        f"Gap visual-state:  {81.0 - v_success:.1f}pp\n\n"
+        f"JEPA vs copy: {imp:+.1f}%\n"
+        f"Action density: 100%\n"
+        f"Total time: {elapsed:.0f}s"
+    )
+    ax.text(0.1, 0.5, summary, transform=ax.transAxes, fontsize=12,
+            fontfamily='monospace', verticalalignment='center')
+
+    fig.suptitle(f'Phase 40c: Dense Action Training — Position-Augmented Planning\n'
+                 f'visual={v_success:.1f}%, oracle={o_success:.1f}%, random={r_success:.1f}%',
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig('results/phase40c_dense_actions.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\n│  Saved results/phase40c_dense_actions.png", flush=True)
+
+    print(f"\n{'=' * 70}", flush=True)
+    if v_success > 40:
+        verdict = "SUCCESS"
+    elif v_success > 25:
+        verdict = "PARTIAL"
+    else:
+        verdict = "FAIL"
+    print(f"VERDICT: {verdict}", flush=True)
+    print(f"  Visual JEPA:          {v_success:.1f}% (target >40%)", flush=True)
+    print(f"  Oracle (GT physics):  {o_success:.1f}%", flush=True)
+    print(f"  Random:               {r_success:.1f}%", flush=True)
+    print(f"  State-vector ref:     ~81%", flush=True)
+    print(f"  Gap visual-oracle:    {o_success - v_success:.1f}pp", flush=True)
+    print(f"  JEPA vs copy:         {imp:+.1f}%", flush=True)
+    print(f"  Total time:           {elapsed:.0f}s", flush=True)
+    print(f"{'=' * 70}", flush=True)
+
+
 def run_phase40b_position_augmented():
     """Phase 40b: Position-augmented slot planning.
 
