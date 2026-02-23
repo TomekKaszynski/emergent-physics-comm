@@ -1742,3 +1742,42 @@ Extend communication beyond mass to also communicate elasticity (coefficient of 
 - **Training collapse at τ≈1.33**: Gumbel-softmax became too peaked, gradient signal died. The model committed to bad elasticity tokens and couldn't recover. Need either: (a) slower annealing, (b) minimum temperature floor >1.0, or (c) separate training schedules per property
 - **Planning succeeds despite elasticity failure**: 82% planning success comes almost entirely from mass communication (heavy object knowledge). Elasticity has minimal impact on 5-step planning — energy loss matters more over longer horizons
 - **The 2-token architecture works**: sender can specialize tokens (mass vs elasticity). The bottleneck is feature quality, not communication capacity
+
+---
+
+## Phase 41b: Elasticity Fix — Wider Gap + Temp Floor
+**Date:** Feb 23 | **Duration:** ~4.5min (276s)
+
+Attempted fixes for Phase 41's elasticity failure: wider elasticity gap (0.2 vs 1.0 instead of 0.5 vs 1.0), temperature floor τ≥1.0, higher velocities (vmax×1.5 → ±7.5), 600 epochs.
+
+**Changes from 41:**
+- Elasticity values: {0.2, 1.0} (was {0.5, 1.0})
+- Temperature: `τ = max(annealed, 1.0)` — floor at 1.0
+- Initial velocities: ±7.5 (was ±5.0)
+- 600 comm epochs (was 400), logged every 30
+
+**Training:**
+- JEPA loss 0.000698 (slightly higher than 41's 0.000459 due to faster objects)
+- Communication **collapsed at epoch 180 (τ≈1.55)** — same as Phase 41 despite temp floor not yet in effect
+- Best checkpoint: mass=84.5%, elast=59.7% (validation), joint=15.5%
+- Never recovered in remaining 420 epochs
+
+**Results:**
+
+| Metric | Phase 41 | Phase 41b | Target |
+|---|---|---|---|
+| Mass accuracy | **92.5%** | 76.5% | >90% |
+| Elasticity accuracy | 19.0% | 21.5% | >70% |
+| Joint accuracy | 17.0% | 14.5% | >60% |
+| Full pipeline | **82.0%** | 69.0% | >70% |
+| Oracle comm | 87.0% | 87.5% | — |
+| No communication | 31.5% | 33.5% | — |
+| Random | 14.0% | 10.0% | — |
+
+**Verdict: FAIL** — Worse than Phase 41 on most metrics. Temperature floor was irrelevant since collapse happens at τ≈1.55.
+
+**Key insights:**
+- **Training collapse is NOT temperature-driven**: collapse at τ=1.55 (Phase 41b) vs τ=1.33 (Phase 41). The floor at 1.0 never engaged. The instability is in the Gumbel-softmax gradient dynamics, not the temperature schedule
+- **Higher velocities hurt mass accuracy**: faster objects increase perception noise (smoothing can't keep up), degrading mass features. Best mass accuracy dropped from 92% to 84.5%
+- **Wider elasticity gap didn't help**: 0.2 vs 1.0 gives marginal improvement (21.5% vs 19.0%) — still near random. The features extracted from visual perception are too noisy regardless of the underlying gap
+- **The collapse is the core problem**: both Phase 41 and 41b reach ~85-92% mass accuracy and ~60% elasticity before collapsing. The fix needed is training stability (e.g., separate optimizers, no Gumbel for elasticity, or straight-through estimator), not data changes
