@@ -1657,3 +1657,41 @@ Position decoding: 17.1px error from slot centroids (S=64), predicted slots 12.4
 - **Training distribution mismatch**: JEPA was trained on many small random forces, but planning applies targeted forces to specific objects. The JEPA may not generalize well from "random noise on random objects" to "deliberate force on target object"
 - **Sparse actions (40b) were actually better for planning** because the training distribution is closer to the test distribution: occasional targeted forces, mostly passive dynamics
 - **Next direction**: Hybrid approach — sparse but stronger targeted interventions (like 40b) with more of them, or train on the same force distribution used in planning
+
+---
+
+## Phase 40d: Trained Position Decoder
+**Date:** Feb 23 | **Duration:** 1710s (~29 min) | **Verdict:** PARTIAL
+
+**Setup:** Same as 40b (sparse interventions, position-augmented slots, L2 scoring) except: instead of attention mask centroids, train an MLP `Linear(64,32)→ReLU→Linear(32,2)` (2,146 params) to decode slot features → (x,y) using GT positions as supervision. Train on 120K matched (slot, GT_position) pairs from the encoded training data. Augment slots with decoded positions [7, 66].
+
+**Architecture:**
+- SlotAttentionDINO: same (640K params, 40 epochs, entropy=0.382)
+- Position decoder: 2,146 params, 100 epochs, lr=1e-3
+- Decode error: **16.47px** (target was <8px)
+- ActionConditionedPredictor: 419K params (slot_dim=66)
+- 100 JEPA epochs: best val MSE=0.098214 (+7.0% vs copy)
+
+**Results:**
+
+| Planner | Success (10px) | Mean dist | Median dist |
+|---|---|---|---|
+| **Visual JEPA** | **28.5%** | 16.49px | 15.93px |
+| Oracle (GT physics) | 86.5% | 4.46px | 2.62px |
+| Random | 11.0% | 23.75px | 22.87px |
+
+**Progression 40 → 40b → 40c → 40d:**
+| Metric | 40 (cosine) | 40b (centroids) | 40c (dense) | 40d (decoder) |
+|---|---|---|---|---|
+| Position source | — | centroids | centroids | trained MLP |
+| Pos decode error | — | ~15px | ~15px | 16.47px |
+| JEPA vs copy | +6.0% | +11.8% | +17.0% | +7.0% |
+| Planning success | 13.0% | 24.5% | 18.0% | **28.5%** |
+| Mean distance | 25.61px | 18.63px | 20.55px | **16.49px** |
+
+**Key insights:**
+- **Decoder barely beats centroids** (16.47px vs ~15px centroid error). The DINOv2 slot features simply don't encode fine-grained position well — they're appearance/texture features. A 1-hidden-layer MLP can't extract what isn't there
+- **Best planning success so far** (28.5%) but position decoding is still the bottleneck. The JEPA is only +7% vs copy (weaker than 40b's +11.8%), likely because the noisier decoded positions add more variance to the augmented slot space
+- **The position information problem is fundamental**: DINOv2 was trained for semantic understanding, not spatial precision. Slot attention groups patches by appearance similarity, not by spatial locality. Position is an emergent, weak signal in the slot features
+- **Centroid extraction (40b) remains competitive**: It's free (no training), slightly better position accuracy, and gives better JEPA dynamics. The trained decoder adds noise without adding much precision
+- **The 8px target was unrealistic**: slot features at 64-dim from DINOv2 patches (16×16 grid on 224px) can't localize objects to <8px on a 64px canvas
