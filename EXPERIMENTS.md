@@ -1974,6 +1974,39 @@ Same as 41g (separate pathways, direct restitution) but engineered for maximum c
 - **Dense collisions don't improve the signal**: even with many more collisions per object, the restitution feature doesn't generalize from train to test
 - **The problem is NOT collision sparsity**: this definitively rules out the hypothesis that more collisions would stabilize restitution estimates
 
+## Phase 41j: FSQ + Receiver Regularization
+**Date:** Feb 23 | **Duration:** ~4min (231s)
+
+Literature-informed changes to elasticity pathway only:
+1. **FSQ (Finite Scalar Quantization)**: sender outputs scalar → sigmoid → scale to [0,3] → round → straight-through gradient. Replaces Gumbel-softmax entirely.
+2. **ElastReceiver regularization**: dropout(0.3), weight_decay=0.01
+3. **Receiver reinit every 50 epochs**: fresh ElastReceiver + optimizer while keeping sender
+
+**Training:**
+- Mass pathway: peaked at 86.3% (epoch 80), stable as usual
+- Elast pathway: **no collapse** — FSQ eliminated Gumbel instability
+  - Epochs 1-50: stuck at 49.8% (sender not yet useful)
+  - After reinit at epoch 51: jumped to 60+%, peaked at 62.6% (epoch 200)
+  - Receiver reinit helped sender escape local minimum
+
+**Results:**
+
+| Metric | 41g (Gumbel) | 41j (FSQ) | Delta |
+|---|---|---|---|
+| Mass accuracy | 89.5% | 89.5% | 0.0% |
+| Elasticity accuracy | 24.0% | 23.0% | -1.0% |
+| Joint accuracy | 22.0% | 20.0% | -2.0% |
+| Full pipeline | 78.5% | 76.0% | -2.5% |
+| Oracle comm | 86.5% | 84.5% | -2.0% |
+
+**Verdict: PARTIAL** — FSQ eliminated Gumbel collapse but elasticity test accuracy unchanged at 23%.
+
+**Analysis:**
+- **FSQ works as intended**: no temperature collapse, stable training, sender learns monotonically
+- **Receiver reinit is effective**: after reinit at epoch 51, val accuracy jumped from 49.8% to 60+%
+- **But val→test gap persists**: 62.6% val → 23.0% test (~40pp gap), identical to Gumbel variants
+- **The bottleneck is NOT the quantization method**: FSQ (straight-through rounding) gives the same result as Gumbel-softmax. The problem is upstream — the restitution feature itself doesn't generalize across scenes
+
 **Phase 41 series summary (final):**
 
 | Phase | Mass (test) | Elast (val) | Elast (test) | Plan | Key change |
@@ -1981,17 +2014,19 @@ Same as 41g (separate pathways, direct restitution) but engineered for maximum c
 | 41 | **92.5%** | 61.0% | 19.0% | **82.0%** | Joint training |
 | 41b | 76.5% | 59.7% | 21.5% | 69.0% | Wider gap + temp floor |
 | 41c | 32.0% | — | 12.5% | 35.0% | Sequential (bug) |
-| 41d | 86.5% | 66.7% | **26.0%** | 77.5% | Checkpoint + τ floor |
+| 41d | 86.5% | **66.7%** | **26.0%** | 77.5% | Checkpoint + τ floor |
 | 41e | 80.5% | 66.5% | 25.0% | 78.0% | More data + dropout |
 | 41f | 89.5% | 64.0% | 22.5% | 76.5% | Separate pathways |
 | 41g | 89.5% | 62.9% | 24.0% | 78.5% | Direct restitution |
 | 41h | 82.5% | 57.0% | 21.5% | 72.5% | GT positions |
 | 41i | 87.0% | 56.4% | 9.0% | 78.0% | Dense collisions (4obj, S=48, 200f) |
+| 41j | 89.5% | 62.6% | 23.0% | 76.0% | FSQ + dropout + reinit |
 
-**Key insights across 9 experiments:**
-- **Elasticity test accuracy is 9-26% regardless of EVERYTHING**: architecture, training procedure, features, data amount, regularization, GT positions, AND collision density
-- **More collisions don't help**: 41i had ~10× more collision events per object than 41g, yet elasticity was worse
-- **The val→test gap is NOT perception noise** (41h) **or collision sparsity** (41i): root cause is the Gumbel-softmax discrete bottleneck failing to encode continuous restitution
-- **Mass communication works reliably**: 82-92% across all 9 variants
+**Key insights across 10 experiments:**
+- **Elasticity test accuracy is 9-26% regardless of EVERYTHING**: architecture, training procedure, features, data amount, regularization, GT positions, collision density, AND quantization method (Gumbel vs FSQ)
+- **The ~40pp val→test gap is the core problem**: all variants reach 57-67% val but crash to 9-26% test
+- **Ruled out as causes**: perception noise (41h), collision sparsity (41i), Gumbel instability (41j), feature choice (41g), architecture (41f), training procedure (41c/d), data amount (41e)
+- **Remaining hypothesis**: the restitution *feature itself* is unreliable — measured e from noisy velocity estimates varies too much across scenes for a small sender network to learn a generalizable mapping
+- **Mass communication works reliably**: 82-92% across all 10 variants
 - **Planning success (72-82%) is driven entirely by mass identification**
-- **Recommendation**: stop grinding on elasticity communication. Either (a) increase token vocabulary substantially (16+ tokens), (b) use continuous communication for elasticity, or (c) accept mass-only communication and move to other capabilities
+- **Recommendation**: stop grinding on elasticity communication. The feature extraction pipeline cannot produce stable enough restitution estimates for communication to succeed. Next steps should either (a) use learned features (CNN on collision clips) instead of hand-crafted restitution, or (b) accept mass-only communication and move to other capabilities
