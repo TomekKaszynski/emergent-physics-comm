@@ -1580,3 +1580,42 @@ Position decoding: 17.1px error from slot centroids (S=64), predicted slots 12.4
 - **Phase 36b comparison**: With GT state vectors, action-conditioned JEPA achieved +45% on action frames. With DINOv2 slots, only +6% overall. The visual JEPA doesn't learn dynamics well enough
 - **Root cause**: DINOv2 slot features encode texture/appearance, not cleanly-separable position+velocity. The JEPA predicting "next appearance" can mostly just copy, since appearance barely changes. Forces cause position changes that are subtle in slot space
 - **Next direction**: Either (a) train a much stronger visual JEPA (more action data, longer training, explicit position conditioning), or (b) add a position readout to make the JEPA predict something more tractable than raw slot vectors
+
+---
+
+## Phase 40b: Position-Augmented Slot Planning
+**Date:** Feb 23 | **Duration:** 2389s (~40 min) | **Verdict:** PARTIAL
+
+**Setup:** Same as Phase 40 except slots augmented with attention mask centroids: `[slots, centroids]` → [7, 66] instead of [7, 64]. JEPA predicts augmented slots (slot_dim=66). Scoring by L2 distance on position component (last 2 dims) vs target position — no goal frame rendering needed. Neural features for identity, explicit position for spatial reasoning.
+
+**Architecture:**
+- SlotAttentionDINO: same as Phase 40 (640K params, 7 slots, 64-dim, 40 epochs)
+- SA: entropy=0.269, 7/7 active, val_loss=1.4810
+- ActionConditionedPredictor: 419K params (slot_dim=66 instead of 64)
+- 100 JEPA epochs: best val MSE=0.077948 (+11.8% vs copy)
+- CEM: 128 candidates, 16 elite, 3 rounds, force_range=0.5, 5-step rollout
+
+**Results:**
+
+| Planner | Success (10px) | Mean dist | Median dist |
+|---|---|---|---|
+| **Visual JEPA** | **24.5%** | 18.63px | 16.39px |
+| Oracle (GT physics) | 86.5% | 4.46px | 2.62px |
+| Random | 11.0% | 23.75px | 22.87px |
+| State-vector ref (38d) | ~81% | — | — |
+
+**vs Phase 40 (no position augmentation):**
+| Metric | Phase 40 | Phase 40b | Change |
+|---|---|---|---|
+| Visual success | 13.0% | **24.5%** | +11.5pp |
+| JEPA vs copy | +6.0% | **+11.8%** | +5.8pp |
+| Mean distance | 25.61px | **18.63px** | -6.98px |
+| Median distance | 25.57px | **16.39px** | -9.18px |
+
+**Key insights:**
+- **Position augmentation nearly doubles planning success** (13% → 24.5%) and nearly doubles JEPA quality (+6% → +11.8% vs copy)
+- **L2 position scoring is far more informative** than cosine similarity on appearance features — the planner can now reason about spatial displacement
+- **Still well below target** (24.5% vs 35%) and far from oracle (86.5%). The JEPA's position predictions are noisy — 11.8% improvement over copy means the predicted positions are only slightly better than "stay where you are"
+- **Action sparsity remains a bottleneck**: only 7.7% of training pairs have actions. The JEPA mostly learns to copy, with weak force-effect signal
+- **The hybrid approach works**: neural features (first 64 dims) handle object identity/tracking, explicit position (last 2 dims) enables spatial planning. This validates the architecture direction
+- **Next steps**: (a) More action-dense training data to strengthen force learning, (b) separate position vs appearance prediction heads, (c) larger force range or more interventions per sequence
