@@ -2120,11 +2120,62 @@ Both senders see ALL 7 features (6 mass + 1 restitution) instead of split 6/1. T
 | 41i | 87.0% | 56.4% | 9.0% | 78.0% | Dense collisions (4obj, S=48, 200f) |
 | 41j | 89.5% | 62.6% | 23.0% | 76.0% | FSQ + dropout + reinit |
 | 41k | 80.5% | 71.8% | 39.5% | 71.5% | Wall-bounce restitution |
-| **41l** | 83.5% | **77.0%** | **50.5%** | 75.0% | **Shared features** |
+| 41l | 83.5% | 77.0% | 50.5% | 75.0% | Shared features |
 
-**Key insights across 12 experiments:**
-- **Three breakthroughs stacked**: wall-bounce restitution (41k: +16pp), shared features (41l: +11pp), FSQ+reinit (41j: stable training)
-- **Elasticity went from ~20% → 50.5%** by fixing the measurement source and letting senders see all features
-- **Val→test gap narrowing**: 40pp → 32pp → 27pp across 41g→41k→41l
-- **Mass accuracy trades off with wall-bounce physics**: 92.5% (original) → 80-83% (wall-bounce). Shared features partially compensate (+3pp)
-- **Joint accuracy 42%**: agents communicate TWO distinct physical properties through 2 discrete tokens per object
+## Phase 41m: Scaled Up
+**Date:** Feb 23 | **Duration:** ~9min (521s)
+
+No new tricks — just more capacity and data:
+- Senders: 7→64→32→output (from 7→32→output) — 2,724 params each (was 388)
+- Receivers: embed_dim=32, hidden=128 (from 16, 64) — 12,963 params each (was 3,411)
+- 4000 training sequences (from 2000)
+- 400 epochs (from 200), reinit every 100 (from 50)
+
+**Training:**
+- Mass pathway: peaked at 84.4% (epoch 40), **collapsed at epoch ~200** (Gumbel instability with bigger model, τ≈1.25). Best checkpoint saved.
+- Elast pathway: **84.6% val** (new best by far!) — steady improvement through reinits, no collapse (FSQ is stable)
+  - 79.8% by epoch 40, 84.2% by epoch 160, plateaued at 84.6% by epoch 240
+
+**Results:**
+
+| Metric | 41l (small) | 41m (scaled) | Delta |
+|---|---|---|---|
+| Mass accuracy | 83.5% | **85.0%** | **+1.5%** |
+| Elasticity accuracy | 50.5% | **65.5%** | **+15.0%** |
+| Joint accuracy | 42.0% | **54.5%** | **+12.5%** |
+| Full pipeline | 75.0% | **77.0%** | **+2.0%** |
+| Oracle comm | 88.5% | **90.0%** | **+1.5%** |
+
+**Verdict: PARTIAL** — Elasticity 65.5% smashes 55% target. Joint 54.5% smashes 45% target. Mass 85.0% just below 88% target. Planning 77.0% just below 78% target.
+
+**Analysis:**
+- **Scaling works dramatically for elasticity**: 65.5% test (from 50.5%), val→test gap = 19pp (was 27pp). More data + bigger model = better generalization
+- **Mass collapsed again**: Gumbel-softmax instability at epoch ~200 (τ≈1.25) with the bigger 2,724-param sender. Best checkpoint (84.4%) was before collapse. Consider FSQ for mass too
+- **Joint accuracy 54.5%**: more than half the time, BOTH mass AND elasticity are communicated correctly through 2 discrete tokens per object
+- **Diminishing returns on elast reinits**: peaked at 84.6% by epoch 240, reinits at 301 didn't help further
+- **Next steps**: (a) FSQ for mass sender to prevent collapse, (b) τ floor for mass, or (c) accept current results — 85% mass, 65.5% elast, 77% planning is a strong multi-property communication system
+
+**Phase 41 series summary:**
+
+| Phase | Mass (test) | Elast (val) | Elast (test) | Plan | Key change |
+|---|---|---|---|---|---|
+| 41 | **92.5%** | 61.0% | 19.0% | **82.0%** | Joint training |
+| 41b | 76.5% | 59.7% | 21.5% | 69.0% | Wider gap + temp floor |
+| 41c | 32.0% | — | 12.5% | 35.0% | Sequential (bug) |
+| 41d | 86.5% | 66.7% | 26.0% | 77.5% | Checkpoint + τ floor |
+| 41e | 80.5% | 66.5% | 25.0% | 78.0% | More data + dropout |
+| 41f | 89.5% | 64.0% | 22.5% | 76.5% | Separate pathways |
+| 41g | 89.5% | 62.9% | 24.0% | 78.5% | Direct restitution |
+| 41h | 82.5% | 57.0% | 21.5% | 72.5% | GT positions |
+| 41i | 87.0% | 56.4% | 9.0% | 78.0% | Dense collisions (4obj, S=48, 200f) |
+| 41j | 89.5% | 62.6% | 23.0% | 76.0% | FSQ + dropout + reinit |
+| 41k | 80.5% | 71.8% | 39.5% | 71.5% | Wall-bounce restitution |
+| 41l | 83.5% | 77.0% | 50.5% | 75.0% | Shared features |
+| **41m** | 85.0% | **84.6%** | **65.5%** | 77.0% | **Scaled up** |
+
+**Key insights across 13 experiments:**
+- **Elasticity went from ~20% → 65.5%** through four stacked improvements: wall-bounce measurement (+16pp), shared features (+11pp), scaling (+15pp), FSQ+reinit (stability)
+- **Val→test gap collapsed**: 40pp → 32pp → 27pp → 19pp across collision→wall-bounce→shared→scaled
+- **Mass Gumbel collapse is the remaining bottleneck**: bigger Gumbel sender collapses at epoch ~200. FSQ for mass could fix this
+- **Joint accuracy 54.5%**: agents reliably communicate TWO physical properties (mass + elasticity) through discrete tokens
+- **The system communicates useful information for planning**: 77% pipeline success vs 29.5% no-communication, 90% oracle
