@@ -2408,3 +2408,43 @@ Val accuracy (training): mass 70.9%, elast 78.5%.
 **VERDICT: FAIL** — Coordination hurts planning (-35.5pp). However, communication component works excellently (fusion +8pp over best individual agent, 100% agreement). The failure is in task design, not model capability.
 
 **Runtime**: 804s (~13 min)
+
+## Phase 45: DINOv2 + Slot Attention on CLEVRER Videos
+
+**Goal**: Test whether our perception pipeline (DINOv2 → slot attention → object tracking) works on photorealistic rendered video from the CLEVRER benchmark. Pure perception evaluation — no planning, no communication.
+
+**Architecture**: Frozen DINOv2-small (vits14) → 256 patches × 384-dim per frame. EncoderMLP(384→384) + SlotAttention(7 slots, 64-dim, 5 iters, per-slot learnable init) + SpatialBroadcastDecoder(MLP 66→256→256→256→385). 640K trainable params. MSE reconstruction loss on DINOv2 features.
+
+**Data**: 20 CLEVRER validation videos × 128 frames = 2560 frames. 4-6 objects per video (cubes, cylinders, spheres in distinct colors). 480×320 native resolution → 224×224 for DINOv2.
+
+### Results
+
+| Metric | Value | Target |
+|--------|-------|--------|
+| Tracking error (mean) | 28.8% | <10% |
+| Tracking error (median) | 26.8% | <10% |
+| Slot consistency | 3.4% | >80% |
+| Binding accuracy | 100.0% | >85% |
+| Final entropy | 0.488 | — |
+| Active slots | 7/7 | — |
+| Best val loss | 1.679 | — |
+
+### Training Progression
+
+Entropy: 1.000 → 0.975 → 0.927 → 0.600 → 0.488 over 100 epochs. All 7 slots activated by epoch 70. Loss still decreasing at epoch 100 — model was underfitting.
+
+### Analysis
+
+**DINOv2 features are excellent**: PCA visualization shows clear object-level structure. The frozen features contain rich semantic information that distinguishes objects from background.
+
+**Slot attention partially works**: Entropy decreased from 1.0 to 0.49, all 7 slots activated, max coverage dropped from 93% to 36%. The scene is being decomposed, but into regional/textural partitions rather than clean per-object segments.
+
+**Not enough data/training**: 2560 frames from 20 videos is small. CLEVRER scenes are photorealistic with shadows, reflections, and perspective — far more complex than the synthetic CLEVR images Phase 27 used (which had flat lighting, no shadows, and achieved entropy <0.2). Loss was still dropping at epoch 100.
+
+**Projection adds noise**: The affine 3D→2D projection (fitted from 21 color-blob correspondences) has ~2% mean error. This is small but adds systematic bias to all position comparisons.
+
+**Binding works, tracking doesn't**: 100% binding accuracy means each in-view object gets its own slot at the reference frame. But 3.4% slot consistency means the assignment drifts immediately — slots aren't stably bound to objects across time.
+
+**VERDICT: FAIL** — Tracking error 28.8% (target <10%), consistency 3.4% (target >80%). However, DINOv2 features are strong and slot attention shows partial decomposition. More data, more epochs, and potentially augmentation or temporal consistency losses would improve results.
+
+**Runtime**: 580s (~10 min). DINOv2 extraction: 16s (cached). SA training: 561s.
