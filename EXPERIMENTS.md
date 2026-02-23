@@ -2200,29 +2200,88 @@ One change from 41m: MassSender uses FSQ (scalar → sigmoid → round to 4 bins
 - **Mass accuracy ceiling at ~85%**: with wall-bounce physics, mass accuracy plateaus around 84-86% regardless of method (Gumbel or FSQ). The physics change is the real limiter
 - **Elasticity and joint unchanged**: both pathways are independent, so changing mass quantization has no effect on elasticity
 
-**Phase 41 series summary:**
+---
 
-| Phase | Mass (test) | Elast (val) | Elast (test) | Plan | Key change |
-|---|---|---|---|---|---|
-| 41 | **92.5%** | 61.0% | 19.0% | **82.0%** | Joint training, perfect bounce |
-| 41b | 76.5% | 59.7% | 21.5% | 69.0% | Wider gap + temp floor |
-| 41c | 32.0% | — | 12.5% | 35.0% | Sequential (bug) |
-| 41d | 86.5% | 66.7% | 26.0% | 77.5% | Checkpoint + τ floor |
-| 41e | 80.5% | 66.5% | 25.0% | 78.0% | More data + dropout |
-| 41f | 89.5% | 64.0% | 22.5% | 76.5% | Separate pathways |
-| 41g | 89.5% | 62.9% | 24.0% | 78.5% | Direct restitution |
-| 41h | 82.5% | 57.0% | 21.5% | 72.5% | GT positions |
-| 41i | 87.0% | 56.4% | 9.0% | 78.0% | Dense collisions (4obj, S=48, 200f) |
-| 41j | 89.5% | 62.6% | 23.0% | 76.0% | FSQ + dropout + reinit |
-| 41k | 80.5% | 71.8% | 39.5% | 71.5% | Wall-bounce restitution |
-| 41l | 83.5% | 77.0% | 50.5% | 75.0% | Shared features |
-| **41m** | **85.0%** | **84.6%** | **65.5%** | 77.0% | **Scaled up** |
-| 41n | 84.0% | 85.4% | 65.5% | 76.5% | FSQ for mass (no Gumbel) |
+## Phase 41 Series Retrospective: Multi-Property Emergent Communication
 
-**Key insights across 14 experiments:**
-- **Best config is 41m** (or 41n for stability): mass 85%, elast 65.5%, joint 54.5%, planning 77%
-- **Elasticity went from ~20% → 65.5%** through stacked improvements: wall-bounce (+16pp), shared features (+11pp), scaling (+15pp)
-- **Val→test gap collapsed**: 40pp → 19pp across the series
-- **Mass ceiling at ~85%** with wall-bounce physics (was 92.5% with perfect bounces). The physics change that enables elasticity measurement inherently hurts mass features
-- **FSQ vs Gumbel is a wash**: with best-checkpoint saving, Gumbel (41m: 85%) ≈ FSQ (41n: 84%). FSQ provides stability insurance but no accuracy gain
-- **Joint accuracy 54.5%**: agents communicate TWO physical properties through 2 discrete tokens per object, useful for planning (77% vs 30% no-comm)
+14 experiments. 4 weeks. From 17% joint accuracy to 54.5%. This is the full story.
+
+### The Problem
+
+Extend single-property communication (mass, 95% in Phase 38d) to dual-property: mass AND elasticity. Objects have invisible mass (1 or 3) and invisible elasticity (0.5 or 1.0). Sender observes 80 frames of collision dynamics, outputs 2 discrete tokens per object, receiver decodes both properties and plans accordingly.
+
+### Results Table
+
+| Phase | Mass | Elast (val) | Elast (test) | Joint | Plan | What changed |
+|---|---|---|---|---|---|---|
+| 41 | 92.5% | 61.0% | 19.0% | 17.0% | 82.0% | Joint Gumbel training |
+| 41b | 76.5% | 59.7% | 21.5% | 14.5% | 69.0% | Wider e gap + temp floor |
+| 41c | 32.0% | — | 12.5% | 5.5% | 35.0% | Sequential (bug: no checkpoint) |
+| 41d | 86.5% | 66.7% | 26.0% | 22.5% | 77.5% | Checkpoint saving + τ floor |
+| 41e | 80.5% | 66.5% | 25.0% | 18.0% | 78.0% | More data + dropout |
+| 41f | 89.5% | 64.0% | 22.5% | 19.5% | 76.5% | Fully separate pathways |
+| 41g | 89.5% | 62.9% | 24.0% | 20.5% | 78.5% | Direct restitution feature |
+| 41h | 82.5% | 57.0% | 21.5% | 18.0% | 72.5% | GT positions (diagnostic) |
+| 41i | 87.0% | 56.4% | 9.0% | 7.5% | 78.0% | Dense collisions (4 obj) |
+| 41j | 89.5% | 62.6% | 23.0% | 20.0% | 76.0% | FSQ + receiver regularization |
+| **41k** | 80.5% | 71.8% | **39.5%** | 32.0% | 71.5% | **Wall-bounce restitution** |
+| **41l** | 83.5% | 77.0% | **50.5%** | 42.0% | 75.0% | **Shared features** |
+| **41m** | **85.0%** | **84.6%** | **65.5%** | **54.5%** | **77.0%** | **Scale: 4k data, 400 epochs** |
+| 41n | 84.0% | 85.4% | 65.5% | 54.5% | 76.5% | FSQ for mass too |
+
+### Three Acts
+
+**Act 1 — The Plateau (41–41j, 10 experiments):** Elasticity test accuracy stuck at ~23% regardless of what we changed. We tried temperature floors, sequential training, checkpointing, separate pathways, direct restitution features, GT positions, more collisions, FSQ quantization, receiver dropout, receiver reinit. Nothing moved the needle. Val was always ~63%, test always ~23%. The 40pp gap was immovable.
+
+**Act 2 — The Diagnosis (41h):** GT positions produced the same 21.5% test accuracy as perceived positions. This killed the "perception noise" hypothesis and forced a deeper look. The real insight: coefficient of restitution is a **pairwise** property. The physics computed `e = (e_A + e_B) / 2` — a single collision can't tell you which object is elastic. With 1-3 collisions per object, most objects only met one partner. The input literally didn't contain enough information to determine per-object elasticity.
+
+**Act 3 — The Fix (41k–41m, 3 experiments, each one worked):**
+- **41k: Wall-bounce restitution.** Changed physics so wall bounces apply per-object elasticity (`v_normal *= -e`). Every object bounces off walls many times per sequence. One clean 1D measurement per bounce, no partner ambiguity. Elasticity jumped from 23% → 39.5%.
+- **41l: Shared features.** Both senders see all 7 features instead of split 6/1. Mass sender can learn "slow + inelastic = wall damping, not heavy." Elasticity → 50.5%, mass recovered from 80.5% → 83.5%.
+- **41m: Scale.** Bigger networks (7→64→32→out), bigger receivers (embed=32, hidden=128), 4000 training sequences, 400 epochs. Elasticity → 65.5%, joint → 54.5%.
+
+### What Each Experiment Ruled Out
+
+| Hypothesis | Experiment | Result |
+|---|---|---|
+| Temperature causes Gumbel collapse | 41b (τ floor) | Collapsed at τ=1.55 above floor |
+| Gradient interference between heads | 41f (separate pathways) | Mass stable, elast still 22.5% |
+| Wrong elasticity features | 41g (direct restitution) | 24% — same as aggregates |
+| Perception noise corrupts features | 41h (GT positions) | 21.5% — identical to perceived |
+| Too few collisions | 41i (4 objects, 200 frames) | 9.0% — worse (harder task) |
+| Gumbel-softmax is wrong method | 41j (FSQ) | 23% — same gap |
+| Co-adaptation overfitting | 41j (receiver reinit) | Val improved, test unchanged |
+| **Pairwise restitution unobservable** | **41k (wall bounces)** | **39.5% — doubled** |
+| **Mass/elasticity confounded** | **41l (shared features)** | **50.5% — deconfounded** |
+| **Model too small for the task** | **41m (4x capacity)** | **65.5% — still climbing** |
+
+### Key Findings
+
+**1. Feature quality dominates everything else.** 10 experiments of architecture/training changes produced zero improvement. One physics change (wall bounces) produced more gain than all 10 combined. The deep research literature correctly identified co-adaptation overfitting as a pattern, but misdiagnosed the cause — the features didn't contain the signal, not that the channel failed to transmit it.
+
+**2. Physical observability is the hard constraint.** Mass is observable from any single collision (momentum transfer ratio is per-object). Elasticity via object-object collisions is not (pairwise averaging destroys per-object signal). Making a property independently observable from single interactions is a prerequisite for communication. No amount of training cleverness fixes missing information.
+
+**3. Property confounding requires shared information.** When wall-bounce damping changes velocity patterns, mass and elasticity become confounded. An object that's slow because it's inelastic (loses energy at walls) looks like a heavy object (resists acceleration). Giving both senders access to all features lets them learn the deconfounding — but only with enough network capacity.
+
+**4. FSQ is better than Gumbel for stability, equivalent for accuracy.** FSQ eliminated all training collapse (zero collapses across 41j, 41k, 41l, 41n) while Gumbel collapsed in 41, 41b, 41c, 41e, 41m. But with best-checkpoint saving, final accuracy is equivalent. FSQ's value is engineering robustness, not research performance.
+
+**5. Communication doubles planning success.** Across all variants: full pipeline 71-82%, no communication 29-34%, random 14%. Communicating invisible physical properties consistently doubles task performance regardless of which properties are communicated accurately.
+
+### Best Configuration (Phase 41m)
+```
+Physics: wall bounces apply per-object elasticity (v *= -e)
+Features: 7-dim [6 mass + 1 wall-bounce restitution], shared across senders
+Mass sender: 7→64→32→4 (Gumbel-softmax, τ 2.0→0.5, best checkpoint)
+Elast sender: 7→64→32→1→sigmoid→FSQ 4-bin (straight-through)
+Both receivers: scalar→embed(32)→hidden(128), dropout(0.3), weight_decay=0.01
+Elast receiver: reinitialize every 100 epochs
+Data: 4000 training sequences, 400 epochs
+
+Mass: 85.0% test | Elasticity: 65.5% test | Joint: 54.5% | Planning: 77.0%
+```
+
+### Remaining Gap
+
+Val→test gap narrowed from 40pp (Act 1) to 19pp (Act 3). The remaining 19pp on elasticity is likely genuine co-adaptation — the receiver still partially memorizes sender quirks despite reinit every 100 epochs. Population training (multiple sender-receiver pairs, random pairing) would likely close 5-10pp. Diminishing returns for the current phase.
+
+Mass ceiling at ~85% (down from 92.5% with perfect wall bounces) is a fundamental tradeoff: the physics change that enables elasticity measurement inherently adds noise to velocity-based mass features. A mass-specific perception module that compensates for wall-bounce energy loss could recover this.
