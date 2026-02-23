@@ -1940,6 +1940,40 @@ The overfitting gap (57% val → 21.5% test with GT) persists even with perfect 
 2. **Small collision sample size**: each sequence has 2-4 interventions, and not all produce clean collisions. The restitution estimate from 1-3 collision measurements per object is inherently noisy even with GT positions.
 3. **The communication bottleneck is the limit**: 4-token vocabulary (2 bits) may simply be insufficient for encoding a continuous physical property that varies subtly between objects.
 
+## Phase 41i: Dense Collisions
+**Date:** Feb 23 | **Duration:** ~10min (597s)
+
+Same as 41g (separate pathways, direct restitution) but engineered for maximum collision density:
+- 4 objects instead of 3 (6 collision pairs instead of 3)
+- S=48 instead of S=64 (smaller arena → more frequent collisions)
+- 200 frames instead of 80 (2.5× more observation time)
+- Expected: 8-15 collisions per object instead of 1-3
+
+**Training:**
+- Mass pathway: peaked at 87.0% (epoch 60-80), stable
+- Elast pathway: peaked at 56.4% (epoch 1!), never improved — collapsed immediately to ~49.6%
+- JEPA training 273s (2.5× longer due to 200 frames × 4 objects)
+- Perception 246s (also ~3× longer)
+
+**Results:**
+
+| Metric | 41g (3obj, S=64, 80f) | 41i (4obj, S=48, 200f) | Delta |
+|---|---|---|---|
+| Mass accuracy | 89.5% | 87.0% | -2.5% |
+| Elasticity accuracy | 24.0% | **9.0%** | -15.0% |
+| Joint accuracy | 22.0% | 7.5% | -14.5% |
+| Full pipeline | 78.5% | 78.0% | -0.5% |
+| Oracle comm | 86.5% | 87.0% | +0.5% |
+
+**Verdict: PARTIAL** — Mass meets target (87% > 85%), planning meets target (78% > 70%), but elasticity 9% is WORSE than 41g.
+
+**Analysis:**
+- **Elasticity got WORSE, not better**: 9% vs 24% (random baseline with 4 objects is (0.5)^4 = 6.25% vs (0.5)^3 = 12.5% for 3 objects — so 9% is barely above chance)
+- **More objects = harder joint classification**: even if per-object accuracy is similar, requiring all 4 correct vs all 3 is exponentially harder
+- **Elast sender collapsed at epoch 1**: best val was 56.4% at epoch 1, then dropped to 49.6% and never recovered. The Gumbel-softmax found a trivial mode immediately
+- **Dense collisions don't improve the signal**: even with many more collisions per object, the restitution feature doesn't generalize from train to test
+- **The problem is NOT collision sparsity**: this definitively rules out the hypothesis that more collisions would stabilize restitution estimates
+
 **Phase 41 series summary (final):**
 
 | Phase | Mass (test) | Elast (val) | Elast (test) | Plan | Key change |
@@ -1947,16 +1981,17 @@ The overfitting gap (57% val → 21.5% test with GT) persists even with perfect 
 | 41 | **92.5%** | 61.0% | 19.0% | **82.0%** | Joint training |
 | 41b | 76.5% | 59.7% | 21.5% | 69.0% | Wider gap + temp floor |
 | 41c | 32.0% | — | 12.5% | 35.0% | Sequential (bug) |
-| 41d | 86.5% | 66.7% | 26.0% | 77.5% | Checkpoint + τ floor |
+| 41d | 86.5% | 66.7% | **26.0%** | 77.5% | Checkpoint + τ floor |
 | 41e | 80.5% | 66.5% | 25.0% | 78.0% | More data + dropout |
 | 41f | 89.5% | 64.0% | 22.5% | 76.5% | Separate pathways |
 | 41g | 89.5% | 62.9% | 24.0% | 78.5% | Direct restitution |
-| 41h | 82.5% | 57.0% | 21.5% | 72.5% | **GT positions** |
+| 41h | 82.5% | 57.0% | 21.5% | 72.5% | GT positions |
+| 41i | 87.0% | 56.4% | 9.0% | 78.0% | Dense collisions (4obj, S=48, 200f) |
 
-**Key insights across 8 experiments:**
-- **Elasticity test accuracy is ~20-26% regardless of EVERYTHING**: architecture, training procedure, features, data amount, regularization, and even perfect GT positions
-- **The val→test gap is NOT perception noise**: it persists with GT data (57% → 21.5%)
-- **Restitution communication via Gumbel-softmax is fundamentally limited**: the 4-token discrete bottleneck cannot reliably encode a continuous property from noisy collision statistics
-- **Mass communication works well**: 82-92% across all variants, stable with separate pathways
-- **Planning success (72-82%) is driven by mass identification**: elasticity adds negligible value over 5-step horizons
+**Key insights across 9 experiments:**
+- **Elasticity test accuracy is 9-26% regardless of EVERYTHING**: architecture, training procedure, features, data amount, regularization, GT positions, AND collision density
+- **More collisions don't help**: 41i had ~10× more collision events per object than 41g, yet elasticity was worse
+- **The val→test gap is NOT perception noise** (41h) **or collision sparsity** (41i): root cause is the Gumbel-softmax discrete bottleneck failing to encode continuous restitution
+- **Mass communication works reliably**: 82-92% across all 9 variants
+- **Planning success (72-82%) is driven entirely by mass identification**
 - **Recommendation**: stop grinding on elasticity communication. Either (a) increase token vocabulary substantially (16+ tokens), (b) use continuous communication for elasticity, or (c) accept mass-only communication and move to other capabilities
