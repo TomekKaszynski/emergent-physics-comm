@@ -1808,3 +1808,36 @@ Sequential 3-step training: (1) mass-only 200 epochs, (2) freeze mass + train el
 **Key insight:**
 - **The Gumbel-softmax collapse is consistent**: happens at ~epoch 180 regardless of training setup (joint in 41, temp-floored in 41b, mass-only in 41c). Root cause is likely the `hard=True` straight-through gradient becoming unstable as temperature drops below ~0.7
 - **Fix for 41d**: save best checkpoint per step, OR use temperature floor of 1.0 (never anneal below 1.0) which worked in prior phases for mass-only communication
+
+---
+
+## Phase 41d: Sequential + Checkpoint + τ Floor
+**Date:** Feb 23 | **Duration:** ~4min (245s)
+
+Fixed 41c bugs: (1) save best checkpoint during each step, (2) τ floor at 1.0 (anneal 2.0→1.0 instead of 2.0→0.5). Load best checkpoint between steps.
+
+**Training progression:**
+- Step 1 (mass, 200ep): peaked at 85.8% (epoch 60), **collapsed at epoch 180 (τ=1.10)** → loaded best ckpt
+- Step 2 (elast, 200ep): steady improvement to 66.7% val — **no collapse** (τ floor works!)
+- Step 3 (joint, 50ep): fine-tuned to mass=86.0%, elast=65.9%, joint=18.8% val
+
+**Results:**
+
+| Metric | Val (Step 5) | Test | Target |
+|---|---|---|---|
+| Mass accuracy | 86.0% | **86.5%** | >90% |
+| Elasticity accuracy | **66.7%** | 26.0% | >60% |
+| Joint accuracy | 18.8% | 22.5% | >50% |
+| Full pipeline | — | **77.5%** | >65% |
+| Oracle comm | — | 87.0% | — |
+| No communication | — | 31.5% | — |
+| Random | — | 14.0% | — |
+
+**Verdict: PARTIAL** — Planning strong (77.5%), τ floor prevented collapse in Step 2. But massive elasticity val→test gap.
+
+**Key insights:**
+- **Checkpoint saving + τ floor fixed the collapse**: Step 1 still collapsed at epoch 180, but best checkpoint was loaded (85.8%). Step 2 never collapsed thanks to τ≥1.0
+- **Massive elasticity generalization gap**: 66.7% val → 26.0% test (40% drop!). Mass generalizes fine (86% → 86.5%). Elasticity features (speed retention, decay) are scene-specific — they overfit to training scenes' visual configurations
+- **Mass still can't reach 92.5%**: Phase 41's joint training reached 92.5% mass, but sequential training plateaus at ~86%. The shared embedding layer may benefit from joint optimization signals
+- **Planning remains strong despite weak elasticity**: 77.5% comes almost entirely from mass communication. Over 5 steps, elasticity barely matters — confirming that mass identification is the key capability for planning
+- **The 66.7% val elasticity is real but fragile**: the receiver learned to decode elasticity features for the training distribution but these features don't transfer to unseen scenes. Need either: (a) more robust elasticity features, (b) data augmentation, or (c) fundamentally different approach to elasticity observation
