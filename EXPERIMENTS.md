@@ -2171,11 +2171,58 @@ No new tricks — just more capacity and data:
 | 41j | 89.5% | 62.6% | 23.0% | 76.0% | FSQ + dropout + reinit |
 | 41k | 80.5% | 71.8% | 39.5% | 71.5% | Wall-bounce restitution |
 | 41l | 83.5% | 77.0% | 50.5% | 75.0% | Shared features |
-| **41m** | 85.0% | **84.6%** | **65.5%** | 77.0% | **Scaled up** |
+| **41m** | **85.0%** | **84.6%** | **65.5%** | 77.0% | **Scaled up** |
 
-**Key insights across 13 experiments:**
-- **Elasticity went from ~20% → 65.5%** through four stacked improvements: wall-bounce measurement (+16pp), shared features (+11pp), scaling (+15pp), FSQ+reinit (stability)
-- **Val→test gap collapsed**: 40pp → 32pp → 27pp → 19pp across collision→wall-bounce→shared→scaled
-- **Mass Gumbel collapse is the remaining bottleneck**: bigger Gumbel sender collapses at epoch ~200. FSQ for mass could fix this
-- **Joint accuracy 54.5%**: agents reliably communicate TWO physical properties (mass + elasticity) through discrete tokens
-- **The system communicates useful information for planning**: 77% pipeline success vs 29.5% no-communication, 90% oracle
+## Phase 41n: FSQ for Mass Too
+**Date:** Feb 23 | **Duration:** ~9min (514s)
+
+One change from 41m: MassSender uses FSQ (scalar → sigmoid → round to 4 bins) instead of Gumbel-softmax. MassReceiver takes scalar input with dropout(0.3) and weight_decay=0.01, same architecture as ElastReceiver. No Gumbel-softmax anywhere. No temperature. No collapse risk.
+
+**Training:**
+- Mass pathway: **stable throughout** — no collapse! Peaked at 86.4% (epoch 280), steady 85-86% across all 400 epochs
+- Elast pathway: peaked at 85.4% (epoch 240), identical trajectory to 41m
+
+**Results:**
+
+| Metric | 41m (Gumbel mass) | 41n (FSQ mass) | Delta |
+|---|---|---|---|
+| Mass accuracy | 85.0% | 84.0% | -1.0% |
+| Elasticity accuracy | 65.5% | 65.5% | 0.0% |
+| Joint accuracy | 54.5% | 54.5% | 0.0% |
+| Full pipeline | 77.0% | 76.5% | -0.5% |
+| Oracle comm | 90.0% | 89.0% | -1.0% |
+
+**Verdict: PARTIAL** — Elasticity 65.5% meets target. Mass 84.0% below 90% target. FSQ eliminated collapse but didn't improve accuracy.
+
+**Analysis:**
+- **FSQ for mass is stable but not better**: 86.4% val (vs 84.4% Gumbel best), 84.0% test (vs 85.0% Gumbel). The Gumbel best-checkpoint already captured peak pre-collapse performance
+- **No collapse = no surprise improvements**: FSQ's stability benefit is insurance, not a performance gain, when best-checkpoint saving already handles Gumbel collapse
+- **Mass accuracy ceiling at ~85%**: with wall-bounce physics, mass accuracy plateaus around 84-86% regardless of method (Gumbel or FSQ). The physics change is the real limiter
+- **Elasticity and joint unchanged**: both pathways are independent, so changing mass quantization has no effect on elasticity
+
+**Phase 41 series summary:**
+
+| Phase | Mass (test) | Elast (val) | Elast (test) | Plan | Key change |
+|---|---|---|---|---|---|
+| 41 | **92.5%** | 61.0% | 19.0% | **82.0%** | Joint training, perfect bounce |
+| 41b | 76.5% | 59.7% | 21.5% | 69.0% | Wider gap + temp floor |
+| 41c | 32.0% | — | 12.5% | 35.0% | Sequential (bug) |
+| 41d | 86.5% | 66.7% | 26.0% | 77.5% | Checkpoint + τ floor |
+| 41e | 80.5% | 66.5% | 25.0% | 78.0% | More data + dropout |
+| 41f | 89.5% | 64.0% | 22.5% | 76.5% | Separate pathways |
+| 41g | 89.5% | 62.9% | 24.0% | 78.5% | Direct restitution |
+| 41h | 82.5% | 57.0% | 21.5% | 72.5% | GT positions |
+| 41i | 87.0% | 56.4% | 9.0% | 78.0% | Dense collisions (4obj, S=48, 200f) |
+| 41j | 89.5% | 62.6% | 23.0% | 76.0% | FSQ + dropout + reinit |
+| 41k | 80.5% | 71.8% | 39.5% | 71.5% | Wall-bounce restitution |
+| 41l | 83.5% | 77.0% | 50.5% | 75.0% | Shared features |
+| **41m** | **85.0%** | **84.6%** | **65.5%** | 77.0% | **Scaled up** |
+| 41n | 84.0% | 85.4% | 65.5% | 76.5% | FSQ for mass (no Gumbel) |
+
+**Key insights across 14 experiments:**
+- **Best config is 41m** (or 41n for stability): mass 85%, elast 65.5%, joint 54.5%, planning 77%
+- **Elasticity went from ~20% → 65.5%** through stacked improvements: wall-bounce (+16pp), shared features (+11pp), scaling (+15pp)
+- **Val→test gap collapsed**: 40pp → 19pp across the series
+- **Mass ceiling at ~85%** with wall-bounce physics (was 92.5% with perfect bounces). The physics change that enables elasticity measurement inherently hurts mass features
+- **FSQ vs Gumbel is a wash**: with best-checkpoint saving, Gumbel (41m: 85%) ≈ FSQ (41n: 84%). FSQ provides stability insurance but no accuracy gain
+- **Joint accuracy 54.5%**: agents communicate TWO physical properties through 2 discrete tokens per object, useful for planning (77% vs 30% no-comm)
