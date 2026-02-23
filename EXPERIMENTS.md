@@ -1910,10 +1910,12 @@ Two fully independent sender/receiver pairs. No shared parameters. No joint trai
 | 41d | 86.5% | 66.7% | 26.0% | 77.5% | Checkpoint + τ floor |
 | 41e | 80.5% | 66.5% | 25.0% | 78.0% | More data + dropout |
 | 41f | 89.5% | 64.0% | 22.5% | 76.5% | Separate pathways |
+| 41g | 89.5% | 62.9% | 24.0% | 78.5% | Direct restitution |
 
 **Key insights:**
 - **Separate pathways fixed stability**: mass sender (356 params) never collapsed with τ 2.0→0.5. Simpler models are more Gumbel-stable
 - **Mass test accuracy recovered**: 89.5% (vs 86.5% in 41d), approaching Phase 41's 92.5%. No shared embed corruption
-- **Elasticity overfitting is fundamental**: all variants show ~64% val → ~22-26% test gap. The 4 elasticity features (speed retention, decay) are not generalizable visual signals — they capture scene-specific noise patterns
-- **Elasticity from visual perception may be unsolvable with current features**: the features were hand-designed based on what collisions look like. A learned feature extractor (e.g., temporal CNN on position trajectories) might extract more robust signals
+- **Elasticity overfitting is fundamental**: all variants show ~63-67% val → ~22-26% test gap regardless of feature choice (4 hand-crafted features in 41f vs 1 direct restitution in 41g). The noise is in the perception pipeline, not the features
+- **Direct restitution measurement doesn't help**: e = |v_rel_after/v_rel_before| from perceived positions is equally noisy as hand-crafted features. Hue-centroid position noise (~1-2px) propagates through velocity estimation and collision normal computation
 - **Mass communication is the key capability**: planning success (76-82%) is driven entirely by mass identification. Elasticity adds negligible value over 5-step horizons
+- **The elasticity problem is a perception limit**: to solve it, need either (a) much better position estimation (<0.5px), (b) learned temporal features (CNN on trajectories), or (c) direct pixel-level physics inference bypassing the perception bottleneck
