@@ -1547,3 +1547,36 @@ Position decoding: 17.1px error from slot centroids (S=64), predicted slots 12.4
 - **Position poorly decoded** — 13-17px error means DINOv2 slots encode texture/appearance features, not spatial position. Need explicit position encoding or a different decoder
 - **SA training was the bottleneck** — 40 epochs × 5000 DINOv2 frames on MPS took ~40 min. Encoding 40K frames took ~7 min. JEPA training took only 24s
 - **The 1-step target was wrong** — for slow-moving objects with DINOv2 features, copy is near-perfect. The interesting signal is at 3-5 step horizons where dynamics matter
+
+---
+
+## Phase 40: Planning in Slot Space — Visual JEPA + Goal Slots
+**Date:** Feb 23 | **Duration:** 2177s (~36 min) | **Verdict:** FAIL
+
+**Setup:** End-to-end visual planning: DINOv2 → SlotAttention → action-conditioned JEPA → CEM planner scoring by cosine similarity to goal slot. No GT state vectors anywhere. Train SA on 5000 frames (40 epochs). Generate 1000 sequences × 40 frames with 2-4 interventions each. Train ActionConditionedPredictor on encoded slot pairs. Plan on 200 test scenarios: pick target object + target position, render goal frame → encode → find goal slot, CEM search over 128 candidate forces × 3 rounds × 5-step rollouts.
+
+**Architecture:**
+- SlotAttentionDINO: 640K trainable (frozen DINOv2-S), 7 slots, 64-dim, 5 SA iters
+- SA: entropy=0.311, 7/7 active, val_loss=1.4641
+- ActionConditionedPredictor: 412K params, action_dim=9 (one_hot(7) + fx + fy)
+- 100 JEPA epochs: best val MSE=0.077830 (+6.0% vs copy)
+- Action pairs: only 3009/39000 (7.7% of training data had actions)
+- CEM: 128 candidates, 16 elite, 3 rounds, force_range=0.5, 5-step rollout
+
+**Results:**
+
+| Planner | Success (10px) | Mean dist | Median dist |
+|---|---|---|---|
+| **Visual JEPA** | **13.0%** | 25.61px | 25.57px |
+| Oracle (GT physics) | 87.0% | 4.35px | 2.51px |
+| Random | 11.0% | 23.75px | 22.87px |
+| State-vector ref (38d) | ~81% | — | — |
+
+**Key insights:**
+- **Visual JEPA planner ≈ random** (13% vs 11%). The JEPA's +6% improvement over copy is too weak to support useful planning — the predicted slot deltas are noise-level
+- **The bottleneck is JEPA quality, not planning**: Oracle planner (same CEM, GT physics) achieves 87%. If the JEPA's forward model were accurate, the planner would work
+- **Action sparsity hurts**: Only 7.7% of frames have actions. The JEPA learns mostly "predict next frame = copy current frame" and doesn't strongly learn force effects on slots
+- **Cosine similarity scoring is fine in principle**: The goal slot is computed correctly (render goal → encode → find slot by centroid), but noisy JEPA predictions make the scoring meaningless
+- **Phase 36b comparison**: With GT state vectors, action-conditioned JEPA achieved +45% on action frames. With DINOv2 slots, only +6% overall. The visual JEPA doesn't learn dynamics well enough
+- **Root cause**: DINOv2 slot features encode texture/appearance, not cleanly-separable position+velocity. The JEPA predicting "next appearance" can mostly just copy, since appearance barely changes. Forces cause position changes that are subtle in slot space
+- **Next direction**: Either (a) train a much stronger visual JEPA (more action data, longer training, explicit position conditioning), or (b) add a position readout to make the JEPA predict something more tractable than raw slot vectors
