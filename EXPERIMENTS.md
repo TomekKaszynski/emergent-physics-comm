@@ -2372,3 +2372,39 @@ Val accuracy (training): mass 70.9%, elast 78.5%.
 **VERDICT: SUCCESS** — Full observation matches baselines (81%/83%), graceful degradation to partial (64%/83%), appropriate near-chance for unobserved (21%/49%). The communication protocol handles uncertainty.
 
 **Runtime**: 521s (~9 min)
+
+## Phase 44: Multi-Agent Coordinated Action
+
+**Goal**: Both agents observe, communicate, AND act. Agent A sees frames 0-40, Agent B sees frames 40-80. Both send tokens, both receive, both plan jointly. Each agent pushes a different object (a_obj ≠ b_obj). Target: coordinated > single-agent by 10+pp.
+
+**Architecture**: Based on Phase 43 (shared sender/receiver, 8-dim input, obs_confidence). Key addition: joint CEM planning over 4-dim force space (a_fx, a_fy, b_fx, b_fy), sequential JEPA (A's action then B's action per step), enumeration over 6 valid (a,b) object assignments.
+
+### Results
+
+| Metric | Value |
+|--------|-------|
+| A mass (frames 0-40) | 76.0% |
+| B mass (frames 40-80) | 67.5% |
+| Fused mass (own + received) | 84.0% |
+| Agreement | 100.0% |
+| A elast | 59.5% |
+| B elast | 44.5% |
+| Coordinated planning | 40.5% |
+| Single-agent planning | 76.0% |
+| Oracle coordinated | 37.5% |
+| Oracle single-agent | 89.5% |
+| Coordination advantage | -35.5pp |
+
+### Analysis
+
+**Communication is a clear success**: Fusion (84%) significantly outperforms both A-only (76%) and B-only (67.5%), proving that agents successfully exchange complementary information across temporal windows. 100% agreement shows the protocol is robust. B sees frames 40-80 where fewer early collisions are visible, explaining its lower individual accuracy.
+
+**Planning is a clear failure — but the failure is informative**: Coordinated planning (40.5%) performs far worse than single-agent (76.0%), with -35.5pp coordination advantage. Even **oracle coordinated (37.5%) << oracle single (89.5%)**, proving this is NOT a communication or JEPA error — it's a fundamental task design issue.
+
+**Root cause**: The constraint `a_obj ≠ b_obj` forces one agent to push a non-target object. Since the goal is moving the heavy object to a target, the second agent's action on a different object is at best irrelevant and at worst destructive (pushing the heavy object away via collision). The 4-dim search space (vs 2-dim for single) with the same candidate budget makes the CEM less effective. Sequential JEPA also compounds prediction error.
+
+**Lesson**: Multi-agent coordination only helps when the task requires it (e.g., moving two objects to two targets, or pushing an object that's too heavy for one agent). For single-target tasks, a single well-aimed action beats distributed action.
+
+**VERDICT: FAIL** — Coordination hurts planning (-35.5pp). However, communication component works excellently (fusion +8pp over best individual agent, 100% agreement). The failure is in task design, not model capability.
+
+**Runtime**: 804s (~13 min)
