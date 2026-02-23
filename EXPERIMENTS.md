@@ -2073,10 +2073,58 @@ Three changes from 41j:
 | 41h | 82.5% | 57.0% | 21.5% | 72.5% | GT positions |
 | 41i | 87.0% | 56.4% | 9.0% | 78.0% | Dense collisions (4obj, S=48, 200f) |
 | 41j | 89.5% | 62.6% | 23.0% | 76.0% | FSQ + dropout + reinit |
-| **41k** | 80.5% | **71.8%** | **39.5%** | 71.5% | **Wall-bounce restitution** |
+| **41k** | 80.5% | 71.8% | 39.5% | 71.5% | **Wall-bounce restitution** |
 
-**Key insights across 11 experiments:**
-- **Wall-bounce restitution broke through the 26% ceiling**: 39.5% test, nearly 2× any collision-based variant
-- **The feature quality was the core bottleneck**: not perception, not architecture, not quantization — the restitution *measurement source* was the problem
-- **Mass and elasticity trade off**: wall-bounce physics changes velocity patterns, hurting mass features. Need to decouple the two feature spaces
-- **Receiver reinit + FSQ + dropout continue to work well**: stable training, no Gumbel collapse
+## Phase 41l: Shared Features, Separate Heads
+**Date:** Feb 23 | **Duration:** ~4min (234s)
+
+Both senders see ALL 7 features (6 mass + 1 restitution) instead of split 6/1. This lets each sender learn cross-property correlations — e.g. "this object is slow AND inelastic, so the slowness is from wall-bounce damping, not from being heavy."
+
+**Changes from 41k:** MassSender: `Linear(7, 32)` (was `Linear(6, 32)`). ElastSender: `Linear(7, 32)` (was `Linear(1, 32)`). Everything else identical.
+
+**Training:**
+- Mass pathway: peaked at 83.2% (epoch 200) — **up from 41k's 79.3%**, shared features help disambiguate mass from elasticity effects
+- Elast pathway: **77.0% val** (new best!) — slow start (50% through epoch 80), then jumped after reinit at 101 to 74.1%, continued improving to 77.0%
+
+**Results:**
+
+| Metric | 41k (split features) | 41l (shared features) | Delta |
+|---|---|---|---|
+| Mass accuracy | 80.5% | **83.5%** | **+3.0%** |
+| Elasticity accuracy | 39.5% | **50.5%** | **+11.0%** |
+| Joint accuracy | 32.0% | **42.0%** | **+10.0%** |
+| Full pipeline | 71.5% | **75.0%** | **+3.5%** |
+| Oracle comm | 89.0% | 88.5% | -0.5% |
+
+**Verdict: PARTIAL** — Elasticity 50.5% meets target! Mass 83.5% below 88% target. Planning 75% below 78% target.
+
+**Analysis:**
+- **Shared features help BOTH properties**: mass +3.0%, elasticity +11.0%, joint +10.0%. The senders can now learn to disentangle mass from elasticity effects on velocity
+- **Val→test gap continues to narrow**: 77.0% → 50.5% = 27pp gap (was 40pp with collision-based, 32pp with wall-bounce split)
+- **Elasticity crossed 50% for the first time**: 50.5% is 2× the collision-based ceiling (26%) and well above random (12.5%)
+- **Mass still below 41g's 89.5%**: wall-bounce physics fundamentally changes velocity patterns; even with shared features, mass accuracy doesn't fully recover
+- **Next steps**: longer training (mass was still improving at epoch 200), more mass features, or wider elasticity gap
+
+**Phase 41 series summary:**
+
+| Phase | Mass (test) | Elast (val) | Elast (test) | Plan | Key change |
+|---|---|---|---|---|---|
+| 41 | **92.5%** | 61.0% | 19.0% | **82.0%** | Joint training |
+| 41b | 76.5% | 59.7% | 21.5% | 69.0% | Wider gap + temp floor |
+| 41c | 32.0% | — | 12.5% | 35.0% | Sequential (bug) |
+| 41d | 86.5% | 66.7% | 26.0% | 77.5% | Checkpoint + τ floor |
+| 41e | 80.5% | 66.5% | 25.0% | 78.0% | More data + dropout |
+| 41f | 89.5% | 64.0% | 22.5% | 76.5% | Separate pathways |
+| 41g | 89.5% | 62.9% | 24.0% | 78.5% | Direct restitution |
+| 41h | 82.5% | 57.0% | 21.5% | 72.5% | GT positions |
+| 41i | 87.0% | 56.4% | 9.0% | 78.0% | Dense collisions (4obj, S=48, 200f) |
+| 41j | 89.5% | 62.6% | 23.0% | 76.0% | FSQ + dropout + reinit |
+| 41k | 80.5% | 71.8% | 39.5% | 71.5% | Wall-bounce restitution |
+| **41l** | 83.5% | **77.0%** | **50.5%** | 75.0% | **Shared features** |
+
+**Key insights across 12 experiments:**
+- **Three breakthroughs stacked**: wall-bounce restitution (41k: +16pp), shared features (41l: +11pp), FSQ+reinit (41j: stable training)
+- **Elasticity went from ~20% → 50.5%** by fixing the measurement source and letting senders see all features
+- **Val→test gap narrowing**: 40pp → 32pp → 27pp across 41g→41k→41l
+- **Mass accuracy trades off with wall-bounce physics**: 92.5% (original) → 80-83% (wall-bounce). Shared features partially compensate (+3pp)
+- **Joint accuracy 42%**: agents communicate TWO distinct physical properties through 2 discrete tokens per object
