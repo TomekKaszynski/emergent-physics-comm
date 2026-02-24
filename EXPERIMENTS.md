@@ -3228,3 +3228,38 @@ From 1000 CLEVRER videos:
 3. With only ~1000 unique collisions per material, the signal-to-noise ratio is poor
 
 **VERDICT: FAIL** — The mass inference problem requires either (1) engineered physics features (momentum change ratio, deflection angle change) instead of raw trajectories, or (2) a much more powerful model that can learn physics from data.
+
+## Phase 49b: Engineered Physics Features for Mass
+
+**Date**: 2026-02-24
+**Status**: FAIL — no mass signal in features
+
+### Goal
+
+Replace raw 180-dim trajectories with 11 engineered physics features per collision: speed_pre, speed_post, speed_ratio, delta_v, deflection_angle (per object) + relative_speed. MLP doesn't need to learn physics, just "small delta_v = heavy."
+
+### Results
+
+| Metric | Phase 49b | Phase 49 | Target |
+|--------|-----------|----------|--------|
+| Val with communication | 50.4% | 52.3% | >65% |
+| Val without communication | 49.0% | 53.2% | ~50% |
+| Val oracle | **51.8%** | 52.8% | >80% |
+| Communication gain | +1.4pp | -0.9pp | >15pp |
+
+### Analysis
+
+**The physics features show no mass signal.** Feature means for heavy vs light target objects are virtually identical:
+
+| Feature | Heavy (metal) | Light (rubber) | Ratio |
+|---------|--------------|----------------|-------|
+| speed_pre | 0.0069 | 0.0069 | 1.01 |
+| speed_post | 0.0061 | 0.0061 | 0.99 |
+| delta_v | 0.0060 | 0.0059 | 1.01 |
+| deflection | 0.695 | 0.665 | 1.05 |
+
+**Root cause:** The collision partner for each object is arbitrary — it could be same-material (metal-metal or rubber-rubber). A metal object colliding with another metal deflects the same as rubber-rubber. The mass signal only exists in cross-material collisions, and we have no control over which collision was picked for each object.
+
+Additionally, `speed_ratio` explodes (~900) for near-stationary objects (division by ~0).
+
+**VERDICT: FAIL** — Need to specifically select cross-material collisions where the mass contrast is visible, or use a fundamentally different approach to the mass task.
