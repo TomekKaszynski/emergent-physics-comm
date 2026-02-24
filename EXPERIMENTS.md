@@ -3117,3 +3117,58 @@ The tau floor (1.0) was irrelevant — collapse happened at tau=1.14, above the 
 | 48g | 4×16 Gumbel+ent | Obj A, GT | 89.8% | 64.1% | 18.4% | -45.7pp | 0.0 |
 
 Multi-token Gumbel-Softmax consistently collapses. Pre-collapse shows +7-8pp gain proving bandwidth helps. Need fundamentally different channel: continuous bottleneck (VQ-VAE, straight-through estimator) or single-token with larger vocab.
+
+## Phase 48h: Single Token vocab=64
+
+**Date**: 2026-02-24
+**Status**: FAIL — collapse, same as 48e but earlier
+
+### Goal
+
+Test if single-token with larger vocab (64 vs 8) avoids multi-token collapse while providing more bandwidth. Identical to 48e except `vocab_size = 64`.
+
+### Config
+
+| Parameter | Phase 48e | Phase 48h |
+|-----------|-----------|-----------|
+| Vocab size | 8 | **64** |
+| Message tokens | 1 | 1 |
+| Possible messages | 8 | 64 |
+| Everything else | Identical | Identical |
+
+### Results
+
+| Metric | Phase 48h | Phase 48e | Target |
+|--------|-----------|-----------|--------|
+| Val with communication | 18.4% | 62.1% | >30% |
+| Val without communication | 64.1% | 65.2% | — |
+| Val oracle | 89.8% | 86.9% | >50% |
+| Communication gain | **-45.7pp** | -3.1pp | >10pp |
+| Message entropy | 0.0 | 0.548 | >0.3 |
+| Symbols used | 1/64 | — | — |
+
+### Training Dynamics
+
+- Epoch 80: comm 54% val vs no-comm 44% = **+10pp gain**, entropy 0.232, tau=1.14
+- Epoch 100: **complete collapse** at tau=0.93 — all → symbol 0
+- Collapsed earlier than 48f/48g (epoch 100 vs 120), likely because 64-way softmax is even harder to maintain
+
+### Analysis
+
+**Single-token large vocab collapses too.** The issue is not multi-token — it's Gumbel-Softmax with large vocab. With 64 symbols, the softmax becomes sharper faster, and the hard Gumbel-Softmax collapses to a single symbol once tau drops below ~1.0.
+
+The pre-collapse gain of +10pp (epoch 80) is the best we've seen, confirming that more bandwidth does help — but only while the channel is alive.
+
+**VERDICT: FAIL** — Gumbel-Softmax collapse is a vocab-size problem, not a multi-token problem. 8 symbols is the practical ceiling for hard Gumbel-Softmax without explicit collapse prevention.
+
+### Updated Key Takeaway (48 series)
+
+| Phase | Channel | Oracle | No-comm | Comm | Gain | Entropy | Collapse? |
+|-------|---------|--------|---------|------|------|---------|-----------|
+| 48d | 1×8 Gumbel, both obj | 92.4% | 72.3% | 73.0% | +0.6pp | 0.513 | No |
+| 48e | 1×8 Gumbel, obj A | 86.9% | 65.2% | 62.1% | -3.1pp | 0.548 | No |
+| 48f | 4×16 Gumbel, obj A | 89.8% | 64.1% | 18.4% | -45.7pp | 0.0 | Yes @ep120 |
+| 48g | 4×16+ent, obj A | 89.8% | 64.1% | 18.4% | -45.7pp | 0.0 | Yes @ep120 |
+| 48h | **1×64 Gumbel**, obj A | 89.8% | 64.1% | 18.4% | -45.7pp | 0.0 | Yes @ep100 |
+
+Gumbel-Softmax with vocab > 8 consistently collapses. Pre-collapse gains: +8pp (48f), +7pp (48g), +10pp (48h). The bandwidth helps but the channel dies. Next: continuous channel or VQ-VAE discretization.
