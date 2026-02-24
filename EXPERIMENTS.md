@@ -3340,3 +3340,80 @@ Rendered 48 frames (24fps, 2 seconds). Red ball bounces back to ~90% height, blu
 - Objects: `kb.Sphere(name, scale, position, velocity, mass, friction, restitution, material)`
 
 **Verdict:** SUCCESS — Kubric produces physics signals that CLEVRER cannot. This is the viable path for the mass/material communication experiment.
+
+---
+
+## Kubric Elasticity Dataset
+**Date:** Feb 24
+
+Generated 1000 ball-drop scenes with `kubric/generate_elasticity_dataset.py`. Each scene: one ball, random restitution ∈ [0.05, 0.95], random appearance (color, size, position) — appearance decorrelated from restitution.
+
+- **1000 scenes**, 0 errors, 48 seconds total
+- **Correlation(restitution, bounce_ratio) = 0.969**
+- Low-e (e<0.3) bounce ratio: 0.130, High-e (e>0.7): 0.774 — **6.0x signal ratio**
+- Output: `kubric/output/elasticity_dataset/` (index.json + per-scene metadata.json + positions.npy)
+
+---
+
+## Phase 50: Emergent Communication about Elasticity (GT Trajectories)
+**Date:** Feb 24
+
+### Goal
+Two agents each see one ball-drop trajectory (GT 3D positions, 49 frames). Exchange one discrete token each. Predict which ball is bouncier. Neither agent can answer alone — communication is NECESSARY.
+
+### Architecture
+- **Shared Sender:** TrajectoryEncoder (1D CNN, 5→32→64 channels, AdaptiveAvgPool→128d) → Linear→16 logits → Gumbel-Softmax
+- **Receiver:** Concat two one-hot messages (32d) → 128→64→1 MLP
+- **Oracle:** Two independent TrajectoryEncoders → concat → 128→1 MLP
+- **Input features:** z, dz, ddz, speed, height (5 per frame × 49 frames), normalized
+- Sender: 21,520 params. Receiver: 12,545 params. Oracle: 71,937 params.
+
+### Training
+- 1000 Kubric scenes (800 train / 200 val), pairs sampled online
+- Vocab=16, hidden=128, batch=256 pairs, lr=3e-4, Adam
+- Gumbel tau: 2.0 → 1.2 (annealing)
+- **Best-model checkpointing + early stop on collapse detection**
+
+### Gumbel-Softmax Collapse Investigation
+Observed deterministic collapse at epoch ~120 regardless of:
+1. Tau floor (0.3, 1.0, 1.2 — all collapsed at same epoch)
+2. Entropy regularization (weight=0, 0.3, 0.5, 1.0 — all collapsed)
+3. Fixed vs annealed tau (both collapsed)
+
+Pre-collapse performance was excellent (91.2% val). Collapse is an optimization instability, not a temperature issue. **Solution: checkpoint best model, early-stop on entropy collapse.**
+
+### Results
+
+| Metric | Phase 50 | Target |
+|--------|----------|--------|
+| **Val comm** | **91.6%** | >70% |
+| Val oracle | 97.1% | >90% |
+| Chance | 50.0% | — |
+| **Comm gain** | **+41.6pp** | >20pp |
+| Message entropy | 0.679 | >0.3 |
+| Symbols used | 7/16 | ≥3 |
+| Ordinal accuracy | 99.2% | — |
+
+### Accuracy by Difficulty
+| Gap | Accuracy |
+|-----|----------|
+| Δe > 0.5 (large) | **100.0%** |
+| Δe 0.3-0.5 (medium) | **100.0%** |
+| Δe 0.1-0.3 (small) | **96.5%** |
+| Δe < 0.1 (tiny) | **67.6%** |
+
+### Emergent Language
+7 symbols partition the restitution range into ordered intervals:
+```
+Symbol 11 → e=0.118 ("very dead")
+Symbol  7 → e=0.265 ("dead")
+Symbol 13 → e=0.411 ("low bounce")
+Symbol 10 → e=0.494 ("medium")
+Symbol  6 → e=0.587 ("bouncy")
+Symbol  1 → e=0.688 ("very bouncy")
+Symbol  5 → e=0.840 ("super bouncy")
+```
+**Ordinal accuracy: 99.2%** — comparing symbol ranks gives correct answer for 99.2% of pairs. The agents invented an ordered discrete number system for elasticity.
+
+### Verdict
+**STRONG SUCCESS.** Communication accuracy 91.6% on GT trajectories proves the Kubric elasticity task works perfectly for emergent communication. The agents develop an ordered symbolic language for a continuous physical property. Next: Phase 51 — swap GT trajectories for rendered pixels.
