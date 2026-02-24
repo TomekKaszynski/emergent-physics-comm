@@ -2886,3 +2886,61 @@ Train accuracy reached 77% (communication) vs 75% (no-communication) — moderat
 ### Key Takeaway (48 series)
 
 The communication architecture works (48b showed +11.8pp gain on train), but the perception pipeline strips away the temporal dynamics information needed for physics prediction. Slot attention trained for spatial reconstruction compresses out velocity/momentum signals. Future approaches need either: (1) a dynamics-aware encoder that explicitly preserves temporal derivatives, or (2) raw pixel/feature inputs rather than slot-pooled representations for the communication agents.
+
+---
+
+## Phase 48d: Centroid Trajectories for Communication
+
+**Date**: 2026-02-24
+**Status**: FAIL — SA centroids too noisy for dynamics
+
+### Goal
+
+Replace opaque slot embeddings with centroid position trajectories as agent inputs. Per frame per object: (x, y, dx, dy, |v|) = 5 features. Agent A gets 36×5=180 dims (full collision), Agent B gets 18×5=90 dims (pre-collision only). Same task, data, and comm architecture as 48c.
+
+### Config
+
+| Parameter | Phase 48c | Phase 48d |
+|-----------|-----------|-----------|
+| Agent A input | 36×64 = 2,304d (slot embeddings) | 36×5 = 180d (centroid trajectories) |
+| Agent B input | 18×64 = 1,152d (slot embeddings) | 18×5 = 90d (centroid trajectories) |
+| Features | Slot embeddings | Position + velocity + speed |
+| SA model | Same (phase48c_sa_model.pt) | Same |
+| Everything else | Identical | Identical |
+
+### Results
+
+| Metric | Phase 48d | Phase 48c | Target |
+|--------|-----------|-----------|--------|
+| Val with communication | 23.2% | 21.3% | >30% |
+| Val without communication | 21.7% | 17.8% | — |
+| Val oracle | 22.3% | 17.4% | >50% |
+| Communication gain | +1.4pp | +3.5pp | >10pp |
+| Message entropy | **0.316** | 0.0 | >0.3 |
+| Messages used | 2/8 | 1/8 | — |
+| Mean consistency | 0.67 | 1.00 | — |
+
+### Analysis
+
+**Marginal oracle improvement.** 22.3% vs 17.4% — centroid trajectories encode slightly more dynamics than slot embeddings, but the oracle still can't crack the task. SA centroids are too noisy to produce reliable velocity estimates.
+
+**Message entropy recovered.** 0.316 (meets target!) vs 0.0 in 48c. The sender uses 2 symbols (msg1 and msg4) in a structured way:
+- msg4 dominates for E/NE/N/NW directions (eastward half)
+- msg1 dominates for W/SW/S directions (westward half)
+
+This is genuine emergent communication — the sender encodes a rough east/west directional split. However, 2 symbols can only distinguish 2 groups out of 8, limiting the communication gain.
+
+**Why centroid velocities are noisy:** The SA was trained for spatial reconstruction, not object tracking. Centroid positions jitter between frames because the attention maps aren't temporally stable (no contrastive or tracking loss). A 1-pixel centroid jitter at 16×16 grid resolution equals 0.0625 in normalized coords — comparable to the actual velocity signal from slow-moving objects.
+
+**VERDICT: FAIL** — oracle below target (22% vs 50%), communication gain minimal (+1.4pp). SA-derived centroids are too noisy for velocity estimation. The positive sign is that message entropy recovered and shows structured directional encoding.
+
+### Key Takeaway (48 series complete)
+
+| Phase | Input | Oracle | Entropy | Gain | Key Issue |
+|-------|-------|--------|---------|------|-----------|
+| 48 | Slot embeddings (20v) | N/A | 0.0 | 0pp | Trivial task (material visible) |
+| 48b | Slot embeddings (20v) | 94.1% (train) | — | +11.8pp (train) | Too few examples (51) |
+| 48c | Slot embeddings (1000v) | 17.4% | 0.0 | +3.5pp | Slots lack dynamics |
+| 48d | Centroid trajectories (1000v) | 22.3% | 0.316 | +1.4pp | Centroids too noisy |
+
+The fundamental problem is that slot attention centroids don't provide reliable enough tracking to estimate velocities. To get useful dynamics, we need either: (1) GT object positions from annotations (proving the communication task itself works with clean data), or (2) a proper object tracker (e.g., fine-tuned SlotContrast with temporal consistency).
