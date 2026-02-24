@@ -2943,19 +2943,68 @@ Runtime: 48s (no feature extraction needed).
 
 **VERDICT: PARTIAL** — Val accuracy (73%) and oracle (92.4%) far exceed targets. Communication architecture validated. But communication gain (+0.6pp) far below 10pp target because pre-collision trajectories are too informative.
 
+### Key Takeaway (48d)
+
+GT trajectories validate the task (oracle 92.4%) but pre-collision trajectories are too informative (no-comm 72.3%). Need larger information asymmetry.
+
+---
+
+## Phase 48e: Single-Object Agent B
+
+**Date**: 2026-02-24
+**Status**: PARTIAL — communication hurts, Gumbel bottleneck too lossy
+
+### Goal
+
+Widen the information gap: Agent B sees only object A's pre-collision trajectory (not both objects). This removes knowledge of the collision partner entirely.
+
+### Config
+
+| Parameter | Phase 48d | Phase 48e |
+|-----------|-----------|-----------|
+| Agent A input | 2 obj × 17f × 5 = 180d | Same |
+| Agent B input | 2 obj × 9f × 5 = 90d | **1 obj × 9f × 5 = 45d** |
+| Everything else | Identical | Identical |
+
+### Results
+
+| Metric | Phase 48e | Phase 48d | Target |
+|--------|-----------|-----------|--------|
+| Val with communication | 62.1% | 73.0% | >30% |
+| Val without communication | **65.2%** | 72.3% | — |
+| Val oracle | 86.9% | 92.4% | >50% |
+| Communication gain | **-3.1pp** | +0.6pp | >10pp |
+| Message entropy | 0.548 | 0.513 | >0.3 |
+| Messages used | 4/8 | 4/8 | — |
+| Mean consistency | 0.84 | 0.81 | — |
+
+### Message Structure
+
+Clean directional encoding with 3 dominant symbols:
+- msg5: W, SW, NW (westward) — 96-100% consistency
+- msg0: E, NE, SE (eastward) — 81-97% consistency
+- msg7: N, S (transitional) — 57-62% consistency
+
+### Analysis
+
+**No-comm still very strong at 65.2%.** Even with only one object's trajectory, approach angle and speed strongly predict post-collision direction. Object A's pre-collision velocity is already a strong signal for where it ends up after collision.
+
+**Communication hurts: -3.1pp.** The Gumbel-Softmax bottleneck (8 discrete symbols) introduces more noise than the information it transmits. The sender encodes clean directional information (3 clusters), but the receiver can't combine this discrete signal with its continuous trajectory observation as effectively as just using the trajectory alone.
+
+**Training dynamics show the problem.** No-comm catches up and overtakes comm around epoch 160 (0.60 vs 0.59). The discrete bottleneck creates an optimization headwind — the sender/receiver pair must learn to cooperate through a non-differentiable channel, while the no-comm receiver has direct gradient access to a simpler mapping.
+
+**VERDICT: PARTIAL** — Oracle (87%) confirms task solvable. Structured messages emerge (entropy 0.548). But communication provides negative gain because the discrete bottleneck loses more than it adds over the strong no-comm baseline.
+
 ### Key Takeaway (48 series)
 
-| Phase | Input | Oracle | No-comm | Comm | Gain | Entropy |
-|-------|-------|--------|---------|------|------|---------|
-| 48 | Slot embeds (20v) | N/A | 91.3% | 91.3% | 0pp | 0.0 |
-| 48b | Slot embeds (20v) | 94.1%* | 70.6%* | 82.4%* | +11.8pp* | — |
-| 48c | Slot embeds (1000v) | 17.4% | 17.8% | 21.3% | +3.5pp | 0.0 |
-| 48d | **GT trajectories (1000v)** | **92.4%** | **72.3%** | **73.0%** | +0.6pp | **0.513** |
+| Phase | Input | Agent B obs | Oracle | No-comm | Comm | Gain | Entropy |
+|-------|-------|-------------|--------|---------|------|------|---------|
+| 48 | Slot embeds (20v) | Both obj | N/A | 91.3% | 91.3% | 0pp | 0.0 |
+| 48b | Slot embeds (20v) | Both obj | 94.1%* | 70.6%* | 82.4%* | +11.8pp* | — |
+| 48c | Slot embeds (1000v) | Both obj | 17.4% | 17.8% | 21.3% | +3.5pp | 0.0 |
+| 48d | GT trajectories | Both obj | 92.4% | 72.3% | 73.0% | +0.6pp | 0.513 |
+| 48e | GT trajectories | **Obj A only** | 86.9% | **65.2%** | **62.1%** | **-3.1pp** | 0.548 |
 
-*Phase 48b numbers are on all data (including train) — not comparable.
+*Phase 48b on all data (not comparable).
 
-**Two independent findings:**
-1. **Perception is the bottleneck**: GT trajectories → 92.4% oracle vs slot embeddings → 17.4%. The SA-based perception strips away all dynamics information.
-2. **Task has small information gap**: Pre-collision trajectories predict 72% of post-collision direction. Communication can only help with the remaining 28%, and even the oracle only reaches 92% — the task is inherently stochastic given only position data.
-
-For meaningful communication emergence, we need a task with larger information asymmetry — where Agent B's pre-collision observation is fundamentally insufficient to predict the outcome.
+**The core challenge:** Pre-collision trajectories are inherently informative about post-collision direction — physics is deterministic, and knowing the approach strongly constrains the outcome. To get meaningful communication gain, we likely need either: (1) a continuous communication channel (not discrete Gumbel), (2) a larger vocabulary or multi-round communication, or (3) a task where the information gap is truly categorical (e.g., hidden object properties like mass that can't be inferred from trajectories).
