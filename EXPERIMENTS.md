@@ -2995,16 +2995,67 @@ Clean directional encoding with 3 dominant symbols:
 
 **VERDICT: PARTIAL** — Oracle (87%) confirms task solvable. Structured messages emerge (entropy 0.548). But communication provides negative gain because the discrete bottleneck loses more than it adds over the strong no-comm baseline.
 
+### Key Takeaway (48e)
+
+Single-object Agent B widens the gap (65% no-comm vs 72% in 48d) but the 8-symbol Gumbel channel is too lossy to bridge it.
+
+---
+
+## Phase 48f: Multi-Token Messages
+
+**Date**: 2026-02-24
+**Status**: FAIL — complete message collapse
+
+### Goal
+
+Increase communication bandwidth: 4 tokens × vocab 16 = 65,536 possible messages (vs 8 in 48e). Same single-object Agent B (45 dims).
+
+### Config
+
+| Parameter | Phase 48e | Phase 48f |
+|-----------|-----------|-----------|
+| Vocab size | 8 | 16 |
+| Message length | 1 | 4 |
+| Message dim to receiver | 8 | 64 (4×16) |
+| Possible messages | 8 | 65,536 |
+| Everything else | Identical | Identical |
+
+### Results
+
+| Metric | Phase 48f | Phase 48e | Target |
+|--------|-----------|-----------|--------|
+| Val with communication | 18.4% | 62.1% | >30% |
+| Val without communication | 64.1% | 65.2% | — |
+| Val oracle | 89.8% | 86.9% | >50% |
+| Communication gain | **-45.7pp** | -3.1pp | >10pp |
+| Message entropy | 0.0 | 0.548 | >0.3 |
+| Unique messages | 1/65536 | — | — |
+
+### Training Dynamics
+
+Communication was working until epoch 100:
+- Epoch 100: comm 55% val (beating no-comm 47%), entropy 0.34, 4 tokens active
+- Epoch 120: **complete collapse** — all tokens → symbol 0, comm drops to chance (18%)
+- Epochs 120-200: sender sends constant message [0,0,0,0], receiver ignores it
+
+The collapse coincides with Gumbel temperature dropping below ~0.7. At low temperatures, the hard Gumbel-Softmax gradients become spiky across 4 independent tokens simultaneously, creating an unstable optimization landscape. The sender "gives up" and collapses to a fixed message.
+
+### Analysis
+
+**Multi-token Gumbel-Softmax is fundamentally unstable.** With 4 independent Gumbel-Softmax operations, the gradient signal becomes noisy and inconsistent — each token's gradient depends on the other tokens' samples, creating a combinatorial optimization problem. This is a known issue in multi-token emergent communication.
+
+**The bandwidth hypothesis was correct but the mechanism failed.** Before collapse (epoch 100), the comm channel was outperforming no-comm by 8pp (55% vs 47%), suggesting more bandwidth does help. But the optimization can't sustain this.
+
+**VERDICT: FAIL** — complete message collapse at low Gumbel temperature. Multi-token discrete channels need either: (1) temperature floor (don't anneal below ~1.0), (2) entropy regularization on messages, or (3) a continuous channel (straight-through estimator or VQ-VAE style).
+
 ### Key Takeaway (48 series)
 
-| Phase | Input | Agent B obs | Oracle | No-comm | Comm | Gain | Entropy |
-|-------|-------|-------------|--------|---------|------|------|---------|
-| 48 | Slot embeds (20v) | Both obj | N/A | 91.3% | 91.3% | 0pp | 0.0 |
-| 48b | Slot embeds (20v) | Both obj | 94.1%* | 70.6%* | 82.4%* | +11.8pp* | — |
-| 48c | Slot embeds (1000v) | Both obj | 17.4% | 17.8% | 21.3% | +3.5pp | 0.0 |
-| 48d | GT trajectories | Both obj | 92.4% | 72.3% | 73.0% | +0.6pp | 0.513 |
-| 48e | GT trajectories | **Obj A only** | 86.9% | **65.2%** | **62.1%** | **-3.1pp** | 0.548 |
+| Phase | Channel | Agent B | Oracle | No-comm | Comm | Gain | Entropy |
+|-------|---------|---------|--------|---------|------|------|---------|
+| 48 | 1×8 Gumbel | Both obj, slots | N/A | 91.3% | 91.3% | 0pp | 0.0 |
+| 48c | 1×8 Gumbel | Both obj, slots | 17.4% | 17.8% | 21.3% | +3.5pp | 0.0 |
+| 48d | 1×8 Gumbel | Both obj, GT | 92.4% | 72.3% | 73.0% | +0.6pp | 0.513 |
+| 48e | 1×8 Gumbel | Obj A, GT | 86.9% | 65.2% | 62.1% | -3.1pp | 0.548 |
+| 48f | **4×16 Gumbel** | Obj A, GT | 89.8% | 64.1% | **18.4%** | **-45.7pp** | **0.0** |
 
-*Phase 48b on all data (not comparable).
-
-**The core challenge:** Pre-collision trajectories are inherently informative about post-collision direction — physics is deterministic, and knowing the approach strongly constrains the outcome. To get meaningful communication gain, we likely need either: (1) a continuous communication channel (not discrete Gumbel), (2) a larger vocabulary or multi-round communication, or (3) a task where the information gap is truly categorical (e.g., hidden object properties like mass that can't be inferred from trajectories).
+The multi-token channel collapsed. Before collapse (epoch 100), it showed +8pp comm gain — more bandwidth does help, but the optimization is unstable. Next: either fix the optimization (entropy reg, temperature floor) or use a continuous channel.
