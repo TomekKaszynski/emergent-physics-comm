@@ -3172,3 +3172,59 @@ The pre-collapse gain of +10pp (epoch 80) is the best we've seen, confirming tha
 | 48h | **1×64 Gumbel**, obj A | 89.8% | 64.1% | 18.4% | -45.7pp | 0.0 | Yes @ep100 |
 
 Gumbel-Softmax with vocab > 8 consistently collapses. Pre-collapse gains: +8pp (48f), +7pp (48g), +10pp (48h). The bandwidth helps but the channel dies. Next: continuous channel or VQ-VAE discretization.
+
+## Phase 49: Mass Communication — Who Is Heavier?
+
+**Date**: 2026-02-24
+**Status**: FAIL — oracle at chance, mass signal too weak for MLP
+
+### Goal
+
+The core vision: two agents each watch a different collision involving a different object. One is metal (heavy), one is rubber (light). Mass is invisible — inferred only from dynamics. Agents communicate to agree on which is heavier. Communication should be necessary since neither agent sees the other's collision.
+
+### Data Construction
+
+From 1000 CLEVRER videos:
+- Find pairs of objects with different materials (metal vs rubber)
+- Each must participate in at least one collision
+- Agent A watches collision involving one object, Agent B the other
+- Create both orderings (A=heavy/B=light and vice versa) for 50/50 balance
+- Each agent sees: target trajectory (17 frames × 5) + partner trajectory (17 frames × 5) = 170 dims
+- Target object listed first in input
+
+**Dataset:** 784 videos with valid pairs, 2057 object pairs, 4114 examples (3302 train, 812 val).
+
+### Config
+
+| Parameter | Value |
+|-----------|-------|
+| Channel | 1×8 Gumbel-Softmax |
+| Input per agent | 180 dims (36×5) |
+| Hidden dim | 128, 2-layer MLP |
+| Task | Binary: A heavier or B heavier |
+| Epochs | 200, lr=3e-4, batch 64 |
+
+### Results
+
+| Metric | Value | Target |
+|--------|-------|--------|
+| Val with communication | 52.3% | >65% |
+| Val without communication | 53.2% | ~50% |
+| **Val oracle** | **52.8%** | **>80%** |
+| Communication gain | -0.9pp | >15pp |
+| Message entropy | 0.267 | >0.3 |
+
+### Analysis
+
+**The oracle is at chance (53%).** Even when seeing BOTH collisions (360 dims), the model cannot learn which object is heavier. This means the underlying mass-inference task is too hard for a 2-layer MLP on raw (x, y, dx, dy, speed) trajectories.
+
+**Massive overfitting:** Train accuracy reached 68% while val stayed at 52-53%. The model memorizes training examples but cannot generalize the physics.
+
+**Messages don't differentiate mass:** Same dominant message (msg5, 84%) regardless of whether Agent A watches metal or rubber. The sender never learned to encode mass.
+
+**Why mass inference from trajectories is hard:**
+1. Mass affects deflection *magnitude*, but deflection also depends on approach angle, speed, mass of collision partner, and elasticity
+2. A 2-layer MLP must learn Newtonian mechanics from raw position/velocity data
+3. With only ~1000 unique collisions per material, the signal-to-noise ratio is poor
+
+**VERDICT: FAIL** — The mass inference problem requires either (1) engineered physics features (momentum change ratio, deflection angle change) instead of raw trajectories, or (2) a much more powerful model that can learn physics from data.
