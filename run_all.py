@@ -18135,27 +18135,26 @@ def run_phase41j_fsq():
 
 
 def run_phase48d_centroid_dynamics():
-    """Phase 48d: Centroid trajectories instead of slot features for communication.
+    """Phase 48d: GT trajectory dynamics communication on 1000 CLEVRER videos.
 
-    Same task as 48c (predict post-collision direction), but agents get
-    centroid positions + derived velocity/speed instead of opaque slot embeddings.
-    Per frame per object: (x, y, dx, dy, |v|) = 5 features.
-    Agent A: 2 objects × 17 frames × 5 = 170 dims
-    Agent B: 2 objects × 9 frames × 5 = 90 dims
+    Skip slot attention entirely. Use GT positions from CLEVRER annotations.
+    Tests whether the task + communication architecture work with clean data.
+    Per frame per object: (x, y, dx, dy, speed) = 5 features.
+    Agent A: 2 objects × 17 frames × 5 = 170 dims (full collision)
+    Agent B: 2 objects × 9 frames × 5 = 90 dims (pre-collision only)
     """
     import time
     import json
     import os
     import numpy as np
-    import cv2
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
     from pathlib import Path
 
     print("=" * 70, flush=True)
-    print("PHASE 48d: Centroid Dynamics Communication — 1000 CLEVRER Videos", flush=True)
-    print("  Predict post-collision direction via centroid trajectories", flush=True)
+    print("PHASE 48d: GT Trajectory Communication — 1000 CLEVRER Videos", flush=True)
+    print("  Predict post-collision direction via GT position trajectories", flush=True)
     print("=" * 70, flush=True)
     t0 = time.time()
 
@@ -18188,7 +18187,7 @@ def run_phase48d_centroid_dynamics():
         return np.clip(u, 0, 1), np.clip(v, 0, 1)
 
     # ══════════════════════════════════════════════════════════
-    # STAGE 0: Load all annotations + extract collision metadata
+    # STAGE 0: Load annotations + extract collision metadata
     # ══════════════════════════════════════════════════════════
     print(f"\n{'=' * 60}", flush=True)
     print(f"STAGE 0: Load annotations + extract collision metadata", flush=True)
@@ -18224,7 +18223,6 @@ def run_phase48d_centroid_dynamics():
             continue
         ann = annotations[vid_id]
         traj = ann['motion_trajectory']
-        props = {p['object_id']: p for p in ann['object_property']}
         vi = vid_id - 10000
 
         for coll in ann.get('collision', []):
@@ -18271,325 +18269,100 @@ def run_phase48d_centroid_dynamics():
     print(f"└─ Stage 0 done [{time.time()-ts0:.0f}s]", flush=True)
 
     # ══════════════════════════════════════════════════════════
-    # STAGE 1: Load SA model (reuse phase48c_sa_model.pt)
+    # STAGE 1: Extract GT trajectory features at collision windows
     # ══════════════════════════════════════════════════════════
     print(f"\n{'=' * 60}", flush=True)
-    print(f"STAGE 1: Load SA model from phase48c", flush=True)
+    print(f"STAGE 1: Extract GT trajectory features", flush=True)
     print(f"{'=' * 60}", flush=True)
     ts1 = time.time()
 
-    dino_dim = 384
-    n_patches = 256
-    P = 16
-    n_slots = 7
-    slot_dim = 64
-    n_sa_iters = 5
-
-    class SlotAttention(nn.Module):
-        def __init__(self, n_slots, slot_dim, n_iters, feature_dim, epsilon=1e-8):
-            super().__init__()
-            self.n_slots = n_slots
-            self.slot_dim = slot_dim
-            self.n_iters = n_iters
-            self.epsilon = epsilon
-            self.slot_init = nn.Parameter(
-                torch.randn(1, n_slots, slot_dim) * 0.02)
-            self.project_q = nn.Linear(slot_dim, slot_dim, bias=False)
-            self.project_k = nn.Linear(feature_dim, slot_dim, bias=False)
-            self.project_v = nn.Linear(feature_dim, slot_dim, bias=False)
-            self.gru = nn.GRUCell(slot_dim, slot_dim)
-            self.mlp = nn.Sequential(
-                nn.Linear(slot_dim, slot_dim * 2), nn.ReLU(),
-                nn.Linear(slot_dim * 2, slot_dim))
-            self.norm_inputs = nn.LayerNorm(feature_dim)
-            self.norm_slots = nn.LayerNorm(slot_dim)
-            self.norm_mlp = nn.LayerNorm(slot_dim)
-
-        def forward(self, inputs, init_slots=None):
-            B, N, _ = inputs.shape
-            inputs = self.norm_inputs(inputs)
-            k = self.project_k(inputs)
-            v = self.project_v(inputs)
-            if init_slots is not None:
-                slots = init_slots
-            else:
-                slots = self.slot_init.expand(B, -1, -1)
-            scale = self.slot_dim ** 0.5
-            attn_weights = None
-            for _ in range(self.n_iters):
-                slots_prev = slots
-                slots = self.norm_slots(slots)
-                q = self.project_q(slots)
-                attn_logits = torch.bmm(k, q.transpose(1, 2)) / scale
-                attn = F.softmax(attn_logits, dim=-1) + self.epsilon
-                attn = attn / attn.sum(dim=1, keepdim=True)
-                updates = torch.bmm(attn.transpose(1, 2), v)
-                slots = self.gru(
-                    updates.reshape(-1, self.slot_dim),
-                    slots_prev.reshape(-1, self.slot_dim)
-                ).reshape(B, self.n_slots, self.slot_dim)
-                slots = slots + self.mlp(self.norm_mlp(slots))
-                attn_weights = attn.transpose(1, 2)
-            return slots, attn_weights
-
-    class EncoderMLP(nn.Module):
-        def __init__(self, dim):
-            super().__init__()
-            self.mlp = nn.Sequential(
-                nn.Linear(dim, dim), nn.ReLU(), nn.Linear(dim, dim))
-            self.norm = nn.LayerNorm(dim)
-        def forward(self, x):
-            return self.norm(self.mlp(x))
-
-    encoder = EncoderMLP(dino_dim).to(device)
-    slot_attn = SlotAttention(n_slots, slot_dim, n_sa_iters, dino_dim).to(device)
-
-    sa_model_path = str(OUTPUT_DIR / "phase48c_sa_model.pt")
-    if not os.path.exists(sa_model_path):
-        print(f"│  ERROR: SA model not found at {sa_model_path}", flush=True)
-        print(f"│  Run phase48c first to train the SA model.", flush=True)
-        return
-
-    ckpt = torch.load(sa_model_path, map_location=device, weights_only=True)
-    encoder.load_state_dict(ckpt['encoder'])
-    slot_attn.load_state_dict(ckpt['slot_attn'])
-    encoder.eval()
-    slot_attn.eval()
-    for p in list(encoder.parameters()) + list(slot_attn.parameters()):
-        p.requires_grad = False
-
-    print(f"│  Loaded SA model from {sa_model_path}", flush=True)
-    print(f"└─ Stage 1 done [{time.time()-ts1:.0f}s]", flush=True)
-
-    # ══════════════════════════════════════════════════════════
-    # STAGE 2: Extract centroid trajectories at collision windows
-    # ══════════════════════════════════════════════════════════
-    print(f"\n{'=' * 60}", flush=True)
-    print(f"STAGE 2: Extract centroid trajectories at collision windows", flush=True)
-    print(f"{'=' * 60}", flush=True)
-    ts2 = time.time()
-
-    centroid_cache_path = str(OUTPUT_DIR / "phase48d_centroid_features.pt")
     window_len = collision_window + 1  # 9 frames each half
+    feat_per_frame = 5  # x, y, dx, dy, speed
 
-    # Grid for centroid computation from attention maps
-    xs = torch.linspace(0, 1, P)
-    ys = torch.linspace(0, 1, P)
-    grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
-    grid_positions = torch.stack([grid_x, grid_y], dim=-1).reshape(n_patches, 2)
-    grid_np = grid_positions.numpy()
-
-    # Feature dims: per frame per object = (x, y, dx, dy, |v|) = 5
-    feat_per_frame = 5
-
-    def compute_trajectory_features(centroids_seq):
-        """Convert centroid sequence [T, 2] to [T, 5] with velocity/speed."""
-        T = len(centroids_seq)
+    def compute_trajectory_features(pos_seq):
+        """Convert position sequence [T, 2] to [T, 5] with velocity/speed."""
+        T = len(pos_seq)
         features = np.zeros((T, feat_per_frame))
-        features[:, :2] = centroids_seq  # x, y
+        features[:, :2] = pos_seq  # x, y
 
-        # Velocity: forward difference, pad last frame with zeros
         for t in range(T - 1):
-            dx = centroids_seq[t + 1, 0] - centroids_seq[t, 0]
-            dy = centroids_seq[t + 1, 1] - centroids_seq[t, 1]
+            dx = pos_seq[t + 1, 0] - pos_seq[t, 0]
+            dy = pos_seq[t + 1, 1] - pos_seq[t, 1]
             features[t, 2] = dx
             features[t, 3] = dy
             features[t, 4] = np.sqrt(dx**2 + dy**2)
-        # Last frame: copy from previous
         if T > 1:
             features[-1, 2:] = features[-2, 2:]
 
         return features
 
     def pad_or_truncate(seq, target_len):
-        """Pad (with zeros at start) or truncate to target_len."""
         if len(seq) >= target_len:
             return seq[:target_len]
         pad = np.zeros((target_len - len(seq), seq.shape[1]))
         return np.concatenate([pad, seq], axis=0)
 
-    if os.path.exists(centroid_cache_path):
-        print(f"│  Loading centroid features from {centroid_cache_path}", flush=True)
-        cache = torch.load(centroid_cache_path, weights_only=True)
-        agent_a_inputs = cache['agent_a']
-        agent_b_inputs = cache['agent_b']
-        labels = cache['labels']
-        is_train = cache['is_train']
-        print(f"│  Loaded: {len(labels)} examples", flush=True)
-    else:
-        # Load DINOv2 for feature extraction
-        print(f"│  Loading DINOv2...", flush=True)
-        dino = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14',
-                              pretrained=True)
-        dino.eval().to(device)
-        for p in dino.parameters():
-            p.requires_grad = False
+    agent_a_list = []
+    agent_b_list = []
+    label_list = []
+    is_train_list = []
 
-        dino_mean = torch.tensor([0.485, 0.456, 0.406]).reshape(1, 3, 1, 1).to(device)
-        dino_std = torch.tensor([0.229, 0.224, 0.225]).reshape(1, 3, 1, 1).to(device)
+    for coll in collision_events:
+        vid_id = coll['video_id']
+        ann = annotations[vid_id]
+        traj = ann['motion_trajectory']
+        cf = coll['collision_frame']
+        oid_a = coll['obj_a_id']
+        oid_b = coll['obj_b_id']
 
-        agent_a_list = []
-        agent_b_list = []
-        label_list = []
-        is_train_list = []
+        start = max(0, cf - collision_window)
+        end = min(n_eval_frames, cf + collision_window + 1)
+        mid_idx = cf - start
 
-        # Group collisions by video for efficient processing
-        collisions_by_video = {}
-        for ci, coll in enumerate(collision_events):
-            vid_id = coll['video_id']
-            if vid_id not in collisions_by_video:
-                collisions_by_video[vid_id] = []
-            collisions_by_video[vid_id].append((ci, coll))
+        # Extract GT positions for both objects across window
+        pos_a_seq = []
+        pos_b_seq = []
+        valid = True
+        for fi in range(start, end):
+            pa = get_obj_pos_2d(traj, fi, oid_a)
+            pb = get_obj_pos_2d(traj, fi, oid_b)
+            if pa is None or pb is None:
+                valid = False
+                break
+            pos_a_seq.append(pa)
+            pos_b_seq.append(pb)
 
-        n_processed = 0
-        n_videos_with_colls = len(collisions_by_video)
+        if not valid or len(pos_a_seq) < mid_idx + 1:
+            continue
 
-        for vi_count, (vid_id, vid_colls) in enumerate(collisions_by_video.items()):
-            # Collect all unique frames needed for this video
-            frames_needed = set()
-            for ci, coll in vid_colls:
-                cf = coll['collision_frame']
-                start = max(0, cf - collision_window)
-                end = min(n_eval_frames, cf + collision_window + 1)
-                for fi in range(start, end):
-                    frames_needed.add(fi)
-            frames_sorted = sorted(frames_needed)
+        pos_a_seq = np.stack(pos_a_seq)  # [T, 2]
+        pos_b_seq = np.stack(pos_b_seq)  # [T, 2]
 
-            # Extract video frames
-            cap = cv2.VideoCapture(f"{data_dir}/videos/video_{vid_id}.mp4")
-            frame_data = {}
-            for fi in frames_sorted:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
-                ret, frame = cap.read()
-                if ret:
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    frame = cv2.resize(frame, (224, 224))
-                    frame = frame.astype(np.float32) / 255.0
-                    frame = frame.transpose(2, 0, 1)
-                    frame_data[fi] = frame
-            cap.release()
+        # Compute trajectory features (pos + vel + speed)
+        feat_a = compute_trajectory_features(pos_a_seq)  # [T, 5]
+        feat_b = compute_trajectory_features(pos_b_seq)  # [T, 5]
 
-            # DINOv2 forward on all needed frames
-            if not frame_data:
-                continue
-            frame_indices_list = sorted(frame_data.keys())
-            batch_np = np.stack([frame_data[fi] for fi in frame_indices_list])
-            batch_tensor = torch.tensor(batch_np).to(device)
-            batch_tensor = (batch_tensor - dino_mean) / dino_std
+        # Split pre/post
+        pre_a = pad_or_truncate(feat_a[:mid_idx + 1], window_len)   # [9, 5]
+        pre_b = pad_or_truncate(feat_b[:mid_idx + 1], window_len)   # [9, 5]
+        post_a = pad_or_truncate(feat_a[mid_idx:], window_len)      # [9, 5]
+        post_b = pad_or_truncate(feat_b[mid_idx:], window_len)      # [9, 5]
 
-            dino_features = {}
-            for chunk_start in range(0, len(frame_indices_list), 16):
-                chunk_end = min(chunk_start + 16, len(frame_indices_list))
-                chunk = batch_tensor[chunk_start:chunk_end]
-                with torch.no_grad():
-                    feats = dino.forward_features(chunk)
-                    patch_tokens = feats['x_norm_patchtokens']
-                for j, fi in enumerate(frame_indices_list[chunk_start:chunk_end]):
-                    dino_features[fi] = patch_tokens[j:j+1]
+        # Agent A: full collision (pre+post for both objects) → [36, 5]
+        a_in = np.concatenate([pre_a, post_a, pre_b, post_b], axis=0)
+        agent_a_list.append(a_in)
 
-            del batch_tensor, batch_np
+        # Agent B: pre-collision only → [18, 5]
+        b_in = np.concatenate([pre_a, pre_b], axis=0)
+        agent_b_list.append(b_in)
 
-            # For each collision: SAVi propagation → centroids → trajectory features
-            for ci, coll in vid_colls:
-                cf = coll['collision_frame']
-                start = max(0, cf - collision_window)
-                end = min(n_eval_frames, cf + collision_window + 1)
-                mid_idx = cf - start
+        label_list.append(coll['direction_bin'])
+        is_train_list.append(coll['is_train'])
 
-                prev_slots = None
-                centroid_seq = []
-
-                for fi in range(start, end):
-                    if fi not in dino_features:
-                        break
-                    feat = dino_features[fi].to(device)
-                    with torch.no_grad():
-                        enc = encoder(feat)
-                        slots, attn = slot_attn(enc, init_slots=prev_slots)
-                        prev_slots = slots
-
-                    attn_np = attn[0].cpu().numpy()
-                    centroids = np.zeros((n_slots, 2))
-                    for si in range(n_slots):
-                        w = attn_np[si]
-                        w_sum = w.sum()
-                        if w_sum > 1e-6:
-                            cx = (w * grid_np[:, 0]).sum() / w_sum
-                            cy = (w * grid_np[:, 1]).sum() / w_sum
-                            centroids[si] = [cx, cy]
-                        else:
-                            centroids[si] = [0.5, 0.5]
-                    centroid_seq.append(centroids)
-
-                if len(centroid_seq) < mid_idx + 1:
-                    continue
-
-                centroid_seq = np.stack(centroid_seq)  # [T, n_slots, 2]
-
-                # Match slots to objects at collision frame
-                gt_a = coll['gt_a']
-                gt_b = coll['gt_b']
-                dists_a = np.linalg.norm(centroid_seq[mid_idx] - gt_a, axis=1)
-                dists_b = np.linalg.norm(centroid_seq[mid_idx] - gt_b, axis=1)
-                slot_a = np.argmin(dists_a)
-                slot_b = np.argmin(dists_b)
-
-                # Extract per-object centroid trajectories
-                traj_a_full = centroid_seq[:, slot_a, :]  # [T, 2]
-                traj_b_full = centroid_seq[:, slot_b, :]  # [T, 2]
-
-                # Compute trajectory features (pos + vel + speed)
-                feat_a_full = compute_trajectory_features(traj_a_full)  # [T, 5]
-                feat_b_full = compute_trajectory_features(traj_b_full)  # [T, 5]
-
-                # Split into pre and post collision
-                pre_a = pad_or_truncate(feat_a_full[:mid_idx + 1], window_len)  # [9, 5]
-                pre_b = pad_or_truncate(feat_b_full[:mid_idx + 1], window_len)  # [9, 5]
-                post_a = pad_or_truncate(feat_a_full[mid_idx:], window_len)     # [9, 5]
-                post_b = pad_or_truncate(feat_b_full[mid_idx:], window_len)     # [9, 5]
-
-                # Agent A: full collision (pre+post for both objects)
-                # Shape: [4*9, 5] = [36, 5]
-                a_in = np.concatenate([pre_a, post_a, pre_b, post_b], axis=0)
-                agent_a_list.append(a_in)
-
-                # Agent B: pre-collision only
-                # Shape: [2*9, 5] = [18, 5]
-                b_in = np.concatenate([pre_a, pre_b], axis=0)
-                agent_b_list.append(b_in)
-
-                label_list.append(coll['direction_bin'])
-                is_train_list.append(coll['is_train'])
-                n_processed += 1
-
-            del dino_features
-            if device.type == 'mps' and (vi_count + 1) % 50 == 0:
-                torch.mps.empty_cache()
-
-            if (vi_count + 1) % 100 == 0:
-                elapsed_ext = time.time() - ts2
-                eta = elapsed_ext / (vi_count + 1) * (n_videos_with_colls - vi_count - 1)
-                print(f"│    Processed {vi_count+1}/{n_videos_with_colls} videos, "
-                      f"{n_processed} collisions [{elapsed_ext:.0f}s, eta {eta:.0f}s]",
-                      flush=True)
-
-        # Clean up DINOv2
-        del dino, dino_mean, dino_std
-        if device.type == 'mps':
-            torch.mps.empty_cache()
-
-        agent_a_inputs = torch.tensor(np.stack(agent_a_list), dtype=torch.float32)
-        agent_b_inputs = torch.tensor(np.stack(agent_b_list), dtype=torch.float32)
-        labels = torch.tensor(label_list, dtype=torch.long)
-        is_train = torch.tensor(is_train_list, dtype=torch.bool)
-
-        torch.save({
-            'agent_a': agent_a_inputs,
-            'agent_b': agent_b_inputs,
-            'labels': labels,
-            'is_train': is_train,
-        }, centroid_cache_path)
-        print(f"│  Cached to {centroid_cache_path}", flush=True)
+    agent_a_inputs = torch.tensor(np.stack(agent_a_list), dtype=torch.float32)
+    agent_b_inputs = torch.tensor(np.stack(agent_b_list), dtype=torch.float32)
+    labels = torch.tensor(label_list, dtype=torch.long)
+    is_train = torch.tensor(is_train_list, dtype=torch.bool)
 
     n_examples = len(labels)
     n_train = is_train.sum().item()
@@ -18602,15 +18375,15 @@ def run_phase48d_centroid_dynamics():
     print(f"│  Agent A input: {agent_a_inputs.shape}", flush=True)
     print(f"│  Agent B input: {agent_b_inputs.shape}", flush=True)
     print(f"│  Label dist: {np.bincount(labels.numpy(), minlength=n_direction_bins).tolist()}", flush=True)
-    print(f"└─ Stage 2 done [{time.time()-ts2:.0f}s]", flush=True)
+    print(f"└─ Stage 1 done [{time.time()-ts1:.0f}s]", flush=True)
 
     # ══════════════════════════════════════════════════════════
-    # STAGE 3: Train communication agents
+    # STAGE 2: Train communication agents
     # ══════════════════════════════════════════════════════════
     print(f"\n{'=' * 60}", flush=True)
-    print(f"STAGE 3: Train communication agents", flush=True)
+    print(f"STAGE 2: Train communication agents", flush=True)
     print(f"{'=' * 60}", flush=True)
-    ts3 = time.time()
+    ts2 = time.time()
 
     vocab_size = 8
     hidden_dim = 128
@@ -18623,8 +18396,8 @@ def run_phase48d_centroid_dynamics():
     a_input_dim = agent_a_inputs.shape[1] * agent_a_inputs.shape[2]  # 36 * 5 = 180
     b_input_dim = agent_b_inputs.shape[1] * agent_b_inputs.shape[2]  # 18 * 5 = 90
 
-    print(f"│  Agent A input dim: {a_input_dim} ({agent_a_inputs.shape[1]}×{agent_a_inputs.shape[2]})", flush=True)
-    print(f"│  Agent B input dim: {b_input_dim} ({agent_b_inputs.shape[1]}×{agent_b_inputs.shape[2]})", flush=True)
+    print(f"│  Agent A input dim: {a_input_dim} ({agent_a_inputs.shape[1]}x{agent_a_inputs.shape[2]})", flush=True)
+    print(f"│  Agent B input dim: {b_input_dim} ({agent_b_inputs.shape[1]}x{agent_b_inputs.shape[2]})", flush=True)
 
     class SenderAgent(nn.Module):
         def __init__(self, input_dim, hidden_dim, vocab_size):
@@ -18844,15 +18617,15 @@ def run_phase48d_centroid_dynamics():
     print(f"│  Chance baseline:       {100/n_direction_bins:.1f}%", flush=True)
     print(f"│  Message entropy:       {final_entropy:.3f}", flush=True)
     print(f"│  Messages used:         {(msg_probs > 0.01).sum()}/{vocab_size}", flush=True)
-    print(f"└─ Stage 3 done [{time.time()-ts3:.0f}s]", flush=True)
+    print(f"└─ Stage 2 done [{time.time()-ts2:.0f}s]", flush=True)
 
     # ══════════════════════════════════════════════════════════
-    # STAGE 4: Message analysis
+    # STAGE 3: Message analysis
     # ══════════════════════════════════════════════════════════
     print(f"\n{'=' * 60}", flush=True)
-    print(f"STAGE 4: Message analysis", flush=True)
+    print(f"STAGE 3: Message analysis", flush=True)
     print(f"{'=' * 60}", flush=True)
-    ts4 = time.time()
+    ts3 = time.time()
 
     msg_by_dir = {d: [] for d in range(n_direction_bins)}
     labels_np = labels.numpy()
@@ -18877,13 +18650,13 @@ def run_phase48d_centroid_dynamics():
     mean_consistency = np.mean(consistency_scores) if consistency_scores else 0
 
     print(f"│  Mean consistency: {mean_consistency:.2f}", flush=True)
-    print(f"└─ Stage 4 done [{time.time()-ts4:.0f}s]", flush=True)
+    print(f"└─ Stage 3 done [{time.time()-ts3:.0f}s]", flush=True)
 
     # ══════════════════════════════════════════════════════════
-    # STAGE 5: Visualization
+    # STAGE 4: Visualization
     # ══════════════════════════════════════════════════════════
     print(f"\n{'=' * 60}", flush=True)
-    print(f"STAGE 5: Visualization", flush=True)
+    print(f"STAGE 4: Visualization", flush=True)
     print(f"{'=' * 60}", flush=True)
 
     import matplotlib
@@ -18905,7 +18678,7 @@ def run_phase48d_centroid_dynamics():
                label=f'Chance ({100/n_direction_bins:.0f}%)')
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Validation Accuracy')
-    ax.set_title('Post-Collision Direction (Centroid Trajectories)', fontsize=11)
+    ax.set_title('Post-Collision Direction (GT Trajectories)', fontsize=11)
     ax.legend(fontsize=8)
     ax.set_ylim(0, max(0.5, max(
         max(history['val_comm_acc']),
@@ -18967,10 +18740,10 @@ def run_phase48d_centroid_dynamics():
         verdict = "FAIL"
 
     summary = (
-        f"Phase 48d: Centroid Dynamics Comm\n\n"
-        f"Input: centroid pos + vel + speed\n"
-        f"  Agent A: {agent_a_inputs.shape[1]}×{agent_a_inputs.shape[2]} = {a_input_dim}d\n"
-        f"  Agent B: {agent_b_inputs.shape[1]}×{agent_b_inputs.shape[2]} = {b_input_dim}d\n\n"
+        f"Phase 48d: GT Trajectory Comm\n\n"
+        f"Input: GT pos + vel + speed\n"
+        f"  Agent A: {agent_a_inputs.shape[1]}x{agent_a_inputs.shape[2]} = {a_input_dim}d\n"
+        f"  Agent B: {agent_b_inputs.shape[1]}x{agent_b_inputs.shape[2]} = {b_input_dim}d\n\n"
         f"Data: {n_examples} collisions\n"
         f"  Train: {n_train}, Val: {n_val}\n"
         f"Channel: Gumbel-Softmax, vocab={vocab_size}\n\n"
@@ -18988,7 +18761,7 @@ def run_phase48d_centroid_dynamics():
     ax.text(0.05, 0.5, summary, transform=ax.transAxes, fontsize=10,
             fontfamily='monospace', verticalalignment='center')
 
-    fig.suptitle(f'Phase 48d: Centroid Dynamics Communication (1000 Videos)\n'
+    fig.suptitle(f'Phase 48d: GT Trajectory Communication (1000 Videos)\n'
                  f'val: comm={final_val_comm*100:.0f}% nocomm={final_val_nocomm*100:.0f}% '
                  f'(+{comm_gain*100:.0f}pp) '
                  f'oracle={final_val_oracle*100:.0f}% '
