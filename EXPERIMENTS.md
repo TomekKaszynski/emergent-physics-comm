@@ -3301,3 +3301,42 @@ Use within-collision deflection asymmetry: `dv_ratio = |Δv_target| / |Δv_partn
 1. Use 3D coordinates directly from annotations (bypasses projection)
 2. Use a task where the signal survives projection (e.g., object counting, color/shape identification)
 3. Return to the 48-series direction task where the signal was proven to exist
+
+---
+
+## CLEVRER 3D Velocity Check
+**Date:** Feb 24
+
+Before spending more time on feature engineering, checked whether mass signal exists in CLEVRER's raw 3D velocities (from annotations, not 2D projections).
+
+```python
+# For each collision: compute |v_post - v_pre| for both objects
+# Group by material (metal=heavy, rubber=light)
+Metal  mean |Δv| = 1.3372
+Rubber mean |Δv| = 1.3695
+Ratio = 1.024
+```
+
+**No signal in 3D either.** CLEVRER's physics engine does not produce mass-dependent collision dynamics strong enough to detect. The 49 series is fundamentally blocked — not by projection, but by the dataset itself.
+
+---
+
+## Kubric Restitution Test
+**Date:** Feb 24
+
+Pivoted to Kubric/PyBullet as alternative physics environment. Created `kubric/test_restitution.py`: two balls dropped from z=2.0 with different restitution (bouncy e=0.9, dead e=0.1). Floor has e=1.0.
+
+**Result — MASSIVE signal:**
+```
+bouncy (e=0.9): z = 2.00 → 0.46 → 1.79 → 0.58 → 1.53 (bounces repeatedly)
+dead   (e=0.1): z = 2.00 → 0.17 → 0.15 → 0.15 → 0.15 (thuds and stays)
+```
+
+Rendered 48 frames (24fps, 2 seconds). Red ball bounces back to ~90% height, blue ball absorbed on first impact. Signal is overwhelming and clearly visible in rendered frames.
+
+**Kubric API notes:**
+- Materials: `material=kb.PrincipledBSDFMaterial(color=kb.Color(r,g,b,a))` (NOT `color=` directly)
+- Docker: `docker run --rm -it -v "$(pwd):/kubric" kubricdockerhub/kubruntu python3 script.py`
+- Objects: `kb.Sphere(name, scale, position, velocity, mass, friction, restitution, material)`
+
+**Verdict:** SUCCESS — Kubric produces physics signals that CLEVRER cannot. This is the viable path for the mass/material communication experiment.
