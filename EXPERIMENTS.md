@@ -3263,3 +3263,41 @@ Replace raw 180-dim trajectories with 11 engineered physics features per collisi
 Additionally, `speed_ratio` explodes (~900) for near-stationary objects (division by ~0).
 
 **VERDICT: FAIL** — Need to specifically select cross-material collisions where the mass contrast is visible, or use a fundamentally different approach to the mass task.
+
+## Phase 49c: Delta-V Ratio as Mass Signal
+
+**Date**: 2026-02-24
+**Status**: FAIL — no mass signal in CLEVRER's 2D projected trajectories
+
+### Goal
+
+Use within-collision deflection asymmetry: `dv_ratio = |Δv_target| / |Δv_partner|`. Heavy objects deflect less (ratio < 1), light more (ratio > 1). Prefer cross-material collisions where signal is strongest. 7 features per agent.
+
+### Mass Signal Diagnostic
+
+| Feature | Heavy (metal) | Light (rubber) |
+|---------|--------------|----------------|
+| **dv_ratio** | **1.047** | **1.028** |
+| dv_target | 0.0057 | 0.0057 |
+| dv_partner | 0.0057 | 0.0057 |
+| deflection_target | 0.695 | 0.682 |
+
+**No signal.** Heavy and light dv_ratios are identical (~1.04 vs ~1.03). Despite 82% cross-material collisions (1692/2057 heavy, 1684/2057 light), the delta-v ratio does not differentiate mass.
+
+### Results
+
+| Metric | Phase 49c | Phase 49b | Phase 49 | Target |
+|--------|-----------|-----------|----------|--------|
+| Val oracle | **55.9%** | 51.8% | 52.8% | >80% |
+| Val comm | 50.1% | 50.4% | 52.3% | >65% |
+| Val no-comm | 53.7% | 49.0% | 53.2% | ~50% |
+| Comm gain | -3.6pp | +1.4pp | -0.9pp | >15pp |
+
+### Analysis
+
+**CLEVRER's physics does differentiate mass** (metal is 2× rubber weight in the simulation), but the signal is destroyed by the 3D→2D projection. The projected positions compress depth information, making velocities in the projected space unreliable indicators of true 3D velocities. A metal ball moving toward the camera appears slow in 2D even if it's fast in 3D.
+
+**The 49 series is blocked on 2D projection.** Three approaches tried (raw trajectories, absolute physics features, relative delta-v ratio) all show no mass signal in projected coordinates. Options:
+1. Use 3D coordinates directly from annotations (bypasses projection)
+2. Use a task where the signal survives projection (e.g., object counting, color/shape identification)
+3. Return to the 48-series direction task where the signal was proven to exist
