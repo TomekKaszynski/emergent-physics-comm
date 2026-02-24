@@ -2630,3 +2630,65 @@ Fix 45c's collapse with three changes: (1) softer temperature τ=0.5, (2) lower 
 3. Remove SAVi propagation entirely — use contrastive loss with Hungarian-matched slot pairs
 
 **Runtime**: 1409s (~23.5 min). DINOv2 extraction: cached. SA training: 1351s.
+
+---
+
+## Phase 46: SlotContrast Pretrained → CLEVRER (Zero-Shot)
+**Date:** Feb 24, 2026 | **Duration:** 267s (~4.5 min)
+
+**Approach:** Instead of training from scratch, use a pretrained SlotContrast model (MOVi-C checkpoint from CVPR 2025 paper) for zero-shot transfer to CLEVRER. Clone repo, load their full inference pipeline, evaluate on our 20 CLEVRER videos.
+
+### Config
+
+| Parameter | Value |
+|-----------|-------|
+| Model | SlotContrast MOVi-C pretrained |
+| Backbone | DINOv2 ViT-S/14 (frozen, same as Phase 45) |
+| Encoder | 2-layer MLP: 384 → 768 → 64, LayerNorm |
+| Grouper | SlotAttention: 11 slots, 64-dim, 2 iters |
+| Decoder | MLP: 64 → 1024 → 1024 → 1024 → 384+1 |
+| Predictor | TransformerEncoder: 1 block, 4 heads |
+| Temporal | ScanOverTime (SAVi-style + predictor) |
+| Input | 336×336 (match training), MOVi norm (0.5/0.5) |
+| Data | 20 CLEVRER videos × 128 frames |
+| Training | None — zero-shot transfer |
+| Params | 25,119,745 total |
+
+### Results
+
+| Metric | Phase 46 | Phase 45 | Phase 45d | Target |
+|--------|----------|----------|-----------|--------|
+| Tracking error | **19.2%** | 28.8% | 31.9% | <20% |
+| Median error | 13.9% | — | — | — |
+| Consistency | 6.4% | 3.4% | 0.5% | >30% |
+| Binding | 100% | 100% | 100% | >85% |
+| Entropy | 0.616 | 0.488 | 0.544 | — |
+| Active slots | 7.7/11 | 7/7 | 7/7 | — |
+
+### Temporal Degradation
+
+| Frame Range | Tracking Error |
+|-------------|---------------|
+| 0-15 (early) | 17.3% |
+| 64-127 (late) | 20.1% |
+| Degradation | +2.8% |
+
+Mild temporal drift despite the model being trained on 4-frame chunks only. The predictor+ScanOverTime handles 128-frame sequences surprisingly well.
+
+### Analysis
+
+**Major tracking improvement**: 19.2% error vs Phase 45's 28.8% — a 33% relative improvement with no training on CLEVRER data at all. The pretrained SlotContrast model transfers well from MOVi-C (synthetic 3D colliding shapes) to CLEVRER (photorealistic rendered physics).
+
+**Mild temporal degradation**: Early frames (17.3%) → late frames (20.1%), only +2.8% increase over 128 frames. The TransformerEncoder predictor + SAVi propagation handles long sequences much better than our Phase 45d SAVi (which trained with 1-step propagation and degraded severely at 128 steps). SlotContrast's predictor was trained to predict next-frame slots, which provides a strong prior for temporal consistency.
+
+**Good slot diversity**: 7.7/11 active slots, entropy 0.616. The model uses ~8 slots for scene elements (objects + background parts), with ~3 inactive slots. Higher entropy than Phase 45 (0.488) means better spatial coverage.
+
+**Consistency still low**: 6.4% — better than Phase 45 (3.4%) but far from target (>30%). The strict consistency metric requires ALL slot-GT assignments to remain optimal at every frame. With 11 slots and ~5 objects, there's more opportunity for slot swaps.
+
+**Perfect binding**: 100% — each object gets its own slot. The 11 slots (vs 7 in Phase 45) provide ample capacity for CLEVRER's 4-6 objects.
+
+**VERDICT: PARTIAL** — Tracking error within target (<20%), binding perfect. Consistency still low. The pretrained model significantly outperforms all our from-scratch training attempts (Phases 45, 45b, 45c, 45d).
+
+### Key Takeaway
+
+Pretrained object-centric models transfer well across synthetic datasets. SlotContrast's combination of DINOv2 features + contrastive learning + temporal predictor provides a strong foundation for slot-based scene decomposition. This model could be used directly for the communication pipeline if consistency can be improved (e.g., through fine-tuning or better slot matching).
