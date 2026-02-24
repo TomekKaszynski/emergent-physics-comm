@@ -2692,3 +2692,197 @@ Mild temporal drift despite the model being trained on 4-frame chunks only. The 
 ### Key Takeaway
 
 Pretrained object-centric models transfer well across synthetic datasets. SlotContrast's combination of DINOv2 features + contrastive learning + temporal predictor provides a strong foundation for slot-based scene decomposition. This model could be used directly for the communication pipeline if consistency can be improved (e.g., through fine-tuning or better slot matching).
+
+---
+
+## Phase 47: Contrastive Slot Attention on 1000 CLEVRER Videos
+
+**Date**: 2026-02-24
+**Status**: FAIL — complete slot collapse
+
+### Goal
+
+Scale Phase 45d's contrastive slot attention from 100 to 1000 videos with aggressive contrastive settings (α=1.0, τ=0.1). Hypothesis: diverse negatives from 1000 videos prevent the collapse that killed Phase 45c at these settings.
+
+### Config
+
+| Parameter | Phase 45d | Phase 47 |
+|-----------|-----------|----------|
+| Videos | 100 | 1000 |
+| Frames/video | 128 | 16 (linspace) |
+| α (contrastive) | 0.3 | 1.0 |
+| τ (temperature) | 0.5 | 0.1 |
+| β (entropy) | 0.1 | 0.1 |
+| Epochs | 100 | 200 |
+| Train pairs | 2,480 | 2,400 |
+
+Architecture: 7 slots, 64-dim, 5 SA iters, EncoderMLP, SpatialBroadcastDecoder.
+
+### Results
+
+| Metric | Phase 47 | Phase 45d | Phase 45 |
+|--------|----------|-----------|----------|
+| Tracking error | 31.4% | 31.9% | 28.8% |
+| Consistency | 0.4% | 0.5% | 3.4% |
+| Binding | 100% | 100% | 100% |
+| Active slots | **1/7** | 7/7 | 7/7 |
+| Entropy | 0.0 | 0.544 | 0.488 |
+
+Collapse timeline: 1/7 active from epoch 10, never recovered through 200 epochs.
+
+### Analysis
+
+**Complete slot collapse.** The aggressive α=1.0, τ=0.1 caused immediate collapse regardless of 10× more data diversity. The InfoNCE contrastive loss with low temperature creates a single dominant slot that captures all similarity. Entropy regularization (β=0.1) was too weak to counteract. This mirrors Phase 45c's failure — data diversity alone doesn't prevent collapse.
+
+**VERDICT: FAIL** — slot collapse, hypothesis disproven.
+
+---
+
+## Phase 47b: Temperature-Annealed Contrastive Training (1000 Videos)
+
+**Date**: 2026-02-24
+**Status**: FAIL — slot collapse despite annealing
+
+### Goal
+
+Fix Phase 47's collapse via temperature annealing: start with soft τ=1.0 (slots specialize via reconstruction), anneal to τ=0.3 over 100 epochs. Stronger entropy regularization β=0.5.
+
+### Config
+
+| Parameter | Phase 47 | Phase 47b |
+|-----------|----------|-----------|
+| τ | 0.1 (fixed) | 1.0→0.3 cosine over 100ep |
+| α | 1.0 (warmup 10ep) | 0.5 (warmup 20ep) |
+| β (entropy) | 0.1 | 0.5 (5× stronger) |
+| Epochs | 200 | 200 |
+
+### Results
+
+Killed at epoch 170/200 — collapsed to 1/7 active by epoch 50, never recovered. Training loss continued decreasing but all through a single dominant slot.
+
+**VERDICT: FAIL** — contrastive slot collapse is fundamental with learnable-init SA + InfoNCE, regardless of temperature scheduling or entropy regularization strength.
+
+### Key Takeaway (47 + 47b)
+
+Contrastive loss with InfoNCE fundamentally conflicts with slot attention's learnable initialization. The contrastive gradient encourages all slots to align with the same representation (the one that maximizes cross-frame similarity), and neither data diversity (47) nor soft-to-hard annealing (47b) prevents this. The pretrained SlotContrast model (Phase 46) avoids this by using a very different architecture (TransformerEncoder predictor, trained on MOVi-C with curriculum).
+
+---
+
+## Phase 48: CLEVRER Communication — Material Prediction
+
+**Date**: 2026-02-24
+**Status**: PARTIAL — trivial task, no communication needed
+
+### Goal
+
+First communication pipeline: Agent A sees collision through slot attention, sends discrete message to Agent B, who predicts the material (mass proxy) of the colliding object. Tests whether emergent communication can convey physics properties.
+
+### Config
+
+- 20 CLEVRER videos, 51 collisions, 23 mixed-material
+- SA retrained for 50 epochs (no saved Phase 45 model)
+- Agent A: sees both objects' slot features at collision frame
+- Agent B: sees only own object's slot features + message
+- Vocab=8, Gumbel-Softmax discrete channel
+- Binary classification: metal vs rubber
+- 1000 epochs, lr=3e-3
+
+### Results
+
+| Metric | Value |
+|--------|-------|
+| With communication | 91.3% |
+| Without communication | 91.3% |
+| Communication gain | 0.0pp |
+| Message entropy | 0.0 |
+
+### Analysis
+
+Material (= mass proxy) is directly visible from appearance in slot features — metal objects look different from rubber objects. Agent B achieves 91.3% without any communication, so there's no information gap to bridge. Message entropy collapsed to 0 (sender always sends same symbol). The task is trivial: material prediction doesn't require communication.
+
+**VERDICT: PARTIAL** — high accuracy but no communication emergence. Need a task where Agent B genuinely lacks information.
+
+---
+
+## Phase 48b: CLEVRER Communication — Post-Collision Direction Prediction
+
+**Date**: 2026-02-24
+**Status**: PARTIAL — data-limited (51 examples, 8 classes)
+
+### Goal
+
+Fix Phase 48's trivial task. Agent A sees full collision (pre + post), Agent B sees pre-collision only. Task: predict post-collision direction (8 angular bins). This creates genuine information asymmetry — Agent B can't know the direction without communication.
+
+### Config
+
+- Same 20 videos, 51 collisions (all, not just mixed-material)
+- 8-class direction prediction (W, SW, S, SE, E, NE, N, NW)
+- Agent A input: 2 frames × 2 objects × 9 timesteps = 36 × 64
+- Agent B input: 1 frame (pre-collision) × 2 objects × 9 timesteps = 18 × 64
+- Oracle baseline: Agent A predicts direction directly (no communication)
+- 1000 epochs, lr=3e-3
+
+### Results
+
+| Metric | Value |
+|--------|-------|
+| With communication (all data) | 82.4% |
+| Without communication | 70.6% |
+| Oracle | 94.1% |
+| Communication gain | +11.8pp |
+
+But this was evaluated on all 51 examples including training data — complete memorization. With only 51 examples and 8 classes, there's no meaningful train/val split possible. The 82.4% reflects overfitting, not generalization.
+
+**VERDICT: PARTIAL** — information asymmetry design works, but need far more data to evaluate properly.
+
+---
+
+## Phase 48c: CLEVRER Communication — 1000 Videos Direction Prediction
+
+**Date**: 2026-02-24
+**Status**: FAIL — slot features don't encode collision dynamics
+
+### Goal
+
+Scale Phase 48b to 1000 CLEVRER videos with proper train/val split. ~2400 collisions should provide enough data for meaningful evaluation.
+
+### Config
+
+| Parameter | Value |
+|-----------|-------|
+| Videos | 1000 (IDs 10000-10999) |
+| Total collisions | 2,444 |
+| Train (videos 10000-10799) | 1,956 |
+| Val (videos 10800-10999) | 488 |
+| SA training | 50 epochs on 16K frames (phase47 features) |
+| Task | 8-class post-collision direction |
+| Comm training | 200 epochs, batch 64, lr=3e-4 |
+| Direction bin dist | [489, 283, 210, 325, 447, 231, 190, 269] |
+
+### Results
+
+| Metric | Value | Target |
+|--------|-------|--------|
+| Val with communication | 21.3% | >30% |
+| Val without communication | 17.8% | — |
+| Val oracle | 17.4% | — |
+| Communication gain | +3.5pp | >10pp |
+| Message entropy | 0.0 | >0.3 |
+| Messages used | 1/8 | — |
+| Chance baseline | 12.5% | — |
+
+Train accuracy reached 77% (communication) vs 75% (no-communication) — moderate overfitting.
+
+### Analysis
+
+**All models barely above chance on val.** Oracle (Agent A predicts directly with full collision info) only reaches 17.4% — the slot features fundamentally don't encode enough collision dynamics information. The SA slots capture spatial appearance (object position, color, shape) but not velocity or momentum.
+
+**Message entropy collapsed.** Sender always sends msg0. Without useful information in the slot features, there's nothing meaningful to communicate.
+
+**The bottleneck is perception, not communication.** Even with direct access to all collision frames, the oracle can't predict direction. The slot attention encoder (trained for reconstruction) doesn't preserve the fine-grained temporal dynamics needed for post-collision direction prediction. Position changes between frames (which encode velocity) are lost in the slot pooling.
+
+**VERDICT: FAIL** — slot features lack collision dynamics information. Communication can't help when the underlying representation doesn't capture the relevant physics.
+
+### Key Takeaway (48 series)
+
+The communication architecture works (48b showed +11.8pp gain on train), but the perception pipeline strips away the temporal dynamics information needed for physics prediction. Slot attention trained for spatial reconstruction compresses out velocity/momentum signals. Future approaches need either: (1) a dynamics-aware encoder that explicitly preserves temporal derivatives, or (2) raw pixel/feature inputs rather than slot-pooled representations for the communication agents.

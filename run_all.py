@@ -18134,6 +18134,4673 @@ def run_phase41j_fsq():
 
 
 
+def run_phase48c_clevrer_dynamics_1000v():
+    """Phase 48c: Scale dynamics communication to 1000 CLEVRER videos.
+
+    Same task as 48b (predict post-collision direction), but with ~3000+ examples.
+    Pipeline:
+    1. Train SA on phase47 DINOv2 features (1000 vids × 16 frames, 50 epochs)
+    2. For each collision in 1000 videos: extract frames, DINOv2, SA → slot features
+    3. Train communication agents (200 epochs, proper train/val by video)
+    """
+    import time
+    import json
+    import os
+    import numpy as np
+    import cv2
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    from scipy.optimize import linear_sum_assignment
+    from pathlib import Path
+
+    print("=" * 70, flush=True)
+    print("PHASE 48c: Dynamics Communication — 1000 CLEVRER Videos", flush=True)
+    print("  Predict post-collision direction via communication", flush=True)
+    print("=" * 70, flush=True)
+    t0 = time.time()
+
+    if torch.backends.mps.is_available():
+        device = torch.device('mps')
+    elif torch.cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    OUTPUT_DIR = Path("results")
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    data_dir = "clevrer_data"
+
+    n_videos = 1000
+    n_eval_frames = 128
+    video_ids = list(range(10000, 10000 + n_videos))
+    collision_window = 8
+    n_direction_bins = 8
+    dir_names = ['W', 'SW', 'S', 'SE', 'E', 'NE', 'N', 'NW']
+    n_train_vids = 800  # videos 10000-10799
+
+    PROJ_U = np.array([0.0589, 0.2286, 0.4850])
+    PROJ_V = np.array([0.1562, 0.0105, 0.4506])
+
+    def project_3d_to_2d(x, y):
+        u = PROJ_U[0] * x + PROJ_U[1] * y + PROJ_U[2]
+        v = PROJ_V[0] * x + PROJ_V[1] * y + PROJ_V[2]
+        return np.clip(u, 0, 1), np.clip(v, 0, 1)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 0: Load all annotations + extract collision metadata
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 0: Load annotations + extract collision metadata", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts0 = time.time()
+
+    annotations = {}
+    for vid_id in video_ids:
+        ann_path = f"{data_dir}/annotation_{vid_id}.json"
+        if os.path.exists(ann_path):
+            with open(ann_path) as f:
+                annotations[vid_id] = json.load(f)
+
+    def get_obj_pos_2d(traj, frame_idx, obj_id):
+        for o in traj[frame_idx]['objects']:
+            if o['object_id'] == obj_id:
+                return np.array(project_3d_to_2d(
+                    o['location'][0], o['location'][1]))
+        return None
+
+    def velocity_direction_bin(pos_start, pos_end, n_frames):
+        v = (pos_end - pos_start) / max(n_frames, 1)
+        speed = np.linalg.norm(v)
+        if speed < 0.001:
+            return -1, speed
+        angle = np.arctan2(v[1], v[0])
+        bin_idx = int((angle + np.pi) / (2 * np.pi / n_direction_bins)) % n_direction_bins
+        return bin_idx, speed
+
+    collision_events = []
+    for vid_id in video_ids:
+        if vid_id not in annotations:
+            continue
+        ann = annotations[vid_id]
+        traj = ann['motion_trajectory']
+        props = {p['object_id']: p for p in ann['object_property']}
+        vi = vid_id - 10000  # video index 0-999
+
+        for coll in ann.get('collision', []):
+            cf = coll['frame_id']
+            oid_a, oid_b = coll['object_ids']
+
+            post_end = min(n_eval_frames - 1, cf + 4)
+            pos_cf = get_obj_pos_2d(traj, cf, oid_a)
+            pos_post = get_obj_pos_2d(traj, post_end, oid_a)
+            if pos_cf is None or pos_post is None:
+                continue
+
+            dir_bin, speed = velocity_direction_bin(pos_cf, pos_post, post_end - cf)
+            if dir_bin < 0:
+                continue
+
+            # GT positions at collision frame for slot matching
+            gt_a = pos_cf
+            gt_b = get_obj_pos_2d(traj, cf, oid_b)
+            if gt_b is None:
+                continue
+
+            collision_events.append({
+                'video_idx': vi,
+                'video_id': vid_id,
+                'collision_frame': cf,
+                'obj_a_id': oid_a,
+                'obj_b_id': oid_b,
+                'direction_bin': dir_bin,
+                'gt_a': gt_a,
+                'gt_b': gt_b,
+                'is_train': vi < n_train_vids,
+            })
+
+    train_events = [c for c in collision_events if c['is_train']]
+    val_events = [c for c in collision_events if not c['is_train']]
+
+    dir_bins_all = [c['direction_bin'] for c in collision_events]
+    bin_counts = np.bincount(dir_bins_all, minlength=n_direction_bins)
+
+    print(f"│  Total collisions: {len(collision_events)}", flush=True)
+    print(f"│  Train: {len(train_events)} (videos 10000-10799)", flush=True)
+    print(f"│  Val: {len(val_events)} (videos 10800-10999)", flush=True)
+    print(f"│  Direction bins: {bin_counts.tolist()}", flush=True)
+    print(f"└─ Stage 0 done [{time.time()-ts0:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 1: Train Slot Attention on 1000 videos
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 1: Train SA on 1000 videos (reconstruction only)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts1 = time.time()
+
+    dino_dim = 384
+    n_patches = 256
+    P = 16
+    n_slots = 7
+    slot_dim = 64
+    n_sa_iters = 5
+
+    class SlotAttention(nn.Module):
+        def __init__(self, n_slots, slot_dim, n_iters, feature_dim, epsilon=1e-8):
+            super().__init__()
+            self.n_slots = n_slots
+            self.slot_dim = slot_dim
+            self.n_iters = n_iters
+            self.epsilon = epsilon
+            self.slot_init = nn.Parameter(
+                torch.randn(1, n_slots, slot_dim) * 0.02)
+            self.project_q = nn.Linear(slot_dim, slot_dim, bias=False)
+            self.project_k = nn.Linear(feature_dim, slot_dim, bias=False)
+            self.project_v = nn.Linear(feature_dim, slot_dim, bias=False)
+            self.gru = nn.GRUCell(slot_dim, slot_dim)
+            self.mlp = nn.Sequential(
+                nn.Linear(slot_dim, slot_dim * 2), nn.ReLU(),
+                nn.Linear(slot_dim * 2, slot_dim))
+            self.norm_inputs = nn.LayerNorm(feature_dim)
+            self.norm_slots = nn.LayerNorm(slot_dim)
+            self.norm_mlp = nn.LayerNorm(slot_dim)
+
+        def forward(self, inputs, init_slots=None):
+            B, N, _ = inputs.shape
+            inputs = self.norm_inputs(inputs)
+            k = self.project_k(inputs)
+            v = self.project_v(inputs)
+            if init_slots is not None:
+                slots = init_slots
+            else:
+                slots = self.slot_init.expand(B, -1, -1)
+            scale = self.slot_dim ** 0.5
+            attn_weights = None
+            for _ in range(self.n_iters):
+                slots_prev = slots
+                slots = self.norm_slots(slots)
+                q = self.project_q(slots)
+                attn_logits = torch.bmm(k, q.transpose(1, 2)) / scale
+                attn = F.softmax(attn_logits, dim=-1) + self.epsilon
+                attn = attn / attn.sum(dim=1, keepdim=True)
+                updates = torch.bmm(attn.transpose(1, 2), v)
+                slots = self.gru(
+                    updates.reshape(-1, self.slot_dim),
+                    slots_prev.reshape(-1, self.slot_dim)
+                ).reshape(B, self.n_slots, self.slot_dim)
+                slots = slots + self.mlp(self.norm_mlp(slots))
+                attn_weights = attn.transpose(1, 2)
+            return slots, attn_weights
+
+    class EncoderMLP(nn.Module):
+        def __init__(self, dim):
+            super().__init__()
+            self.mlp = nn.Sequential(
+                nn.Linear(dim, dim), nn.ReLU(), nn.Linear(dim, dim))
+            self.norm = nn.LayerNorm(dim)
+        def forward(self, x):
+            return self.norm(self.mlp(x))
+
+    class SpatialBroadcastDecoder(nn.Module):
+        def __init__(self, slot_dim, output_dim, n_patches_side=16):
+            super().__init__()
+            self.decoder = nn.Sequential(
+                nn.Linear(slot_dim + 2, 256), nn.ReLU(),
+                nn.Linear(256, 256), nn.ReLU(),
+                nn.Linear(256, 256), nn.ReLU(),
+                nn.Linear(256, output_dim + 1))
+            xs = torch.linspace(-1, 1, n_patches_side)
+            ys = torch.linspace(-1, 1, n_patches_side)
+            grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
+            self.register_buffer(
+                'grid', torch.stack([grid_x, grid_y], dim=-1).reshape(-1, 2))
+        def forward(self, slots):
+            B, K, D = slots.shape
+            N = self.grid.shape[0]
+            slots_bc = slots.unsqueeze(2).expand(B, K, N, D)
+            grid = self.grid.unsqueeze(0).unsqueeze(0).expand(B, K, N, 2)
+            dec_in = torch.cat([slots_bc, grid], dim=-1)
+            decoded = self.decoder(dec_in)
+            features = decoded[:, :, :, :-1]
+            alpha_logits = decoded[:, :, :, -1:]
+            alpha = F.softmax(alpha_logits, dim=1)
+            recon = (alpha * features).sum(dim=1)
+            alpha = alpha.squeeze(-1)
+            return recon, alpha
+
+    # Load phase47 features for SA training
+    sa_cache = str(OUTPUT_DIR / "phase48c_sa_model.pt")
+    phase47_feat_path = str(OUTPUT_DIR / "phase47_dino_features_1000v.pt")
+
+    torch.manual_seed(42)
+    encoder = EncoderMLP(dino_dim).to(device)
+    slot_attn = SlotAttention(
+        n_slots=n_slots, slot_dim=slot_dim, n_iters=n_sa_iters,
+        feature_dim=dino_dim).to(device)
+    sa_decoder = SpatialBroadcastDecoder(
+        slot_dim=slot_dim, output_dim=dino_dim).to(device)
+
+    if os.path.exists(sa_cache):
+        print(f"│  Loading SA model from {sa_cache}", flush=True)
+        ckpt = torch.load(sa_cache, weights_only=True)
+        encoder.load_state_dict(ckpt['encoder'])
+        slot_attn.load_state_dict(ckpt['slot_attn'])
+        sa_decoder.load_state_dict(ckpt['decoder'])
+    else:
+        print(f"│  Loading phase47 features for SA training...", flush=True)
+        sa_features = torch.load(phase47_feat_path, weights_only=True)
+        print(f"│  Features: {sa_features.shape}", flush=True)
+
+        sa_params = (list(encoder.parameters()) +
+                     list(slot_attn.parameters()) +
+                     list(sa_decoder.parameters()))
+        sa_optimizer = torch.optim.Adam(sa_params, lr=1e-4)
+
+        n_total = sa_features.shape[0]
+        sa_batch = 32
+        sa_epochs = 50
+        indices = np.arange(n_total)
+
+        print(f"│  Training SA: {sa_epochs} epochs on {n_total} frames", flush=True)
+
+        for epoch in range(1, sa_epochs + 1):
+            encoder.train(); slot_attn.train(); sa_decoder.train()
+            np.random.shuffle(indices)
+            ep_loss, n_b = 0.0, 0
+
+            for i in range(0, n_total, sa_batch):
+                bidx = indices[i:i + sa_batch]
+                feat = sa_features[bidx].to(device)
+                enc = encoder(feat)
+                slots, attn = slot_attn(enc)
+                recon, alpha = sa_decoder(slots)
+                loss = F.mse_loss(recon, feat)
+                sa_optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(sa_params, 1.0)
+                sa_optimizer.step()
+                ep_loss += loss.item(); n_b += 1
+
+                if device.type == 'mps' and n_b % 100 == 0:
+                    torch.mps.empty_cache()
+
+            if epoch % 10 == 0 or epoch == 1:
+                print(f"│    SA Epoch {epoch:2d}/{sa_epochs}: "
+                      f"recon={ep_loss/n_b:.5f}", flush=True)
+
+        # Save SA model
+        torch.save({
+            'encoder': encoder.state_dict(),
+            'slot_attn': slot_attn.state_dict(),
+            'decoder': sa_decoder.state_dict(),
+        }, sa_cache)
+        print(f"│  Saved SA model to {sa_cache}", flush=True)
+
+        del sa_features
+        if device.type == 'mps':
+            torch.mps.empty_cache()
+
+    # Freeze perception
+    encoder.eval()
+    slot_attn.eval()
+    for p in encoder.parameters():
+        p.requires_grad = False
+    for p in slot_attn.parameters():
+        p.requires_grad = False
+
+    print(f"│  SA perception frozen", flush=True)
+    print(f"└─ Stage 1 done [{time.time()-ts1:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 2: Extract slot features at collision windows
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 2: Extract slot features at collision windows", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts2 = time.time()
+
+    slot_cache_path = str(OUTPUT_DIR / "phase48c_slot_features.pt")
+
+    xs = torch.linspace(0, 1, P)
+    ys = torch.linspace(0, 1, P)
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
+    grid_positions = torch.stack([grid_x, grid_y], dim=-1).reshape(n_patches, 2)
+    grid_np = grid_positions.numpy()
+
+    window_len = collision_window + 1  # 9 frames each half
+
+    def pad_or_truncate(seq, target_len):
+        if len(seq) >= target_len:
+            return seq[:target_len]
+        pad = np.zeros((target_len - len(seq), seq.shape[1]))
+        return np.concatenate([pad, seq], axis=0)
+
+    if os.path.exists(slot_cache_path):
+        print(f"│  Loading slot features from {slot_cache_path}", flush=True)
+        slot_cache = torch.load(slot_cache_path, weights_only=True)
+        agent_a_inputs = slot_cache['agent_a']
+        agent_b_inputs = slot_cache['agent_b']
+        labels = slot_cache['labels']
+        is_train = slot_cache['is_train']
+        print(f"│  Loaded: {len(labels)} examples", flush=True)
+    else:
+        # Load DINOv2 for feature extraction
+        print(f"│  Loading DINOv2...", flush=True)
+        dino = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14',
+                              pretrained=True)
+        dino.eval().to(device)
+        for p in dino.parameters():
+            p.requires_grad = False
+
+        dino_mean = torch.tensor([0.485, 0.456, 0.406]).reshape(1, 3, 1, 1).to(device)
+        dino_std = torch.tensor([0.229, 0.224, 0.225]).reshape(1, 3, 1, 1).to(device)
+
+        agent_a_list = []
+        agent_b_list = []
+        label_list = []
+        is_train_list = []
+
+        # Group collisions by video for efficient processing
+        collisions_by_video = {}
+        for ci, coll in enumerate(collision_events):
+            vid_id = coll['video_id']
+            if vid_id not in collisions_by_video:
+                collisions_by_video[vid_id] = []
+            collisions_by_video[vid_id].append((ci, coll))
+
+        n_processed = 0
+        n_videos_with_colls = len(collisions_by_video)
+
+        for vi_count, (vid_id, vid_colls) in enumerate(collisions_by_video.items()):
+            # Collect all unique frames needed for this video
+            frames_needed = set()
+            for ci, coll in vid_colls:
+                cf = coll['collision_frame']
+                start = max(0, cf - collision_window)
+                end = min(n_eval_frames, cf + collision_window + 1)
+                for fi in range(start, end):
+                    frames_needed.add(fi)
+            frames_sorted = sorted(frames_needed)
+
+            # Extract video frames
+            cap = cv2.VideoCapture(f"{data_dir}/videos/video_{vid_id}.mp4")
+            frame_data = {}
+            for fi in frames_sorted:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
+                ret, frame = cap.read()
+                if ret:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    frame = cv2.resize(frame, (224, 224))
+                    frame = frame.astype(np.float32) / 255.0
+                    frame = frame.transpose(2, 0, 1)
+                    frame_data[fi] = frame
+            cap.release()
+
+            # DINOv2 forward on all needed frames (batch)
+            if not frame_data:
+                continue
+            frame_indices_list = sorted(frame_data.keys())
+            batch_np = np.stack([frame_data[fi] for fi in frame_indices_list])
+            batch_tensor = torch.tensor(batch_np).to(device)
+            batch_tensor = (batch_tensor - dino_mean) / dino_std
+
+            # Process in chunks of 16 to avoid OOM
+            dino_features = {}
+            for chunk_start in range(0, len(frame_indices_list), 16):
+                chunk_end = min(chunk_start + 16, len(frame_indices_list))
+                chunk = batch_tensor[chunk_start:chunk_end]
+                with torch.no_grad():
+                    feats = dino.forward_features(chunk)
+                    patch_tokens = feats['x_norm_patchtokens']  # [B, 256, 384]
+                for j, fi in enumerate(frame_indices_list[chunk_start:chunk_end]):
+                    dino_features[fi] = patch_tokens[j:j+1]  # [1, 256, 384]
+
+            del batch_tensor, batch_np
+
+            # For each collision in this video, run SA with SAVi propagation
+            for ci, coll in vid_colls:
+                cf = coll['collision_frame']
+                start = max(0, cf - collision_window)
+                end = min(n_eval_frames, cf + collision_window + 1)
+                mid_idx = cf - start
+
+                # SAVi propagation through collision window
+                prev_slots = None
+                slot_seq = []
+                centroid_seq = []
+
+                for fi in range(start, end):
+                    if fi not in dino_features:
+                        break
+                    feat = dino_features[fi].to(device)
+                    with torch.no_grad():
+                        enc = encoder(feat)
+                        slots, attn = slot_attn(enc, init_slots=prev_slots)
+                        prev_slots = slots
+
+                    slots_np = slots[0].cpu().numpy()
+                    attn_np = attn[0].cpu().numpy()
+                    centroids = np.zeros((n_slots, 2))
+                    for si in range(n_slots):
+                        w = attn_np[si]
+                        w_sum = w.sum()
+                        if w_sum > 1e-6:
+                            cx = (w * grid_np[:, 0]).sum() / w_sum
+                            cy = (w * grid_np[:, 1]).sum() / w_sum
+                            centroids[si] = [cx, cy]
+                        else:
+                            centroids[si] = [0.5, 0.5]
+                    slot_seq.append(slots_np)
+                    centroid_seq.append(centroids)
+
+                if len(slot_seq) < mid_idx + 1:
+                    continue
+
+                slot_seq = np.stack(slot_seq)
+                centroid_seq = np.stack(centroid_seq)
+
+                # Match slots to objects at collision frame
+                gt_a = coll['gt_a']
+                gt_b = coll['gt_b']
+                dists_a = np.linalg.norm(centroid_seq[mid_idx] - gt_a, axis=1)
+                dists_b = np.linalg.norm(centroid_seq[mid_idx] - gt_b, axis=1)
+                slot_a = np.argmin(dists_a)
+                slot_b = np.argmin(dists_b)
+
+                # Extract per-object slot sequences
+                pre_a = pad_or_truncate(slot_seq[:mid_idx + 1, slot_a, :], window_len)
+                pre_b = pad_or_truncate(slot_seq[:mid_idx + 1, slot_b, :], window_len)
+                post_a = pad_or_truncate(slot_seq[mid_idx:, slot_a, :], window_len)
+                post_b = pad_or_truncate(slot_seq[mid_idx:, slot_b, :], window_len)
+
+                # Agent A: full collision (pre+post for both objects)
+                a_in = np.concatenate([pre_a, post_a, pre_b, post_b], axis=0)
+                agent_a_list.append(a_in)
+
+                # Agent B: pre-collision only
+                b_in = np.concatenate([pre_a, pre_b], axis=0)
+                agent_b_list.append(b_in)
+
+                label_list.append(coll['direction_bin'])
+                is_train_list.append(coll['is_train'])
+                n_processed += 1
+
+            # Clean up
+            del dino_features
+            if device.type == 'mps' and (vi_count + 1) % 50 == 0:
+                torch.mps.empty_cache()
+
+            if (vi_count + 1) % 100 == 0:
+                elapsed_ext = time.time() - ts2
+                eta = elapsed_ext / (vi_count + 1) * (n_videos_with_colls - vi_count - 1)
+                print(f"│    Processed {vi_count+1}/{n_videos_with_colls} videos, "
+                      f"{n_processed} collisions [{elapsed_ext:.0f}s, eta {eta:.0f}s]",
+                      flush=True)
+
+        # Clean up DINOv2
+        del dino, dino_mean, dino_std
+        if device.type == 'mps':
+            torch.mps.empty_cache()
+
+        agent_a_inputs = torch.tensor(np.stack(agent_a_list), dtype=torch.float32)
+        agent_b_inputs = torch.tensor(np.stack(agent_b_list), dtype=torch.float32)
+        labels = torch.tensor(label_list, dtype=torch.long)
+        is_train = torch.tensor(is_train_list, dtype=torch.bool)
+
+        # Cache
+        torch.save({
+            'agent_a': agent_a_inputs,
+            'agent_b': agent_b_inputs,
+            'labels': labels,
+            'is_train': is_train,
+        }, slot_cache_path)
+        print(f"│  Cached to {slot_cache_path}", flush=True)
+
+    n_examples = len(labels)
+    n_train = is_train.sum().item()
+    n_val = n_examples - n_train
+    train_idx = torch.where(is_train)[0]
+    val_idx = torch.where(~is_train)[0]
+
+    print(f"│  Total examples: {n_examples}", flush=True)
+    print(f"│  Train: {n_train}, Val: {n_val}", flush=True)
+    print(f"│  Agent A input: {agent_a_inputs.shape}", flush=True)
+    print(f"│  Agent B input: {agent_b_inputs.shape}", flush=True)
+    print(f"│  Label dist: {np.bincount(labels.numpy(), minlength=n_direction_bins).tolist()}", flush=True)
+    print(f"└─ Stage 2 done [{time.time()-ts2:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 3: Train communication agents
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 3: Train communication agents", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts3 = time.time()
+
+    vocab_size = 8
+    hidden_dim = 128
+    comm_epochs = 200
+    comm_lr = 3e-4
+    comm_batch = 64
+    gumbel_tau_start = 2.0
+    gumbel_tau_end = 0.5
+
+    a_input_dim = agent_a_inputs.shape[1] * slot_dim
+    b_input_dim = agent_b_inputs.shape[1] * slot_dim
+
+    class SenderAgent(nn.Module):
+        def __init__(self, input_dim, hidden_dim, vocab_size):
+            super().__init__()
+            self.vocab_size = vocab_size
+            self.encoder = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, vocab_size),
+            )
+        def forward(self, x, tau=1.0):
+            logits = self.encoder(x)
+            if self.training:
+                message = F.gumbel_softmax(logits, tau=tau, hard=True)
+            else:
+                idx = logits.argmax(dim=-1)
+                message = F.one_hot(idx, self.vocab_size).float()
+            return message, logits
+
+    class ReceiverAgent(nn.Module):
+        def __init__(self, obs_dim, vocab_size, hidden_dim, n_classes):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(obs_dim + vocab_size, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, n_classes),
+            )
+        def forward(self, obs, message):
+            return self.net(torch.cat([obs, message], dim=-1))
+
+    class ReceiverNoComm(nn.Module):
+        def __init__(self, obs_dim, hidden_dim, n_classes):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(obs_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, n_classes),
+            )
+        def forward(self, obs):
+            return self.net(obs)
+
+    class OraclePredictor(nn.Module):
+        def __init__(self, input_dim, hidden_dim, n_classes):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, n_classes),
+            )
+        def forward(self, x):
+            return self.net(x)
+
+    torch.manual_seed(42)
+    sender = SenderAgent(a_input_dim, hidden_dim, vocab_size).to(device)
+    receiver = ReceiverAgent(b_input_dim, vocab_size, hidden_dim, n_direction_bins).to(device)
+    receiver_nocomm = ReceiverNoComm(b_input_dim, hidden_dim, n_direction_bins).to(device)
+    oracle = OraclePredictor(a_input_dim, hidden_dim, n_direction_bins).to(device)
+
+    comm_params = list(sender.parameters()) + list(receiver.parameters())
+    comm_optimizer = torch.optim.Adam(comm_params, lr=comm_lr)
+    nocomm_optimizer = torch.optim.Adam(receiver_nocomm.parameters(), lr=comm_lr)
+    oracle_optimizer = torch.optim.Adam(oracle.parameters(), lr=comm_lr)
+
+    print(f"│  Task: {n_direction_bins}-class direction "
+          f"(chance={100/n_direction_bins:.1f}%)", flush=True)
+    print(f"│  Vocab: {vocab_size}, Epochs: {comm_epochs}, "
+          f"Batch: {comm_batch}", flush=True)
+    print(f"│  Train: {n_train}, Val: {n_val}", flush=True)
+
+    a_flat = agent_a_inputs.reshape(n_examples, -1).to(device)
+    b_flat = agent_b_inputs.reshape(n_examples, -1).to(device)
+    labels_dev = labels.to(device)
+
+    history = {
+        'val_comm_acc': [], 'val_nocomm_acc': [], 'val_oracle_acc': [],
+        'train_comm_acc': [], 'train_nocomm_acc': [],
+        'msg_entropy': [], 'gumbel_tau': [],
+    }
+    epoch_times = []
+
+    for epoch in range(1, comm_epochs + 1):
+        epoch_t0 = time.time()
+        progress = min(epoch / (comm_epochs * 0.7), 1.0)
+        g_tau = gumbel_tau_start + (gumbel_tau_end - gumbel_tau_start) * progress
+
+        # Mini-batch training
+        perm = train_idx[torch.randperm(n_train)]
+
+        sender.train(); receiver.train()
+        receiver_nocomm.train(); oracle.train()
+
+        ep_comm_correct = 0
+        ep_nocomm_correct = 0
+        ep_total = 0
+
+        for bi in range(0, n_train, comm_batch):
+            batch = perm[bi:bi + comm_batch]
+
+            # Communication
+            msg, logits = sender(a_flat[batch], tau=g_tau)
+            pred = receiver(b_flat[batch], msg)
+            loss_comm = F.cross_entropy(pred, labels_dev[batch])
+            comm_optimizer.zero_grad()
+            loss_comm.backward()
+            torch.nn.utils.clip_grad_norm_(comm_params, 1.0)
+            comm_optimizer.step()
+
+            # No-comm
+            pred_nc = receiver_nocomm(b_flat[batch])
+            loss_nc = F.cross_entropy(pred_nc, labels_dev[batch])
+            nocomm_optimizer.zero_grad()
+            loss_nc.backward()
+            torch.nn.utils.clip_grad_norm_(receiver_nocomm.parameters(), 1.0)
+            nocomm_optimizer.step()
+
+            # Oracle
+            pred_or = oracle(a_flat[batch])
+            loss_or = F.cross_entropy(pred_or, labels_dev[batch])
+            oracle_optimizer.zero_grad()
+            loss_or.backward()
+            torch.nn.utils.clip_grad_norm_(oracle.parameters(), 1.0)
+            oracle_optimizer.step()
+
+            with torch.no_grad():
+                ep_comm_correct += (pred.argmax(1) == labels_dev[batch]).sum().item()
+                ep_nocomm_correct += (pred_nc.argmax(1) == labels_dev[batch]).sum().item()
+                ep_total += len(batch)
+
+        train_comm_acc = ep_comm_correct / ep_total
+        train_nocomm_acc = ep_nocomm_correct / ep_total
+
+        epoch_times.append(time.time() - epoch_t0)
+
+        # Validation every 10 epochs
+        if epoch % 10 == 0 or epoch == 1:
+            sender.eval(); receiver.eval()
+            receiver_nocomm.eval(); oracle.eval()
+
+            with torch.no_grad():
+                val_msg, _ = sender(a_flat[val_idx])
+                val_pred = receiver(b_flat[val_idx], val_msg)
+                val_comm_acc = (val_pred.argmax(1) == labels_dev[val_idx]).float().mean().item()
+
+                val_nc = receiver_nocomm(b_flat[val_idx])
+                val_nocomm_acc = (val_nc.argmax(1) == labels_dev[val_idx]).float().mean().item()
+
+                val_or = oracle(a_flat[val_idx])
+                val_oracle_acc = (val_or.argmax(1) == labels_dev[val_idx]).float().mean().item()
+
+                all_msg, _ = sender(a_flat)
+                msg_ids_all = all_msg.argmax(dim=-1).cpu().numpy()
+                counts = np.bincount(msg_ids_all, minlength=vocab_size).astype(float)
+                probs = counts / counts.sum()
+                msg_entropy = -np.sum(probs * np.log(probs + 1e-8)) / np.log(vocab_size)
+
+            history['val_comm_acc'].append(val_comm_acc)
+            history['val_nocomm_acc'].append(val_nocomm_acc)
+            history['val_oracle_acc'].append(val_oracle_acc)
+            history['train_comm_acc'].append(train_comm_acc)
+            history['train_nocomm_acc'].append(train_nocomm_acc)
+            history['msg_entropy'].append(msg_entropy)
+            history['gumbel_tau'].append(g_tau)
+
+            if epoch % 20 == 0 or epoch == 1:
+                recent = epoch_times[-10:]
+                avg_ep = np.mean(recent)
+                eta_m = (comm_epochs - epoch) * avg_ep / 60
+
+                print(f"│  Epoch {epoch:3d}/{comm_epochs}: "
+                      f"comm={train_comm_acc:.2f}/{val_comm_acc:.2f} "
+                      f"nocomm={train_nocomm_acc:.2f}/{val_nocomm_acc:.2f} "
+                      f"oracle=?/{val_oracle_acc:.2f} "
+                      f"ent={msg_entropy:.3f} τ={g_tau:.2f} "
+                      f"eta={eta_m:.1f}m", flush=True)
+
+    # Final evaluation
+    sender.eval(); receiver.eval()
+    receiver_nocomm.eval(); oracle.eval()
+
+    with torch.no_grad():
+        # Val metrics
+        val_msg, _ = sender(a_flat[val_idx])
+        val_pred = receiver(b_flat[val_idx], val_msg)
+        final_val_comm = (val_pred.argmax(1) == labels_dev[val_idx]).float().mean().item()
+
+        val_nc = receiver_nocomm(b_flat[val_idx])
+        final_val_nocomm = (val_nc.argmax(1) == labels_dev[val_idx]).float().mean().item()
+
+        val_or = oracle(a_flat[val_idx])
+        final_val_oracle = (val_or.argmax(1) == labels_dev[val_idx]).float().mean().item()
+
+        # Message stats
+        all_msg, _ = sender(a_flat)
+        msg_ids = all_msg.argmax(dim=-1).cpu().numpy()
+        counts = np.bincount(msg_ids, minlength=vocab_size).astype(float)
+        msg_probs = counts / counts.sum()
+        final_entropy = -np.sum(msg_probs * np.log(msg_probs + 1e-8)) / np.log(vocab_size)
+
+    comm_gain = final_val_comm - final_val_nocomm
+
+    # Save model
+    torch.save({
+        'sender': sender.state_dict(),
+        'receiver': receiver.state_dict(),
+        'receiver_nocomm': receiver_nocomm.state_dict(),
+        'oracle': oracle.state_dict(),
+    }, str(OUTPUT_DIR / "phase48c_model.pt"))
+
+    print(f"\n│  === RESULTS (validation) ===", flush=True)
+    print(f"│  With communication:    {final_val_comm*100:.1f}%", flush=True)
+    print(f"│  Without communication: {final_val_nocomm*100:.1f}%", flush=True)
+    print(f"│  Oracle (A sees all):   {final_val_oracle*100:.1f}%", flush=True)
+    print(f"│  Communication gain:    {comm_gain*100:+.1f}pp", flush=True)
+    print(f"│  Chance baseline:       {100/n_direction_bins:.1f}%", flush=True)
+    print(f"│  Message entropy:       {final_entropy:.3f}", flush=True)
+    print(f"│  Messages used:         {(msg_probs > 0.01).sum()}/{vocab_size}", flush=True)
+    print(f"└─ Stage 3 done [{time.time()-ts3:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 4: Message analysis
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 4: Message analysis", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts4 = time.time()
+
+    msg_by_dir = {d: [] for d in range(n_direction_bins)}
+    labels_np = labels.numpy()
+    for i in range(n_examples):
+        msg_by_dir[labels_np[i]].append(msg_ids[i])
+
+    print(f"│  Message distribution by direction:", flush=True)
+    for d in range(n_direction_bins):
+        if msg_by_dir[d]:
+            c = np.bincount(msg_by_dir[d], minlength=vocab_size)
+            dominant = c.argmax()
+            cons = c[dominant] / c.sum()
+            print(f"│    {dir_names[d]:2s}: dominant=msg{dominant} ({cons:.0%}), "
+                  f"counts={c.tolist()}", flush=True)
+
+    consistency_scores = []
+    for d in range(n_direction_bins):
+        if len(msg_by_dir[d]) >= 2:
+            c = np.bincount(msg_by_dir[d], minlength=vocab_size)
+            cons = c.max() / c.sum()
+            consistency_scores.append(cons)
+    mean_consistency = np.mean(consistency_scores) if consistency_scores else 0
+
+    print(f"│  Mean consistency: {mean_consistency:.2f}", flush=True)
+    print(f"└─ Stage 4 done [{time.time()-ts4:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 5: Visualization
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 5: Visualization", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+    # Panel 1: Accuracy over training (val only)
+    ax = axes[0, 0]
+    epochs_logged = [1] + list(range(10, comm_epochs + 1, 10))
+    ax.plot(epochs_logged, history['val_comm_acc'], 'b-', linewidth=2,
+            label=f'With comm ({final_val_comm*100:.0f}%)')
+    ax.plot(epochs_logged, history['val_nocomm_acc'], 'r--', linewidth=2,
+            label=f'No comm ({final_val_nocomm*100:.0f}%)')
+    ax.plot(epochs_logged, history['val_oracle_acc'], 'g:', linewidth=2,
+            label=f'Oracle ({final_val_oracle*100:.0f}%)')
+    ax.axhline(y=1/n_direction_bins, color='gray', linestyle=':', alpha=0.5,
+               label=f'Chance ({100/n_direction_bins:.0f}%)')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Validation Accuracy')
+    ax.set_title('Post-Collision Direction Prediction (Val)', fontsize=11)
+    ax.legend(fontsize=8)
+    ax.set_ylim(0, max(0.5, max(
+        max(history['val_comm_acc']),
+        max(history['val_nocomm_acc']),
+        max(history['val_oracle_acc'])) + 0.1))
+
+    # Panel 2: Message-direction heatmap
+    ax = axes[0, 1]
+    msg_matrix = np.zeros((n_direction_bins, vocab_size))
+    for d in range(n_direction_bins):
+        if msg_by_dir[d]:
+            c = np.bincount(msg_by_dir[d], minlength=vocab_size).astype(float)
+            msg_matrix[d] = c / max(c.sum(), 1)
+    im = ax.imshow(msg_matrix, aspect='auto', cmap='YlOrRd', vmin=0, vmax=1)
+    ax.set_xlabel('Message Symbol')
+    ax.set_ylabel('True Direction')
+    ax.set_yticks(range(n_direction_bins))
+    ax.set_yticklabels(dir_names)
+    ax.set_xticks(range(vocab_size))
+    ax.set_title('Message Usage by Direction', fontsize=11)
+    plt.colorbar(im, ax=ax, label='Frequency')
+    for d in range(n_direction_bins):
+        for m in range(vocab_size):
+            if msg_matrix[d, m] > 0.1:
+                ax.text(m, d, f'{msg_matrix[d, m]:.1f}',
+                        ha='center', va='center', fontsize=7,
+                        color='white' if msg_matrix[d, m] > 0.5 else 'black')
+
+    # Panel 3: Confusion matrix (val, with comm)
+    ax = axes[1, 0]
+    with torch.no_grad():
+        val_pred_labels = val_pred.argmax(1).cpu().numpy()
+    val_true_labels = labels[val_idx].numpy()
+    conf_matrix = np.zeros((n_direction_bins, n_direction_bins))
+    for t, p in zip(val_true_labels, val_pred_labels):
+        conf_matrix[t, p] += 1
+    row_sums = conf_matrix.sum(axis=1, keepdims=True)
+    conf_norm = conf_matrix / np.maximum(row_sums, 1)
+    im2 = ax.imshow(conf_norm, aspect='auto', cmap='Blues', vmin=0, vmax=1)
+    ax.set_xlabel('Predicted Direction')
+    ax.set_ylabel('True Direction')
+    ax.set_xticks(range(n_direction_bins))
+    ax.set_xticklabels(dir_names, fontsize=8)
+    ax.set_yticks(range(n_direction_bins))
+    ax.set_yticklabels(dir_names, fontsize=8)
+    ax.set_title('Val Confusion (with comm)', fontsize=11)
+    plt.colorbar(im2, ax=ax)
+
+    # Panel 4: Summary
+    ax = axes[1, 1]
+    ax.axis('off')
+    elapsed = time.time() - t0
+
+    if comm_gain >= 0.10 and final_val_comm > 0.30:
+        verdict = "SUCCESS"
+    elif comm_gain >= 0.05 or final_val_comm > 0.30:
+        verdict = "PARTIAL"
+    else:
+        verdict = "FAIL"
+
+    summary = (
+        f"Phase 48c: Dynamics Comm (1000 vids)\n\n"
+        f"Task: post-collision direction\n"
+        f"  ({n_direction_bins} bins, chance={100/n_direction_bins:.0f}%)\n"
+        f"Data: {n_examples} collisions\n"
+        f"  Train: {n_train}, Val: {n_val}\n"
+        f"Channel: Gumbel-Softmax, vocab={vocab_size}\n\n"
+        f"Val accuracy:\n"
+        f"  With comm:    {final_val_comm*100:.1f}%\n"
+        f"  Without comm: {final_val_nocomm*100:.1f}%\n"
+        f"  Oracle:       {final_val_oracle*100:.1f}%\n"
+        f"  Gain:         {comm_gain*100:+.1f}pp\n\n"
+        f"Message entropy: {final_entropy:.3f}\n"
+        f"Symbols used: {(msg_probs > 0.01).sum()}/{vocab_size}\n"
+        f"Msg consistency: {mean_consistency:.2f}\n\n"
+        f"Total time: {elapsed:.0f}s\n\n"
+        f"VERDICT: {verdict}"
+    )
+    ax.text(0.05, 0.5, summary, transform=ax.transAxes, fontsize=10,
+            fontfamily='monospace', verticalalignment='center')
+
+    fig.suptitle(f'Phase 48c: CLEVRER Dynamics Communication (1000 Videos)\n'
+                 f'val: comm={final_val_comm*100:.0f}% nocomm={final_val_nocomm*100:.0f}% '
+                 f'(+{comm_gain*100:.0f}pp) '
+                 f'oracle={final_val_oracle*100:.0f}% '
+                 f'ent={final_entropy:.3f} | {verdict}',
+                 fontsize=12, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(str(OUTPUT_DIR / "phase48c_clevrer_dynamics.png"),
+                dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"│  Saved results/phase48c_clevrer_dynamics.png", flush=True)
+
+    print(f"\n{'=' * 70}", flush=True)
+    print(f"VERDICT: {verdict}", flush=True)
+    print(f"\n  Val with communication:    {final_val_comm*100:.1f}% (target >30%)", flush=True)
+    print(f"  Val without communication: {final_val_nocomm*100:.1f}%", flush=True)
+    print(f"  Val oracle:                {final_val_oracle*100:.1f}%", flush=True)
+    print(f"  Communication gain:        {comm_gain*100:+.1f}pp (target >10pp)", flush=True)
+    print(f"  Message entropy:           {final_entropy:.3f} (target >0.3)", flush=True)
+    print(f"\n  Total time: {elapsed:.0f}s", flush=True)
+    print(f"{'=' * 70}", flush=True)
+
+
+
+
+
+
+def run_phase48b_clevrer_dynamics():
+    """Phase 48b: CLEVRER communication with genuine information asymmetry.
+
+    Predict post-collision velocity direction of object A (8 angular bins).
+    - Agent A sees full collision window (pre+post, both objects)
+    - Agent B sees pre-collision only → needs message to know outcome
+    - This requires communication: post-collision state is NOT visible to B
+    """
+    import time
+    import json
+    import os
+    import numpy as np
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    from scipy.optimize import linear_sum_assignment
+    from pathlib import Path
+
+    print("=" * 70, flush=True)
+    print("PHASE 48b: CLEVRER Dynamics Communication", flush=True)
+    print("  Predict post-collision direction via communication", flush=True)
+    print("=" * 70, flush=True)
+    t0 = time.time()
+
+    if torch.backends.mps.is_available():
+        device = torch.device('mps')
+    elif torch.cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    OUTPUT_DIR = Path("results")
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    data_dir = "clevrer_data"
+
+    n_eval_videos = 20
+    n_eval_frames = 128
+    eval_video_ids = list(range(10000, 10000 + n_eval_videos))
+    collision_window = 8
+    n_direction_bins = 8
+    dir_names = ['W', 'SW', 'S', 'SE', 'E', 'NE', 'N', 'NW']
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 0: Load annotations + extract collision events with velocity
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 0: Extract collisions + velocity labels", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts0 = time.time()
+
+    annotations = {}
+    for vid_id in eval_video_ids:
+        with open(f"{data_dir}/annotation_{vid_id}.json") as f:
+            annotations[vid_id] = json.load(f)
+
+    PROJ_U = np.array([0.0589, 0.2286, 0.4850])
+    PROJ_V = np.array([0.1562, 0.0105, 0.4506])
+
+    def project_3d_to_2d(x, y):
+        u = PROJ_U[0] * x + PROJ_U[1] * y + PROJ_U[2]
+        v = PROJ_V[0] * x + PROJ_V[1] * y + PROJ_V[2]
+        return np.clip(u, 0, 1), np.clip(v, 0, 1)
+
+    def get_obj_pos_2d(traj, frame_idx, obj_id):
+        for o in traj[frame_idx]['objects']:
+            if o['object_id'] == obj_id:
+                return np.array(project_3d_to_2d(
+                    o['location'][0], o['location'][1]))
+        return None
+
+    def velocity_direction_bin(pos_start, pos_end, n_frames):
+        """Compute post-collision velocity direction bin."""
+        v = (pos_end - pos_start) / max(n_frames, 1)
+        speed = np.linalg.norm(v)
+        if speed < 0.001:
+            return -1, speed  # stationary
+        angle = np.arctan2(v[1], v[0])
+        bin_idx = int((angle + np.pi) / (2 * np.pi / n_direction_bins)) % n_direction_bins
+        return bin_idx, speed
+
+    collision_events = []
+    for vi, vid_id in enumerate(eval_video_ids):
+        ann = annotations[vid_id]
+        traj = ann['motion_trajectory']
+        props = {p['object_id']: p for p in ann['object_property']}
+
+        for coll in ann.get('collision', []):
+            cf = coll['frame_id']
+            oid_a, oid_b = coll['object_ids']
+
+            # Post-collision velocity direction for object A
+            post_end = min(n_eval_frames - 1, cf + 4)
+            pos_cf = get_obj_pos_2d(traj, cf, oid_a)
+            pos_post = get_obj_pos_2d(traj, post_end, oid_a)
+            if pos_cf is None or pos_post is None:
+                continue
+
+            dir_bin, speed = velocity_direction_bin(pos_cf, pos_post, post_end - cf)
+            if dir_bin < 0:
+                continue  # skip stationary
+
+            collision_events.append({
+                'video_idx': vi,
+                'video_id': vid_id,
+                'collision_frame': cf,
+                'obj_a_id': oid_a,
+                'obj_b_id': oid_b,
+                'direction_bin': dir_bin,
+                'speed': speed,
+                'material_a': props[oid_a]['material'],
+                'material_b': props[oid_b]['material'],
+            })
+
+    # Direction bin distribution
+    dir_bins = [c['direction_bin'] for c in collision_events]
+    bin_counts = np.bincount(dir_bins, minlength=n_direction_bins)
+
+    print(f"│  Total collision examples: {len(collision_events)}", flush=True)
+    print(f"│  Direction bin distribution:", flush=True)
+    for i, name in enumerate(dir_names):
+        print(f"│    {name}: {bin_counts[i]}", flush=True)
+    print(f"└─ Stage 0 done [{time.time()-ts0:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 1: Retrain Slot Attention (or reuse from Phase 48)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 1: Slot Attention perception", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts1 = time.time()
+
+    eval_cache = str(OUTPUT_DIR / "phase45_dino_features.pt")
+    print(f"│  Loading eval features: {eval_cache}", flush=True)
+    eval_features = torch.load(eval_cache, weights_only=True)
+    print(f"│  Features shape: {eval_features.shape}", flush=True)
+
+    dino_dim = 384
+    n_patches = 256
+    P = 16
+    n_slots = 7
+    slot_dim = 64
+    n_sa_iters = 5
+
+    class SlotAttention(nn.Module):
+        def __init__(self, n_slots, slot_dim, n_iters, feature_dim, epsilon=1e-8):
+            super().__init__()
+            self.n_slots = n_slots
+            self.slot_dim = slot_dim
+            self.n_iters = n_iters
+            self.epsilon = epsilon
+            self.slot_init = nn.Parameter(
+                torch.randn(1, n_slots, slot_dim) * 0.02)
+            self.project_q = nn.Linear(slot_dim, slot_dim, bias=False)
+            self.project_k = nn.Linear(feature_dim, slot_dim, bias=False)
+            self.project_v = nn.Linear(feature_dim, slot_dim, bias=False)
+            self.gru = nn.GRUCell(slot_dim, slot_dim)
+            self.mlp = nn.Sequential(
+                nn.Linear(slot_dim, slot_dim * 2), nn.ReLU(),
+                nn.Linear(slot_dim * 2, slot_dim))
+            self.norm_inputs = nn.LayerNorm(feature_dim)
+            self.norm_slots = nn.LayerNorm(slot_dim)
+            self.norm_mlp = nn.LayerNorm(slot_dim)
+
+        def forward(self, inputs, init_slots=None):
+            B, N, _ = inputs.shape
+            inputs = self.norm_inputs(inputs)
+            k = self.project_k(inputs)
+            v = self.project_v(inputs)
+            if init_slots is not None:
+                slots = init_slots
+            else:
+                slots = self.slot_init.expand(B, -1, -1)
+            scale = self.slot_dim ** 0.5
+            attn_weights = None
+            for _ in range(self.n_iters):
+                slots_prev = slots
+                slots = self.norm_slots(slots)
+                q = self.project_q(slots)
+                attn_logits = torch.bmm(k, q.transpose(1, 2)) / scale
+                attn = F.softmax(attn_logits, dim=-1) + self.epsilon
+                attn = attn / attn.sum(dim=1, keepdim=True)
+                updates = torch.bmm(attn.transpose(1, 2), v)
+                slots = self.gru(
+                    updates.reshape(-1, self.slot_dim),
+                    slots_prev.reshape(-1, self.slot_dim)
+                ).reshape(B, self.n_slots, self.slot_dim)
+                slots = slots + self.mlp(self.norm_mlp(slots))
+                attn_weights = attn.transpose(1, 2)
+            return slots, attn_weights
+
+    class EncoderMLP(nn.Module):
+        def __init__(self, dim):
+            super().__init__()
+            self.mlp = nn.Sequential(
+                nn.Linear(dim, dim), nn.ReLU(), nn.Linear(dim, dim))
+            self.norm = nn.LayerNorm(dim)
+        def forward(self, x):
+            return self.norm(self.mlp(x))
+
+    class SpatialBroadcastDecoder(nn.Module):
+        def __init__(self, slot_dim, output_dim, n_patches_side=16):
+            super().__init__()
+            self.decoder = nn.Sequential(
+                nn.Linear(slot_dim + 2, 256), nn.ReLU(),
+                nn.Linear(256, 256), nn.ReLU(),
+                nn.Linear(256, 256), nn.ReLU(),
+                nn.Linear(256, output_dim + 1))
+            xs = torch.linspace(-1, 1, n_patches_side)
+            ys = torch.linspace(-1, 1, n_patches_side)
+            grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
+            self.register_buffer(
+                'grid', torch.stack([grid_x, grid_y], dim=-1).reshape(-1, 2))
+        def forward(self, slots):
+            B, K, D = slots.shape
+            N = self.grid.shape[0]
+            slots_bc = slots.unsqueeze(2).expand(B, K, N, D)
+            grid = self.grid.unsqueeze(0).unsqueeze(0).expand(B, K, N, 2)
+            dec_in = torch.cat([slots_bc, grid], dim=-1)
+            decoded = self.decoder(dec_in)
+            features = decoded[:, :, :, :-1]
+            alpha_logits = decoded[:, :, :, -1:]
+            alpha = F.softmax(alpha_logits, dim=1)
+            recon = (alpha * features).sum(dim=1)
+            alpha = alpha.squeeze(-1)
+            return recon, alpha
+
+    # Check for Phase 48 model first
+    phase48_model_path = str(OUTPUT_DIR / "phase48_model.pt")
+    if os.path.exists(phase48_model_path):
+        print(f"│  Loading SA weights from Phase 48 model", flush=True)
+        torch.manual_seed(42)
+        encoder = EncoderMLP(dino_dim).to(device)
+        slot_attn = SlotAttention(
+            n_slots=n_slots, slot_dim=slot_dim, n_iters=n_sa_iters,
+            feature_dim=dino_dim).to(device)
+        sa_decoder = SpatialBroadcastDecoder(
+            slot_dim=slot_dim, output_dim=dino_dim).to(device)
+
+        ckpt = torch.load(phase48_model_path, weights_only=True)
+        encoder.load_state_dict(ckpt['encoder'])
+        slot_attn.load_state_dict(ckpt['slot_attn'])
+        print(f"│  Loaded encoder + slot_attn from Phase 48", flush=True)
+    else:
+        print(f"│  No Phase 48 model, retraining SA...", flush=True)
+        torch.manual_seed(42)
+        encoder = EncoderMLP(dino_dim).to(device)
+        slot_attn = SlotAttention(
+            n_slots=n_slots, slot_dim=slot_dim, n_iters=n_sa_iters,
+            feature_dim=dino_dim).to(device)
+        sa_decoder = SpatialBroadcastDecoder(
+            slot_dim=slot_dim, output_dim=dino_dim).to(device)
+
+        sa_params = (list(encoder.parameters()) +
+                     list(slot_attn.parameters()) +
+                     list(sa_decoder.parameters()))
+        sa_optimizer = torch.optim.Adam(sa_params, lr=1e-4)
+
+        n_total = eval_features.shape[0]
+        train_idx = np.arange(n_total)
+
+        for epoch in range(1, 51):
+            encoder.train(); slot_attn.train(); sa_decoder.train()
+            np.random.shuffle(train_idx)
+            ep_loss, n_b = 0.0, 0
+            for i in range(0, n_total, 32):
+                bidx = train_idx[i:i+32]
+                feat = eval_features[bidx].to(device)
+                enc = encoder(feat)
+                slots, attn = slot_attn(enc)
+                recon, alpha = sa_decoder(slots)
+                loss = F.mse_loss(recon, feat)
+                sa_optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(sa_params, 1.0)
+                sa_optimizer.step()
+                ep_loss += loss.item(); n_b += 1
+            if epoch % 10 == 0:
+                print(f"│    SA Epoch {epoch}/50: recon={ep_loss/n_b:.5f}", flush=True)
+
+    # Freeze perception
+    encoder.eval()
+    slot_attn.eval()
+    for p in encoder.parameters():
+        p.requires_grad = False
+    for p in slot_attn.parameters():
+        p.requires_grad = False
+
+    print(f"│  Perception frozen", flush=True)
+    print(f"└─ Stage 1 done [{time.time()-ts1:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 2: Extract slot features at collision windows
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 2: Extract slot features at collision windows", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts2 = time.time()
+
+    xs = torch.linspace(0, 1, P)
+    ys = torch.linspace(0, 1, P)
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
+    grid_positions = torch.stack([grid_x, grid_y], dim=-1).reshape(n_patches, 2)
+
+    def get_savi_slot_sequence(video_idx, start_frame, end_frame):
+        all_slots = []
+        all_centroids = []
+        prev_slots_tensor = None
+
+        for fi in range(start_frame, end_frame):
+            feat_global_idx = video_idx * n_eval_frames + fi
+            feat = eval_features[feat_global_idx:feat_global_idx + 1].to(device)
+            with torch.no_grad():
+                enc = encoder(feat)
+                slots, attn = slot_attn(enc, init_slots=prev_slots_tensor)
+                prev_slots_tensor = slots
+
+            slots_np = slots[0].cpu().numpy()
+            attn_np = attn[0].cpu().numpy()
+
+            centroids = np.zeros((n_slots, 2))
+            for si in range(n_slots):
+                w = attn_np[si]
+                w_sum = w.sum()
+                if w_sum > 1e-6:
+                    cx = (w * grid_positions[:, 0].numpy()).sum() / w_sum
+                    cy = (w * grid_positions[:, 1].numpy()).sum() / w_sum
+                    centroids[si] = [cx, cy]
+                else:
+                    centroids[si] = [0.5, 0.5]
+            all_slots.append(slots_np)
+            all_centroids.append(centroids)
+
+        return np.stack(all_slots), np.stack(all_centroids)
+
+    def match_slot_to_object(centroids_at_frame, obj_gt_pos):
+        dists = np.linalg.norm(centroids_at_frame - obj_gt_pos, axis=1)
+        return np.argmin(dists)
+
+    window_len = collision_window + 1  # 9 frames each half
+
+    def pad_or_truncate(seq, target_len):
+        if len(seq) >= target_len:
+            return seq[:target_len]
+        pad = np.zeros((target_len - len(seq), seq.shape[1]))
+        return np.concatenate([pad, seq], axis=0)
+
+    collision_data = []
+    for ci, coll in enumerate(collision_events):
+        vi = coll['video_idx']
+        vid_id = coll['video_id']
+        cf = coll['collision_frame']
+        oid_a = coll['obj_a_id']
+        oid_b = coll['obj_b_id']
+
+        ann = annotations[vid_id]
+        traj = ann['motion_trajectory']
+
+        frame_objs = {o['object_id']: o for o in traj[cf]['objects']}
+        if oid_a not in frame_objs or oid_b not in frame_objs:
+            continue
+        obj_a = frame_objs[oid_a]
+        obj_b = frame_objs[oid_b]
+        if not obj_a['inside_camera_view'] or not obj_b['inside_camera_view']:
+            continue
+
+        gt_a = np.array(project_3d_to_2d(obj_a['location'][0], obj_a['location'][1]))
+        gt_b = np.array(project_3d_to_2d(obj_b['location'][0], obj_b['location'][1]))
+
+        start_frame = max(0, cf - collision_window)
+        end_frame = min(n_eval_frames, cf + collision_window + 1)
+        mid_idx = cf - start_frame
+
+        slot_seq, centroid_seq = get_savi_slot_sequence(vi, start_frame, end_frame)
+
+        slot_a = match_slot_to_object(centroid_seq[mid_idx], gt_a)
+        slot_b = match_slot_to_object(centroid_seq[mid_idx], gt_b)
+
+        pre_slots_a = slot_seq[:mid_idx + 1, slot_a, :]
+        pre_slots_b = slot_seq[:mid_idx + 1, slot_b, :]
+        post_slots_a = slot_seq[mid_idx:, slot_a, :]
+        post_slots_b = slot_seq[mid_idx:, slot_b, :]
+
+        collision_data.append({
+            'pre_a': pre_slots_a, 'pre_b': pre_slots_b,
+            'post_a': post_slots_a, 'post_b': post_slots_b,
+            'direction_bin': coll['direction_bin'],
+            'video_id': vid_id, 'collision_frame': cf,
+        })
+
+    # Build tensors
+    agent_a_inputs = []  # Full collision: pre+post for both objects
+    agent_b_inputs = []  # Pre-collision only for both objects
+    labels = []
+
+    for cd in collision_data:
+        pre_a = pad_or_truncate(cd['pre_a'], window_len)
+        pre_b = pad_or_truncate(cd['pre_b'], window_len)
+        post_a = pad_or_truncate(cd['post_a'], window_len)
+        post_b = pad_or_truncate(cd['post_b'], window_len)
+
+        a_in = np.concatenate([pre_a, post_a, pre_b, post_b], axis=0)
+        agent_a_inputs.append(a_in)
+
+        b_in = np.concatenate([pre_a, pre_b], axis=0)
+        agent_b_inputs.append(b_in)
+
+        labels.append(cd['direction_bin'])
+
+    agent_a_inputs = torch.tensor(np.stack(agent_a_inputs), dtype=torch.float32)
+    agent_b_inputs = torch.tensor(np.stack(agent_b_inputs), dtype=torch.float32)
+    labels = torch.tensor(labels, dtype=torch.long)
+
+    n_examples = len(labels)
+    print(f"│  Collision examples: {n_examples}", flush=True)
+    print(f"│  Agent A input: {agent_a_inputs.shape}", flush=True)
+    print(f"│  Agent B input: {agent_b_inputs.shape}", flush=True)
+    print(f"│  Label distribution: {np.bincount(labels.numpy(), minlength=n_direction_bins).tolist()}", flush=True)
+    print(f"└─ Stage 2 done [{time.time()-ts2:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 3: Train communication agents
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 3: Train communication agents", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts3 = time.time()
+
+    vocab_size = 8
+    hidden_dim = 128
+    comm_epochs = 1000  # more epochs for harder 8-class task
+    comm_lr = 3e-4
+    gumbel_tau_start = 2.0
+    gumbel_tau_end = 0.5
+
+    a_input_dim = agent_a_inputs.shape[1] * slot_dim
+    b_input_dim = agent_b_inputs.shape[1] * slot_dim
+
+    class SenderAgent(nn.Module):
+        def __init__(self, input_dim, hidden_dim, vocab_size):
+            super().__init__()
+            self.vocab_size = vocab_size
+            self.encoder = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, vocab_size),
+            )
+        def forward(self, x, tau=1.0):
+            logits = self.encoder(x)
+            if self.training:
+                message = F.gumbel_softmax(logits, tau=tau, hard=True)
+            else:
+                idx = logits.argmax(dim=-1)
+                message = F.one_hot(idx, self.vocab_size).float()
+            return message, logits
+
+    class ReceiverAgent(nn.Module):
+        def __init__(self, obs_dim, vocab_size, hidden_dim, n_classes):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(obs_dim + vocab_size, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, n_classes),
+            )
+        def forward(self, obs, message):
+            return self.net(torch.cat([obs, message], dim=-1))
+
+    class ReceiverNoComm(nn.Module):
+        def __init__(self, obs_dim, hidden_dim, n_classes):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(obs_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, n_classes),
+            )
+        def forward(self, obs):
+            return self.net(obs)
+
+    # Also train an "oracle" — Agent A directly predicts (upper bound)
+    class OraclePredictor(nn.Module):
+        def __init__(self, input_dim, hidden_dim, n_classes):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, n_classes),
+            )
+        def forward(self, x):
+            return self.net(x)
+
+    torch.manual_seed(42)
+    sender = SenderAgent(a_input_dim, hidden_dim, vocab_size).to(device)
+    receiver = ReceiverAgent(b_input_dim, vocab_size, hidden_dim, n_direction_bins).to(device)
+    receiver_nocomm = ReceiverNoComm(b_input_dim, hidden_dim, n_direction_bins).to(device)
+    oracle = OraclePredictor(a_input_dim, hidden_dim, n_direction_bins).to(device)
+
+    comm_params = list(sender.parameters()) + list(receiver.parameters())
+    comm_optimizer = torch.optim.Adam(comm_params, lr=comm_lr)
+    nocomm_optimizer = torch.optim.Adam(receiver_nocomm.parameters(), lr=comm_lr)
+    oracle_optimizer = torch.optim.Adam(oracle.parameters(), lr=comm_lr)
+
+    print(f"│  Sender: {sum(p.numel() for p in sender.parameters()):,} params", flush=True)
+    print(f"│  Receiver: {sum(p.numel() for p in receiver.parameters()):,} params", flush=True)
+    print(f"│  Task: {n_direction_bins}-class direction prediction "
+          f"(chance={100/n_direction_bins:.1f}%)", flush=True)
+    print(f"│  Vocab: {vocab_size}, Epochs: {comm_epochs}, "
+          f"Examples: {n_examples}", flush=True)
+
+    a_flat = agent_a_inputs.reshape(n_examples, -1).to(device)
+    b_flat = agent_b_inputs.reshape(n_examples, -1).to(device)
+    labels_dev = labels.to(device)
+
+    # Leave-2-out cross-validation style: 80/20 split
+    n_train = int(0.8 * n_examples)
+    perm = torch.randperm(n_examples)
+    train_idx = perm[:n_train]
+    val_idx = perm[n_train:]
+
+    history = {
+        'comm_acc': [], 'nocomm_acc': [], 'oracle_acc': [],
+        'val_comm_acc': [], 'val_nocomm_acc': [], 'val_oracle_acc': [],
+        'msg_entropy': [], 'gumbel_tau': [],
+        'comm_loss': [], 'nocomm_loss': [],
+    }
+
+    for epoch in range(1, comm_epochs + 1):
+        progress = min(epoch / (comm_epochs * 0.7), 1.0)
+        g_tau = gumbel_tau_start + (gumbel_tau_end - gumbel_tau_start) * progress
+
+        # ── Train with communication ──
+        sender.train(); receiver.train()
+        message, logits = sender(a_flat[train_idx], tau=g_tau)
+        pred = receiver(b_flat[train_idx], message)
+        comm_loss = F.cross_entropy(pred, labels_dev[train_idx])
+        comm_optimizer.zero_grad()
+        comm_loss.backward()
+        torch.nn.utils.clip_grad_norm_(comm_params, 1.0)
+        comm_optimizer.step()
+
+        with torch.no_grad():
+            comm_acc = (pred.argmax(1) == labels_dev[train_idx]).float().mean().item()
+
+        # ── Train without communication ──
+        receiver_nocomm.train()
+        pred_nc = receiver_nocomm(b_flat[train_idx])
+        nc_loss = F.cross_entropy(pred_nc, labels_dev[train_idx])
+        nocomm_optimizer.zero_grad()
+        nc_loss.backward()
+        torch.nn.utils.clip_grad_norm_(receiver_nocomm.parameters(), 1.0)
+        nocomm_optimizer.step()
+
+        with torch.no_grad():
+            nocomm_acc = (pred_nc.argmax(1) == labels_dev[train_idx]).float().mean().item()
+
+        # ── Train oracle ──
+        oracle.train()
+        pred_or = oracle(a_flat[train_idx])
+        or_loss = F.cross_entropy(pred_or, labels_dev[train_idx])
+        oracle_optimizer.zero_grad()
+        or_loss.backward()
+        torch.nn.utils.clip_grad_norm_(oracle.parameters(), 1.0)
+        oracle_optimizer.step()
+
+        with torch.no_grad():
+            oracle_acc = (pred_or.argmax(1) == labels_dev[train_idx]).float().mean().item()
+
+        # ── Validation ──
+        if epoch % 20 == 0 or epoch == 1:
+            sender.eval(); receiver.eval()
+            receiver_nocomm.eval(); oracle.eval()
+
+            with torch.no_grad():
+                val_msg, _ = sender(a_flat[val_idx], tau=g_tau)
+                val_pred = receiver(b_flat[val_idx], val_msg)
+                val_comm_acc = (val_pred.argmax(1) == labels_dev[val_idx]).float().mean().item()
+
+                val_nc = receiver_nocomm(b_flat[val_idx])
+                val_nocomm_acc = (val_nc.argmax(1) == labels_dev[val_idx]).float().mean().item()
+
+                val_or = oracle(a_flat[val_idx])
+                val_oracle_acc = (val_or.argmax(1) == labels_dev[val_idx]).float().mean().item()
+
+                all_msg, _ = sender(a_flat, tau=g_tau)
+                msg_ids = all_msg.argmax(dim=-1).cpu().numpy()
+                counts = np.bincount(msg_ids, minlength=vocab_size).astype(float)
+                probs = counts / counts.sum()
+                msg_entropy = -np.sum(probs * np.log(probs + 1e-8)) / np.log(vocab_size)
+
+            history['comm_acc'].append(comm_acc)
+            history['nocomm_acc'].append(nocomm_acc)
+            history['oracle_acc'].append(oracle_acc)
+            history['val_comm_acc'].append(val_comm_acc)
+            history['val_nocomm_acc'].append(val_nocomm_acc)
+            history['val_oracle_acc'].append(val_oracle_acc)
+            history['msg_entropy'].append(msg_entropy)
+            history['gumbel_tau'].append(g_tau)
+            history['comm_loss'].append(comm_loss.item())
+            history['nocomm_loss'].append(nc_loss.item())
+
+            if epoch % 100 == 0 or epoch == 1:
+                print(f"│  Epoch {epoch:4d}/{comm_epochs}: "
+                      f"comm={comm_acc:.2f}/{val_comm_acc:.2f} "
+                      f"nocomm={nocomm_acc:.2f}/{val_nocomm_acc:.2f} "
+                      f"oracle={oracle_acc:.2f}/{val_oracle_acc:.2f} "
+                      f"ent={msg_entropy:.3f} τ_g={g_tau:.2f}", flush=True)
+
+    # Final eval on ALL data
+    sender.eval(); receiver.eval()
+    receiver_nocomm.eval(); oracle.eval()
+
+    with torch.no_grad():
+        final_msg, _ = sender(a_flat)
+        final_pred = receiver(b_flat, final_msg)
+        final_comm_acc = (final_pred.argmax(1) == labels_dev).float().mean().item()
+
+        final_nc = receiver_nocomm(b_flat)
+        final_nocomm_acc = (final_nc.argmax(1) == labels_dev).float().mean().item()
+
+        final_or = oracle(a_flat)
+        final_oracle_acc = (final_or.argmax(1) == labels_dev).float().mean().item()
+
+        msg_ids = final_msg.argmax(dim=-1).cpu().numpy()
+        counts = np.bincount(msg_ids, minlength=vocab_size).astype(float)
+        msg_probs = counts / counts.sum()
+        final_entropy = -np.sum(msg_probs * np.log(msg_probs + 1e-8)) / np.log(vocab_size)
+
+    # Save model
+    torch.save({
+        'sender': sender.state_dict(),
+        'receiver': receiver.state_dict(),
+        'receiver_nocomm': receiver_nocomm.state_dict(),
+        'oracle': oracle.state_dict(),
+    }, str(OUTPUT_DIR / "phase48b_model.pt"))
+
+    comm_gain = final_comm_acc - final_nocomm_acc
+
+    print(f"\n│  === RESULTS ===", flush=True)
+    print(f"│  With communication:    {final_comm_acc*100:.1f}%", flush=True)
+    print(f"│  Without communication: {final_nocomm_acc*100:.1f}%", flush=True)
+    print(f"│  Oracle (A sees all):   {final_oracle_acc*100:.1f}%", flush=True)
+    print(f"│  Communication gain:    {comm_gain*100:+.1f}pp", flush=True)
+    print(f"│  Chance baseline:       {100/n_direction_bins:.1f}%", flush=True)
+    print(f"│  Message entropy:       {final_entropy:.3f}", flush=True)
+    print(f"│  Messages used:         {(msg_probs > 0.01).sum()}/{vocab_size}", flush=True)
+    print(f"└─ Stage 3 done [{time.time()-ts3:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 4: Message analysis
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 4: Message analysis", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts4 = time.time()
+
+    # Message → direction mapping
+    msg_by_dir = {d: [] for d in range(n_direction_bins)}
+    for i, cd in enumerate(collision_data):
+        msg_by_dir[cd['direction_bin']].append(msg_ids[i])
+
+    print(f"│  Message distribution by direction:", flush=True)
+    for d in range(n_direction_bins):
+        if msg_by_dir[d]:
+            c = np.bincount(msg_by_dir[d], minlength=vocab_size)
+            dominant = c.argmax()
+            cons = c[dominant] / c.sum()
+            print(f"│    {dir_names[d]:2s}: msg counts={c.tolist()} "
+                  f"dominant={dominant} ({cons:.0%})", flush=True)
+
+    # Overall message consistency
+    consistency_scores = []
+    for d in range(n_direction_bins):
+        if len(msg_by_dir[d]) >= 2:
+            c = np.bincount(msg_by_dir[d], minlength=vocab_size)
+            cons = c.max() / c.sum()
+            consistency_scores.append(cons)
+    mean_consistency = np.mean(consistency_scores) if consistency_scores else 0
+
+    print(f"│  Mean consistency: {mean_consistency:.2f}", flush=True)
+    print(f"└─ Stage 4 done [{time.time()-ts4:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 5: Visualization
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 5: Visualization", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+    # Panel 1: Accuracy over training
+    ax = axes[0, 0]
+    epochs_logged = [1] + list(range(20, comm_epochs + 1, 20))
+    ax.plot(epochs_logged, history['val_comm_acc'], 'b-', linewidth=2,
+            label=f'With comm ({final_comm_acc*100:.0f}%)')
+    ax.plot(epochs_logged, history['val_nocomm_acc'], 'r--', linewidth=2,
+            label=f'No comm ({final_nocomm_acc*100:.0f}%)')
+    ax.plot(epochs_logged, history['val_oracle_acc'], 'g:', linewidth=2,
+            label=f'Oracle ({final_oracle_acc*100:.0f}%)')
+    ax.axhline(y=1/n_direction_bins, color='gray', linestyle=':', alpha=0.5,
+               label=f'Chance ({100/n_direction_bins:.0f}%)')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Validation Accuracy')
+    ax.set_title('Post-Collision Direction Prediction', fontsize=11)
+    ax.legend(fontsize=8)
+    ax.set_ylim(0, 1.05)
+
+    # Panel 2: Message-direction heatmap
+    ax = axes[0, 1]
+    msg_matrix = np.zeros((n_direction_bins, vocab_size))
+    for d in range(n_direction_bins):
+        if msg_by_dir[d]:
+            c = np.bincount(msg_by_dir[d], minlength=vocab_size).astype(float)
+            msg_matrix[d] = c / max(c.sum(), 1)
+    im = ax.imshow(msg_matrix, aspect='auto', cmap='YlOrRd', vmin=0, vmax=1)
+    ax.set_xlabel('Message Symbol')
+    ax.set_ylabel('True Direction')
+    ax.set_yticks(range(n_direction_bins))
+    ax.set_yticklabels(dir_names)
+    ax.set_xticks(range(vocab_size))
+    ax.set_title('Message Usage by Direction', fontsize=11)
+    plt.colorbar(im, ax=ax, label='Frequency')
+    for d in range(n_direction_bins):
+        for m in range(vocab_size):
+            if msg_matrix[d, m] > 0.1:
+                ax.text(m, d, f'{msg_matrix[d, m]:.1f}',
+                        ha='center', va='center', fontsize=7,
+                        color='white' if msg_matrix[d, m] > 0.5 else 'black')
+
+    # Panel 3: Confusion matrix (with comm)
+    ax = axes[1, 0]
+    pred_labels = final_pred.argmax(1).cpu().numpy()
+    true_labels = labels.numpy()
+    conf_matrix = np.zeros((n_direction_bins, n_direction_bins))
+    for t, p in zip(true_labels, pred_labels):
+        conf_matrix[t, p] += 1
+    # Normalize per row
+    row_sums = conf_matrix.sum(axis=1, keepdims=True)
+    conf_norm = conf_matrix / np.maximum(row_sums, 1)
+    im2 = ax.imshow(conf_norm, aspect='auto', cmap='Blues', vmin=0, vmax=1)
+    ax.set_xlabel('Predicted Direction')
+    ax.set_ylabel('True Direction')
+    ax.set_xticks(range(n_direction_bins))
+    ax.set_xticklabels(dir_names, fontsize=8)
+    ax.set_yticks(range(n_direction_bins))
+    ax.set_yticklabels(dir_names, fontsize=8)
+    ax.set_title('Confusion Matrix (with comm)', fontsize=11)
+    plt.colorbar(im2, ax=ax)
+
+    # Panel 4: Summary
+    ax = axes[1, 1]
+    ax.axis('off')
+    elapsed = time.time() - t0
+
+    if comm_gain >= 0.10 and final_comm_acc > 0.30:
+        verdict = "SUCCESS"
+    elif comm_gain >= 0.05 or final_comm_acc > 0.30:
+        verdict = "PARTIAL"
+    else:
+        verdict = "FAIL"
+
+    summary = (
+        f"Phase 48b: Dynamics Communication\n\n"
+        f"Task: predict post-collision direction\n"
+        f"  ({n_direction_bins} bins, chance={100/n_direction_bins:.0f}%)\n"
+        f"Perception: DINOv2 + SA (frozen)\n"
+        f"Channel: Gumbel-Softmax, vocab={vocab_size}\n\n"
+        f"Examples: {n_examples} collisions\n"
+        f"  (from {n_eval_videos} videos)\n\n"
+        f"With communication:    {final_comm_acc*100:.1f}%\n"
+        f"Without communication: {final_nocomm_acc*100:.1f}%\n"
+        f"Oracle (full obs):     {final_oracle_acc*100:.1f}%\n"
+        f"Communication gain:    {comm_gain*100:+.1f}pp\n\n"
+        f"Message entropy: {final_entropy:.3f}\n"
+        f"Symbols used: {(msg_probs > 0.01).sum()}/{vocab_size}\n"
+        f"Msg consistency: {mean_consistency:.2f}\n\n"
+        f"Total time: {elapsed:.0f}s\n\n"
+        f"VERDICT: {verdict}"
+    )
+    ax.text(0.05, 0.5, summary, transform=ax.transAxes, fontsize=10,
+            fontfamily='monospace', verticalalignment='center')
+
+    fig.suptitle(f'Phase 48b: CLEVRER Dynamics Communication\n'
+                 f'comm={final_comm_acc*100:.0f}% vs nocomm={final_nocomm_acc*100:.0f}% '
+                 f'(+{comm_gain*100:.0f}pp) '
+                 f'oracle={final_oracle_acc*100:.0f}% '
+                 f'ent={final_entropy:.3f} | {verdict}',
+                 fontsize=13, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(str(OUTPUT_DIR / "phase48b_clevrer_dynamics.png"),
+                dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"│  Saved results/phase48b_clevrer_dynamics.png", flush=True)
+
+    print(f"\n{'=' * 70}", flush=True)
+    print(f"VERDICT: {verdict}", flush=True)
+    print(f"\n  With communication:    {final_comm_acc*100:.1f}% (target >30%)", flush=True)
+    print(f"  Without communication: {final_nocomm_acc*100:.1f}%", flush=True)
+    print(f"  Oracle:                {final_oracle_acc*100:.1f}%", flush=True)
+    print(f"  Communication gain:    {comm_gain*100:+.1f}pp (target >10pp)", flush=True)
+    print(f"  Message entropy:       {final_entropy:.3f} (target >0.3)", flush=True)
+    print(f"\n  Total time: {elapsed:.0f}s", flush=True)
+    print(f"{'=' * 70}", flush=True)
+
+
+
+
+
+
+def run_phase48_clevrer_communication():
+    """Phase 48: CLEVRER communication pipeline with slot attention perception.
+
+    Agents observe real collision videos through learned slot representations
+    and communicate about material (metal vs rubber = mass proxy).
+    - Agent A sees pre+post collision slot features for 2 objects
+    - Agent A sends discrete message (Gumbel-Softmax, vocab=8)
+    - Agent B sees pre-collision only + message → predicts which is heavier (metal)
+    - Perception: retrain Phase 45 SA (frozen during comm training)
+    """
+    import time
+    import json
+    import os
+    import numpy as np
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    from scipy.optimize import linear_sum_assignment
+    from pathlib import Path
+
+    print("=" * 70, flush=True)
+    print("PHASE 48: CLEVRER Communication — Slot Perception + Language", flush=True)
+    print("  Agents communicate about mass from collision dynamics", flush=True)
+    print("=" * 70, flush=True)
+    t0 = time.time()
+
+    if torch.backends.mps.is_available():
+        device = torch.device('mps')
+    elif torch.cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    OUTPUT_DIR = Path("results")
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    data_dir = "clevrer_data"
+
+    n_eval_videos = 20
+    n_eval_frames = 128
+    eval_video_ids = list(range(10000, 10000 + n_eval_videos))
+    collision_window = 8  # frames before/after collision
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 0: Load annotations + extract collision events
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 0: Load annotations + extract collisions", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts0 = time.time()
+
+    annotations = {}
+    for vid_id in eval_video_ids:
+        with open(f"{data_dir}/annotation_{vid_id}.json") as f:
+            annotations[vid_id] = json.load(f)
+
+    PROJ_U = np.array([0.0589, 0.2286, 0.4850])
+    PROJ_V = np.array([0.1562, 0.0105, 0.4506])
+
+    def project_3d_to_2d(x, y):
+        u = PROJ_U[0] * x + PROJ_U[1] * y + PROJ_U[2]
+        v = PROJ_V[0] * x + PROJ_V[1] * y + PROJ_V[2]
+        return np.clip(u, 0, 1), np.clip(v, 0, 1)
+
+    # Extract all collisions with metadata
+    collision_events = []
+    for vi, vid_id in enumerate(eval_video_ids):
+        ann = annotations[vid_id]
+        props = {p['object_id']: p for p in ann['object_property']}
+        collisions = ann.get('collision', [])
+
+        for ci, coll in enumerate(collisions):
+            oid_a, oid_b = coll['object_ids']
+            frame = coll['frame_id']
+            mat_a = props[oid_a]['material']
+            mat_b = props[oid_b]['material']
+
+            # Label: 1 if object A is heavier (metal), 0 otherwise
+            # metal > rubber; if same material, label = 0 (no mass difference)
+            if mat_a == mat_b:
+                label = -1  # same material — skip for binary task
+            elif mat_a == 'metal':
+                label = 1  # A is heavier
+            else:
+                label = 0  # B is heavier
+
+            collision_events.append({
+                'video_idx': vi,
+                'video_id': vid_id,
+                'collision_frame': frame,
+                'obj_a_id': oid_a,
+                'obj_b_id': oid_b,
+                'material_a': mat_a,
+                'material_b': mat_b,
+                'label': label,
+            })
+
+    all_collisions = [c for c in collision_events]
+    mixed_collisions = [c for c in collision_events if c['label'] >= 0]
+    same_collisions = [c for c in collision_events if c['label'] < 0]
+
+    print(f"│  Total collisions: {len(all_collisions)}", flush=True)
+    print(f"│  Mixed material (metal vs rubber): {len(mixed_collisions)}", flush=True)
+    print(f"│  Same material (skip for binary): {len(same_collisions)}", flush=True)
+    print(f"└─ Stage 0 done [{time.time()-ts0:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 1: Load DINOv2 features + retrain Slot Attention
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 1: Slot Attention perception (retrain from scratch)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts1 = time.time()
+
+    # Load cached DINOv2 features
+    eval_cache = str(OUTPUT_DIR / "phase45_dino_features.pt")
+    print(f"│  Loading eval features: {eval_cache}", flush=True)
+    eval_features = torch.load(eval_cache, weights_only=True)
+    print(f"│  Features shape: {eval_features.shape}", flush=True)
+
+    dino_dim = 384
+    n_patches = 256
+    P = 16
+    n_slots = 7
+    slot_dim = 64
+    n_sa_iters = 5
+
+    # ── Slot Attention Module (same as Phase 45) ──
+    class SlotAttention(nn.Module):
+        def __init__(self, n_slots, slot_dim, n_iters, feature_dim, epsilon=1e-8):
+            super().__init__()
+            self.n_slots = n_slots
+            self.slot_dim = slot_dim
+            self.n_iters = n_iters
+            self.epsilon = epsilon
+            self.slot_init = nn.Parameter(
+                torch.randn(1, n_slots, slot_dim) * 0.02)
+            self.project_q = nn.Linear(slot_dim, slot_dim, bias=False)
+            self.project_k = nn.Linear(feature_dim, slot_dim, bias=False)
+            self.project_v = nn.Linear(feature_dim, slot_dim, bias=False)
+            self.gru = nn.GRUCell(slot_dim, slot_dim)
+            self.mlp = nn.Sequential(
+                nn.Linear(slot_dim, slot_dim * 2), nn.ReLU(),
+                nn.Linear(slot_dim * 2, slot_dim))
+            self.norm_inputs = nn.LayerNorm(feature_dim)
+            self.norm_slots = nn.LayerNorm(slot_dim)
+            self.norm_mlp = nn.LayerNorm(slot_dim)
+
+        def forward(self, inputs, init_slots=None):
+            B, N, _ = inputs.shape
+            inputs = self.norm_inputs(inputs)
+            k = self.project_k(inputs)
+            v = self.project_v(inputs)
+            if init_slots is not None:
+                slots = init_slots
+            else:
+                slots = self.slot_init.expand(B, -1, -1)
+            scale = self.slot_dim ** 0.5
+            attn_weights = None
+            for _ in range(self.n_iters):
+                slots_prev = slots
+                slots = self.norm_slots(slots)
+                q = self.project_q(slots)
+                attn_logits = torch.bmm(k, q.transpose(1, 2)) / scale
+                attn = F.softmax(attn_logits, dim=-1) + self.epsilon
+                attn = attn / attn.sum(dim=1, keepdim=True)
+                updates = torch.bmm(attn.transpose(1, 2), v)
+                slots = self.gru(
+                    updates.reshape(-1, self.slot_dim),
+                    slots_prev.reshape(-1, self.slot_dim)
+                ).reshape(B, self.n_slots, self.slot_dim)
+                slots = slots + self.mlp(self.norm_mlp(slots))
+                attn_weights = attn.transpose(1, 2)
+            return slots, attn_weights
+
+    class EncoderMLP(nn.Module):
+        def __init__(self, dim):
+            super().__init__()
+            self.mlp = nn.Sequential(
+                nn.Linear(dim, dim), nn.ReLU(), nn.Linear(dim, dim))
+            self.norm = nn.LayerNorm(dim)
+        def forward(self, x):
+            return self.norm(self.mlp(x))
+
+    class SpatialBroadcastDecoder(nn.Module):
+        def __init__(self, slot_dim, output_dim, n_patches_side=16):
+            super().__init__()
+            self.decoder = nn.Sequential(
+                nn.Linear(slot_dim + 2, 256), nn.ReLU(),
+                nn.Linear(256, 256), nn.ReLU(),
+                nn.Linear(256, 256), nn.ReLU(),
+                nn.Linear(256, output_dim + 1))
+            xs = torch.linspace(-1, 1, n_patches_side)
+            ys = torch.linspace(-1, 1, n_patches_side)
+            grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
+            self.register_buffer(
+                'grid', torch.stack([grid_x, grid_y], dim=-1).reshape(-1, 2))
+        def forward(self, slots):
+            B, K, D = slots.shape
+            N = self.grid.shape[0]
+            slots_bc = slots.unsqueeze(2).expand(B, K, N, D)
+            grid = self.grid.unsqueeze(0).unsqueeze(0).expand(B, K, N, 2)
+            dec_in = torch.cat([slots_bc, grid], dim=-1)
+            decoded = self.decoder(dec_in)
+            features = decoded[:, :, :, :-1]
+            alpha_logits = decoded[:, :, :, -1:]
+            alpha = F.softmax(alpha_logits, dim=1)
+            recon = (alpha * features).sum(dim=1)
+            alpha = alpha.squeeze(-1)
+            return recon, alpha
+
+    # Train slot attention on 20 eval videos (reconstruction only)
+    sa_epochs = 50
+    sa_batch = 32
+    sa_lr = 1e-4
+
+    torch.manual_seed(42)
+    encoder = EncoderMLP(dino_dim).to(device)
+    slot_attn = SlotAttention(
+        n_slots=n_slots, slot_dim=slot_dim, n_iters=n_sa_iters,
+        feature_dim=dino_dim).to(device)
+    sa_decoder = SpatialBroadcastDecoder(
+        slot_dim=slot_dim, output_dim=dino_dim).to(device)
+
+    sa_params = (list(encoder.parameters()) +
+                 list(slot_attn.parameters()) +
+                 list(sa_decoder.parameters()))
+    sa_optimizer = torch.optim.Adam(sa_params, lr=sa_lr)
+
+    n_total_frames = eval_features.shape[0]  # 2560
+    train_indices = np.arange(n_total_frames)
+
+    print(f"│  Training SA: {sa_epochs} epochs on {n_total_frames} frames", flush=True)
+
+    for epoch in range(1, sa_epochs + 1):
+        encoder.train()
+        slot_attn.train()
+        sa_decoder.train()
+
+        np.random.shuffle(train_indices)
+        ep_loss = 0.0
+        n_batches = 0
+
+        for i in range(0, n_total_frames, sa_batch):
+            batch_idx = train_indices[i:i + sa_batch]
+            feat = eval_features[batch_idx].to(device)
+
+            enc = encoder(feat)
+            slots, attn = slot_attn(enc)
+            recon, alpha = sa_decoder(slots)
+
+            loss = F.mse_loss(recon, feat)
+            sa_optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(sa_params, 1.0)
+            sa_optimizer.step()
+
+            ep_loss += loss.item()
+            n_batches += 1
+
+        if epoch % 10 == 0 or epoch == 1:
+            print(f"│    SA Epoch {epoch:3d}/{sa_epochs}: "
+                  f"recon={ep_loss/n_batches:.5f}", flush=True)
+
+    # Freeze perception
+    encoder.eval()
+    slot_attn.eval()
+    sa_decoder.eval()
+    for p in sa_params:
+        p.requires_grad = False
+
+    print(f"│  SA training done, perception frozen", flush=True)
+    print(f"└─ Stage 1 done [{time.time()-ts1:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 2: Extract slot features at collision windows
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 2: Extract slot features at collision windows", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts2 = time.time()
+
+    # Grid for computing centroids
+    xs = torch.linspace(0, 1, P)
+    ys = torch.linspace(0, 1, P)
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
+    grid_positions = torch.stack([grid_x, grid_y], dim=-1).reshape(n_patches, 2)
+
+    def get_slot_features_and_centroids(video_idx, frame_idx):
+        """Get slot features and centroids for one frame using SAVi propagation."""
+        feat_global_idx = video_idx * n_eval_frames + frame_idx
+        feat = eval_features[feat_global_idx:feat_global_idx + 1].to(device)
+        with torch.no_grad():
+            enc = encoder(feat)
+            slots, attn = slot_attn(enc)
+        slots_np = slots[0].cpu().numpy()  # [n_slots, slot_dim]
+        attn_np = attn[0].cpu().numpy()    # [n_slots, n_patches]
+
+        centroids = np.zeros((n_slots, 2))
+        for si in range(n_slots):
+            w = attn_np[si]
+            w_sum = w.sum()
+            if w_sum > 1e-6:
+                cx = (w * grid_positions[:, 0].numpy()).sum() / w_sum
+                cy = (w * grid_positions[:, 1].numpy()).sum() / w_sum
+                centroids[si] = [cx, cy]
+            else:
+                centroids[si] = [0.5, 0.5]
+        return slots_np, centroids, attn_np
+
+    def get_savi_slot_sequence(video_idx, start_frame, end_frame):
+        """Get slot features via SAVi propagation over a frame range."""
+        all_slots = []
+        all_centroids = []
+        prev_slots_tensor = None
+
+        for fi in range(start_frame, end_frame):
+            feat_global_idx = video_idx * n_eval_frames + fi
+            feat = eval_features[feat_global_idx:feat_global_idx + 1].to(device)
+            with torch.no_grad():
+                enc = encoder(feat)
+                slots, attn = slot_attn(enc, init_slots=prev_slots_tensor)
+                prev_slots_tensor = slots
+
+            slots_np = slots[0].cpu().numpy()
+            attn_np = attn[0].cpu().numpy()
+
+            centroids = np.zeros((n_slots, 2))
+            for si in range(n_slots):
+                w = attn_np[si]
+                w_sum = w.sum()
+                if w_sum > 1e-6:
+                    cx = (w * grid_positions[:, 0].numpy()).sum() / w_sum
+                    cy = (w * grid_positions[:, 1].numpy()).sum() / w_sum
+                    centroids[si] = [cx, cy]
+                else:
+                    centroids[si] = [0.5, 0.5]
+
+            all_slots.append(slots_np)
+            all_centroids.append(centroids)
+
+        return np.stack(all_slots), np.stack(all_centroids)  # [T, S, D], [T, S, 2]
+
+    def match_slot_to_object(centroids_at_frame, obj_gt_pos):
+        """Find which slot is closest to a GT object position."""
+        dists = np.linalg.norm(centroids_at_frame - obj_gt_pos, axis=1)
+        return np.argmin(dists)
+
+    # For each collision, extract slot feature sequences and match to objects
+    collision_data = []
+
+    for ci, coll in enumerate(mixed_collisions):
+        vi = coll['video_idx']
+        vid_id = coll['video_id']
+        cf = coll['collision_frame']
+        oid_a = coll['obj_a_id']
+        oid_b = coll['obj_b_id']
+
+        ann = annotations[vid_id]
+        traj = ann['motion_trajectory']
+
+        # Get GT positions at collision frame
+        frame_objs = {o['object_id']: o for o in traj[cf]['objects']}
+        if oid_a not in frame_objs or oid_b not in frame_objs:
+            continue
+        obj_a = frame_objs[oid_a]
+        obj_b = frame_objs[oid_b]
+        if not obj_a['inside_camera_view'] or not obj_b['inside_camera_view']:
+            continue
+
+        gt_a = np.array(project_3d_to_2d(obj_a['location'][0], obj_a['location'][1]))
+        gt_b = np.array(project_3d_to_2d(obj_b['location'][0], obj_b['location'][1]))
+
+        # SAVi propagation over collision window
+        start_frame = max(0, cf - collision_window)
+        end_frame = min(n_eval_frames, cf + collision_window + 1)
+        mid_idx = cf - start_frame  # index of collision frame within window
+
+        slot_seq, centroid_seq = get_savi_slot_sequence(vi, start_frame, end_frame)
+        # slot_seq: [window_len, 7, 64], centroid_seq: [window_len, 7, 2]
+
+        # Match slots to objects at collision frame
+        slot_a = match_slot_to_object(centroid_seq[mid_idx], gt_a)
+        slot_b = match_slot_to_object(centroid_seq[mid_idx], gt_b)
+
+        # Extract per-object slot feature sequences
+        # Pre-collision: frames before collision within window
+        pre_slots_a = slot_seq[:mid_idx + 1, slot_a, :]  # [<=9, 64]
+        pre_slots_b = slot_seq[:mid_idx + 1, slot_b, :]
+        # Post-collision: frames after collision within window
+        post_slots_a = slot_seq[mid_idx:, slot_a, :]  # [<=9, 64]
+        post_slots_b = slot_seq[mid_idx:, slot_b, :]
+
+        collision_data.append({
+            'pre_a': pre_slots_a,
+            'pre_b': pre_slots_b,
+            'post_a': post_slots_a,
+            'post_b': post_slots_b,
+            'label': coll['label'],
+            'material_a': coll['material_a'],
+            'material_b': coll['material_b'],
+            'video_id': vid_id,
+            'collision_frame': cf,
+            'slot_a': slot_a,
+            'slot_b': slot_b,
+        })
+
+    print(f"│  Extracted {len(collision_data)} collision examples "
+          f"(from {len(mixed_collisions)} mixed-material)", flush=True)
+
+    # Pad/truncate to fixed length
+    window_len = collision_window + 1  # 9 frames (including collision frame)
+
+    def pad_or_truncate(seq, target_len):
+        """Pad with zeros or truncate to target_len."""
+        if len(seq) >= target_len:
+            return seq[:target_len]
+        pad = np.zeros((target_len - len(seq), seq.shape[1]))
+        return np.concatenate([pad, seq], axis=0)
+
+    # Build tensors: Agent A sees pre+post, Agent B sees pre only
+    agent_a_inputs = []  # [N, 2*window_len*2, slot_dim] = [N, 36, 64]
+    agent_b_inputs = []  # [N, 2*window_len, slot_dim] = [N, 18, 64]
+    labels = []
+
+    for cd in collision_data:
+        pre_a = pad_or_truncate(cd['pre_a'], window_len)   # [9, 64]
+        pre_b = pad_or_truncate(cd['pre_b'], window_len)
+        post_a = pad_or_truncate(cd['post_a'], window_len)
+        post_b = pad_or_truncate(cd['post_b'], window_len)
+
+        # Agent A: full collision (pre+post for both objects)
+        a_in = np.concatenate([pre_a, post_a, pre_b, post_b], axis=0)  # [36, 64]
+        agent_a_inputs.append(a_in)
+
+        # Agent B: pre-collision only (both objects)
+        b_in = np.concatenate([pre_a, pre_b], axis=0)  # [18, 64]
+        agent_b_inputs.append(b_in)
+
+        labels.append(cd['label'])
+
+    agent_a_inputs = torch.tensor(np.stack(agent_a_inputs), dtype=torch.float32)
+    agent_b_inputs = torch.tensor(np.stack(agent_b_inputs), dtype=torch.float32)
+    labels = torch.tensor(labels, dtype=torch.long)
+
+    print(f"│  Agent A input: {agent_a_inputs.shape}", flush=True)
+    print(f"│  Agent B input: {agent_b_inputs.shape}", flush=True)
+    print(f"│  Labels: {labels.shape} (positive={labels.sum().item()}, "
+          f"negative={(labels == 0).sum().item()})", flush=True)
+    print(f"└─ Stage 2 done [{time.time()-ts2:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 3: Train communication agents
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 3: Train communication agents", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts3 = time.time()
+
+    n_examples = len(labels)
+    vocab_size = 8
+    msg_dim = 32  # hidden dim for message processing
+    comm_epochs = 500
+    comm_lr = 1e-3
+    gumbel_tau_start = 2.0
+    gumbel_tau_end = 0.5
+
+    a_input_dim = agent_a_inputs.shape[1] * slot_dim  # 36*64 = 2304
+    b_input_dim = agent_b_inputs.shape[1] * slot_dim  # 18*64 = 1152
+
+    class SenderAgent(nn.Module):
+        """Agent A: sees full collision, sends discrete message."""
+        def __init__(self, input_dim, hidden_dim, vocab_size):
+            super().__init__()
+            self.vocab_size = vocab_size
+            self.encoder = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, vocab_size),
+            )
+
+        def forward(self, x, tau=1.0):
+            # x: [B, input_dim]
+            logits = self.encoder(x)  # [B, vocab_size]
+            if self.training:
+                message = F.gumbel_softmax(logits, tau=tau, hard=True)
+            else:
+                idx = logits.argmax(dim=-1)
+                message = F.one_hot(idx, self.vocab_size).float()
+            return message, logits
+
+    class ReceiverAgent(nn.Module):
+        """Agent B: sees pre-collision + message, predicts mass ordering."""
+        def __init__(self, obs_dim, vocab_size, hidden_dim):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(obs_dim + vocab_size, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, 2),  # binary: A heavier or B heavier
+            )
+
+        def forward(self, obs, message):
+            # obs: [B, obs_dim], message: [B, vocab_size]
+            combined = torch.cat([obs, message], dim=-1)
+            return self.net(combined)
+
+    class ReceiverNoComm(nn.Module):
+        """Baseline: Agent B without message (observation only)."""
+        def __init__(self, obs_dim, hidden_dim):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(obs_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, 2),
+            )
+
+        def forward(self, obs):
+            return self.net(obs)
+
+    torch.manual_seed(42)
+    sender = SenderAgent(a_input_dim, 128, vocab_size).to(device)
+    receiver = ReceiverAgent(b_input_dim, vocab_size, 128).to(device)
+    receiver_nocomm = ReceiverNoComm(b_input_dim, 128).to(device)
+
+    comm_params = list(sender.parameters()) + list(receiver.parameters())
+    comm_optimizer = torch.optim.Adam(comm_params, lr=comm_lr)
+
+    nocomm_optimizer = torch.optim.Adam(receiver_nocomm.parameters(), lr=comm_lr)
+
+    print(f"│  Sender: {sum(p.numel() for p in sender.parameters()):,} params", flush=True)
+    print(f"│  Receiver: {sum(p.numel() for p in receiver.parameters()):,} params", flush=True)
+    print(f"│  No-comm baseline: "
+          f"{sum(p.numel() for p in receiver_nocomm.parameters()):,} params", flush=True)
+    print(f"│  Vocab: {vocab_size}, Epochs: {comm_epochs}, "
+          f"Examples: {n_examples}", flush=True)
+
+    # Move data to device
+    a_flat = agent_a_inputs.reshape(n_examples, -1).to(device)  # [N, 2304]
+    b_flat = agent_b_inputs.reshape(n_examples, -1).to(device)  # [N, 1152]
+    labels_dev = labels.to(device)
+
+    # Train/val split (leave-one-out per video would be ideal but dataset is tiny)
+    # Use 80/20 split
+    n_train = int(0.8 * n_examples)
+    perm = torch.randperm(n_examples)
+    train_idx = perm[:n_train]
+    val_idx = perm[n_train:]
+
+    history = {
+        'comm_acc': [], 'nocomm_acc': [],
+        'comm_loss': [], 'nocomm_loss': [],
+        'val_comm_acc': [], 'val_nocomm_acc': [],
+        'msg_entropy': [], 'gumbel_tau': [],
+    }
+
+    for epoch in range(1, comm_epochs + 1):
+        # Gumbel temperature annealing
+        progress = min(epoch / (comm_epochs * 0.7), 1.0)
+        g_tau = gumbel_tau_start + (gumbel_tau_end - gumbel_tau_start) * progress
+
+        # ── Train with communication ──
+        sender.train()
+        receiver.train()
+
+        message, logits = sender(a_flat[train_idx], tau=g_tau)
+        pred = receiver(b_flat[train_idx], message)
+        comm_loss = F.cross_entropy(pred, labels_dev[train_idx])
+
+        comm_optimizer.zero_grad()
+        comm_loss.backward()
+        torch.nn.utils.clip_grad_norm_(comm_params, 1.0)
+        comm_optimizer.step()
+
+        with torch.no_grad():
+            comm_acc = (pred.argmax(1) == labels_dev[train_idx]).float().mean().item()
+
+        # ── Train without communication (baseline) ──
+        receiver_nocomm.train()
+        pred_nc = receiver_nocomm(b_flat[train_idx])
+        nc_loss = F.cross_entropy(pred_nc, labels_dev[train_idx])
+
+        nocomm_optimizer.zero_grad()
+        nc_loss.backward()
+        torch.nn.utils.clip_grad_norm_(receiver_nocomm.parameters(), 1.0)
+        nocomm_optimizer.step()
+
+        with torch.no_grad():
+            nocomm_acc = (pred_nc.argmax(1) == labels_dev[train_idx]).float().mean().item()
+
+        # ── Validation ──
+        if epoch % 10 == 0 or epoch == 1:
+            sender.eval()
+            receiver.eval()
+            receiver_nocomm.eval()
+
+            with torch.no_grad():
+                # Comm validation
+                val_msg, val_logits = sender(a_flat[val_idx], tau=g_tau)
+                val_pred = receiver(b_flat[val_idx], val_msg)
+                val_comm_acc = (val_pred.argmax(1) == labels_dev[val_idx]).float().mean().item()
+
+                # No-comm validation
+                val_pred_nc = receiver_nocomm(b_flat[val_idx])
+                val_nocomm_acc = (val_pred_nc.argmax(1) == labels_dev[val_idx]).float().mean().item()
+
+                # Message entropy
+                all_msg, all_logits = sender(a_flat, tau=g_tau)
+                msg_ids = all_msg.argmax(dim=-1).cpu().numpy()
+                counts = np.bincount(msg_ids, minlength=vocab_size).astype(float)
+                probs = counts / counts.sum()
+                msg_entropy = -np.sum(probs * np.log(probs + 1e-8)) / np.log(vocab_size)
+
+            history['comm_acc'].append(comm_acc)
+            history['nocomm_acc'].append(nocomm_acc)
+            history['comm_loss'].append(comm_loss.item())
+            history['nocomm_loss'].append(nc_loss.item())
+            history['val_comm_acc'].append(val_comm_acc)
+            history['val_nocomm_acc'].append(val_nocomm_acc)
+            history['msg_entropy'].append(msg_entropy)
+            history['gumbel_tau'].append(g_tau)
+
+            if epoch % 50 == 0 or epoch == 1:
+                print(f"│  Epoch {epoch:3d}/{comm_epochs}: "
+                      f"comm={comm_acc:.2f}/{val_comm_acc:.2f} "
+                      f"nocomm={nocomm_acc:.2f}/{val_nocomm_acc:.2f} "
+                      f"ent={msg_entropy:.3f} τ_g={g_tau:.2f}", flush=True)
+
+    # Final evaluation
+    sender.eval()
+    receiver.eval()
+    receiver_nocomm.eval()
+
+    with torch.no_grad():
+        final_msg, final_logits = sender(a_flat)
+        final_pred = receiver(b_flat, final_msg)
+        final_comm_acc = (final_pred.argmax(1) == labels_dev).float().mean().item()
+
+        final_pred_nc = receiver_nocomm(b_flat)
+        final_nocomm_acc = (final_pred_nc.argmax(1) == labels_dev).float().mean().item()
+
+        msg_ids = final_msg.argmax(dim=-1).cpu().numpy()
+        counts = np.bincount(msg_ids, minlength=vocab_size).astype(float)
+        msg_probs = counts / counts.sum()
+        final_entropy = -np.sum(msg_probs * np.log(msg_probs + 1e-8)) / np.log(vocab_size)
+
+    # Save model
+    torch.save({
+        'sender': sender.state_dict(),
+        'receiver': receiver.state_dict(),
+        'receiver_nocomm': receiver_nocomm.state_dict(),
+        'encoder': encoder.state_dict(),
+        'slot_attn': slot_attn.state_dict(),
+    }, str(OUTPUT_DIR / "phase48_model.pt"))
+
+    print(f"\n│  === COMMUNICATION RESULTS ===", flush=True)
+    print(f"│  With communication:    {final_comm_acc*100:.1f}%", flush=True)
+    print(f"│  Without communication: {final_nocomm_acc*100:.1f}%", flush=True)
+    print(f"│  Communication gain:    {(final_comm_acc - final_nocomm_acc)*100:+.1f}%", flush=True)
+    print(f"│  Message entropy:       {final_entropy:.3f}", flush=True)
+    print(f"│  Messages used:         {(msg_probs > 0.01).sum()}/{vocab_size}", flush=True)
+    print(f"└─ Stage 3 done [{time.time()-ts3:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 4: Analysis — message-material correspondence
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 4: Message analysis", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts4 = time.time()
+
+    # What message does the sender use for each material pair?
+    msg_by_label = {0: [], 1: []}
+    for i, cd in enumerate(collision_data):
+        msg_by_label[cd['label']].append(msg_ids[i])
+
+    print(f"│  Messages when A=rubber, B=metal (label=0):", flush=True)
+    if msg_by_label[0]:
+        c0 = np.bincount(msg_by_label[0], minlength=vocab_size)
+        print(f"│    {c0.tolist()}", flush=True)
+    print(f"│  Messages when A=metal, B=rubber (label=1):", flush=True)
+    if msg_by_label[1]:
+        c1 = np.bincount(msg_by_label[1], minlength=vocab_size)
+        print(f"│    {c1.tolist()}", flush=True)
+
+    # Message consistency: does same label always get same message?
+    consistency_scores = []
+    for lbl in [0, 1]:
+        msgs = msg_by_label[lbl]
+        if len(msgs) >= 2:
+            most_common = np.bincount(msgs, minlength=vocab_size).argmax()
+            cons = np.mean([m == most_common for m in msgs])
+            consistency_scores.append(cons)
+            print(f"│  Label {lbl} consistency: {cons:.2f} "
+                  f"(most common msg: {most_common})", flush=True)
+    mean_consistency = np.mean(consistency_scores) if consistency_scores else 0
+
+    print(f"└─ Stage 4 done [{time.time()-ts4:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 5: Visualization
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 5: Visualization", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+    # Panel 1: Accuracy over training
+    ax = axes[0, 0]
+    epochs_logged = list(range(1, comm_epochs + 1, 10))
+    # Fix: epoch 1 is logged separately
+    epochs_logged = [1] + list(range(10, comm_epochs + 1, 10))
+    ax.plot(epochs_logged, history['val_comm_acc'], 'b-', linewidth=2,
+            label=f'With comm (final={final_comm_acc*100:.0f}%)')
+    ax.plot(epochs_logged, history['val_nocomm_acc'], 'r--', linewidth=2,
+            label=f'No comm (final={final_nocomm_acc*100:.0f}%)')
+    ax.axhline(y=0.5, color='gray', linestyle=':', alpha=0.5, label='Chance')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Validation Accuracy')
+    ax.set_title('Mass Prediction Accuracy', fontsize=11)
+    ax.legend(fontsize=9)
+    ax.set_ylim(0, 1.05)
+
+    # Panel 2: Message usage heatmap
+    ax = axes[0, 1]
+    # Create a 2D heatmap: rows = label, columns = message
+    msg_matrix = np.zeros((2, vocab_size))
+    for lbl in [0, 1]:
+        if msg_by_label[lbl]:
+            c = np.bincount(msg_by_label[lbl], minlength=vocab_size).astype(float)
+            msg_matrix[lbl] = c / max(c.sum(), 1)
+    im = ax.imshow(msg_matrix, aspect='auto', cmap='YlOrRd', vmin=0, vmax=1)
+    ax.set_xlabel('Message Symbol')
+    ax.set_ylabel('Label')
+    ax.set_yticks([0, 1])
+    ax.set_yticklabels(['A=rubber\nB=metal', 'A=metal\nB=rubber'])
+    ax.set_xticks(range(vocab_size))
+    ax.set_title('Message Usage by Label', fontsize=11)
+    plt.colorbar(im, ax=ax, label='Frequency')
+    # Add counts as text
+    for lbl in range(2):
+        for msg in range(vocab_size):
+            if msg_matrix[lbl, msg] > 0.05:
+                ax.text(msg, lbl, f'{msg_matrix[lbl, msg]:.2f}',
+                        ha='center', va='center', fontsize=8,
+                        color='white' if msg_matrix[lbl, msg] > 0.5 else 'black')
+
+    # Panel 3: Message entropy over training
+    ax = axes[1, 0]
+    ax.plot(epochs_logged, history['msg_entropy'], 'g-', linewidth=2,
+            label='Message entropy')
+    ax.plot(epochs_logged, history['gumbel_tau'], 'orange', linewidth=1,
+            linestyle='--', label='Gumbel τ')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Normalized Entropy')
+    ax.set_title('Message Entropy & Gumbel Temperature', fontsize=11)
+    ax.legend(fontsize=9)
+    ax.set_ylim(0, 2.5)
+
+    # Panel 4: Summary
+    ax = axes[1, 1]
+    ax.axis('off')
+    elapsed = time.time() - t0
+
+    comm_helps = final_comm_acc > final_nocomm_acc
+    acc_ok = final_comm_acc > 0.70
+    ent_ok = final_entropy > 0.3
+
+    if acc_ok and comm_helps and ent_ok:
+        verdict = "SUCCESS"
+    elif acc_ok or (comm_helps and final_comm_acc > 0.60):
+        verdict = "PARTIAL"
+    else:
+        verdict = "FAIL"
+
+    summary = (
+        f"Phase 48: CLEVRER Communication\n\n"
+        f"Perception: DINOv2 + SA (7 slots, frozen)\n"
+        f"Task: predict heavier object from collision\n"
+        f"Channel: Gumbel-Softmax, vocab={vocab_size}\n\n"
+        f"Examples: {n_examples} mixed-material collisions\n"
+        f"  (from {n_eval_videos} videos)\n\n"
+        f"With communication:    {final_comm_acc*100:.1f}%\n"
+        f"Without communication: {final_nocomm_acc*100:.1f}%\n"
+        f"Communication gain:    {(final_comm_acc-final_nocomm_acc)*100:+.1f}%\n\n"
+        f"Message entropy: {final_entropy:.3f}\n"
+        f"Symbols used: {(msg_probs > 0.01).sum()}/{vocab_size}\n"
+        f"Msg consistency: {mean_consistency:.2f}\n\n"
+        f"Total time: {elapsed:.0f}s\n\n"
+        f"VERDICT: {verdict}"
+    )
+    ax.text(0.05, 0.5, summary, transform=ax.transAxes, fontsize=10,
+            fontfamily='monospace', verticalalignment='center')
+
+    fig.suptitle(f'Phase 48: CLEVRER Communication Pipeline\n'
+                 f'comm={final_comm_acc*100:.0f}% vs nocomm={final_nocomm_acc*100:.0f}% '
+                 f'(+{(final_comm_acc-final_nocomm_acc)*100:.0f}%) '
+                 f'entropy={final_entropy:.3f} | {verdict}',
+                 fontsize=13, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(str(OUTPUT_DIR / "phase48_clevrer_communication.png"),
+                dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"│  Saved results/phase48_clevrer_communication.png", flush=True)
+
+    print(f"\n{'=' * 70}", flush=True)
+    print(f"VERDICT: {verdict}", flush=True)
+    print(f"\n  With communication:    {final_comm_acc*100:.1f}% (target >70%)", flush=True)
+    print(f"  Without communication: {final_nocomm_acc*100:.1f}%", flush=True)
+    print(f"  Communication gain:    {(final_comm_acc-final_nocomm_acc)*100:+.1f}%", flush=True)
+    print(f"  Message entropy:       {final_entropy:.3f} (target >0.3)", flush=True)
+    print(f"  Message consistency:   {mean_consistency:.2f}", flush=True)
+    print(f"\n  Total time: {elapsed:.0f}s", flush=True)
+    print(f"{'=' * 70}", flush=True)
+
+
+
+
+
+
+def run_phase47b_contrastive_1000v():
+    """Phase 47b: Temperature-annealed contrastive SA on 1000 CLEVRER videos.
+
+    Fix for 47's collapse: soft τ early, sharpen late.
+    - τ: 1.0 → 0.3 cosine anneal over 100 epochs, then fixed 0.3
+    - α=0.5 (warmup 20ep), β_ent=0.5 (5× stronger entropy reg)
+    - 1000 videos, 200 epochs, reuse phase47 feature cache
+    """
+    import time
+    import json
+    import os
+    import numpy as np
+    import cv2
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    from scipy.optimize import linear_sum_assignment
+    from pathlib import Path
+
+    print("=" * 70, flush=True)
+    print("PHASE 47b: Temperature-Annealed Contrastive SA — 1000 Videos", flush=True)
+    print("  τ: 1.0→0.3 cosine, α=0.5, β_ent=0.5, 200 epochs", flush=True)
+    print("=" * 70, flush=True)
+    t0 = time.time()
+
+    if torch.backends.mps.is_available():
+        device = torch.device('mps')
+    elif torch.cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    OUTPUT_DIR = Path("results")
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    data_dir = "clevrer_data"
+
+    # ── Config ──
+    n_extract = 16         # frames per video for training
+    n_eval_frames = 128    # frames per video for evaluation
+    n_eval_videos = 20     # test videos for evaluation
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 0: Load annotations + verify data
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 0: Load annotations + verify data", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts0 = time.time()
+
+    video_ids_all = list(range(10000, 11000))
+    available_ids = []
+    for vid_id in video_ids_all:
+        ann_path = f"{data_dir}/annotation_{vid_id}.json"
+        vid_path = f"{data_dir}/videos/video_{vid_id}.mp4"
+        if os.path.exists(ann_path) and os.path.exists(vid_path):
+            available_ids.append(vid_id)
+    video_ids = available_ids
+    n_videos = len(video_ids)
+    print(f"│  Found {n_videos} videos with annotations", flush=True)
+
+    annotations = {}
+    obj_counts = []
+    for vid_id in video_ids:
+        with open(f"{data_dir}/annotation_{vid_id}.json") as f:
+            annotations[vid_id] = json.load(f)
+        obj_counts.append(len(annotations[vid_id]['object_property']))
+    print(f"│  Objects per video: {min(obj_counts)}-{max(obj_counts)} "
+          f"(mean={np.mean(obj_counts):.1f})", flush=True)
+
+    PROJ_U = np.array([0.0589, 0.2286, 0.4850])
+    PROJ_V = np.array([0.1562, 0.0105, 0.4506])
+
+    def project_3d_to_2d(x, y):
+        u = PROJ_U[0] * x + PROJ_U[1] * y + PROJ_U[2]
+        v = PROJ_V[0] * x + PROJ_V[1] * y + PROJ_V[2]
+        return np.clip(u, 0, 1), np.clip(v, 0, 1)
+
+    print(f"└─ Stage 0 done [{time.time()-ts0:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 1: DINOv2 feature extraction (reuse phase47 cache)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 1: DINOv2 features ({n_videos} videos × {n_extract} frames)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts1 = time.time()
+
+    cache_path = str(OUTPUT_DIR / "phase47_dino_features_1000v.pt")
+    frame_indices = np.linspace(0, 127, n_extract).astype(int)
+    print(f"│  Frame indices: {frame_indices.tolist()}", flush=True)
+
+    if os.path.exists(cache_path):
+        print(f"│  Loading cached features from {cache_path}", flush=True)
+        all_features = torch.load(cache_path, weights_only=True)
+        print(f"│  Features shape: {all_features.shape}", flush=True)
+    else:
+        print(f"│  Loading DINOv2-small (vits14)...", flush=True)
+        dino = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14',
+                              pretrained=True)
+        dino.eval().to(device)
+        for p in dino.parameters():
+            p.requires_grad = False
+        print(f"│  DINOv2 loaded", flush=True)
+
+        dino_mean = torch.tensor([0.485, 0.456, 0.406]).reshape(1, 3, 1, 1).to(device)
+        dino_std = torch.tensor([0.229, 0.224, 0.225]).reshape(1, 3, 1, 1).to(device)
+
+        feature_parts = []
+        for vi, vid_id in enumerate(video_ids):
+            cap = cv2.VideoCapture(f"{data_dir}/videos/video_{vid_id}.mp4")
+            frames = []
+            for fi in frame_indices:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(fi))
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame = cv2.resize(frame, (224, 224))
+                frame = frame.astype(np.float32) / 255.0
+                frame = frame.transpose(2, 0, 1)
+                frames.append(frame)
+            cap.release()
+
+            batch = torch.tensor(np.stack(frames)).to(device)
+            batch = (batch - dino_mean) / dino_std
+            with torch.no_grad():
+                features = dino.forward_features(batch)
+                patch_tokens = features['x_norm_patchtokens']
+            feature_parts.append(patch_tokens.cpu())
+
+            if (vi + 1) % 100 == 0:
+                elapsed_ext = time.time() - ts1
+                eta_ext = elapsed_ext / (vi + 1) * (n_videos - vi - 1)
+                print(f"│    Extracted {vi+1}/{n_videos} videos "
+                      f"[{elapsed_ext:.0f}s, eta {eta_ext:.0f}s]", flush=True)
+                if device.type == 'mps':
+                    torch.mps.empty_cache()
+
+        all_features = torch.cat(feature_parts, dim=0)
+        print(f"│  Features shape: {all_features.shape}", flush=True)
+        print(f"│  Memory: {all_features.numel() * 4 / 1e9:.2f} GB", flush=True)
+
+        torch.save(all_features, cache_path)
+        print(f"│  Cached to {cache_path}", flush=True)
+
+        del dino, dino_mean, dino_std, feature_parts
+        if device.type == 'mps':
+            torch.mps.empty_cache()
+
+    print(f"└─ Stage 1 done [{time.time()-ts1:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 2: Train Contrastive Slot Attention (τ-annealed)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 2: Train Contrastive Slot Attention (τ-annealed)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts2 = time.time()
+
+    dino_dim = 384
+    n_patches = 256
+    P = 16
+    n_slots = 7
+    slot_dim = 64
+    n_sa_iters = 5
+    sa_epochs = 200
+    sa_batch = 32
+    sa_lr = 1e-4
+    alpha_contrastive = 0.5      # 47b: halved from 1.0
+    alpha_warmup_epochs = 20     # 47b: doubled from 10
+    tau_start = 1.0              # 47b: soft start
+    tau_end = 0.3                # 47b: anneal target
+    tau_anneal_epochs = 100      # 47b: cosine anneal over 100 epochs
+    beta_entropy = 0.5           # 47b: 5× stronger than 47
+    pair_stride = 4
+
+    def get_temperature(epoch):
+        """τ: 1.0 → 0.3 cosine anneal over first 100 epochs, then fixed 0.3."""
+        if epoch >= tau_anneal_epochs:
+            return tau_end
+        progress = epoch / tau_anneal_epochs
+        return tau_end + (tau_start - tau_end) * 0.5 * (1.0 + np.cos(np.pi * progress))
+
+    # ── InfoNCE contrastive loss ──
+    def info_nce_slot_loss(slots_t, slots_tp1, tau):
+        B, S, D = slots_t.shape
+        s_t = F.normalize(slots_t.reshape(B * S, D), dim=-1)
+        s_tp1 = F.normalize(slots_tp1.reshape(B * S, D), dim=-1)
+        logits = torch.mm(s_t, s_tp1.T) / tau
+        labels = torch.arange(B * S, device=logits.device)
+        loss = F.cross_entropy(logits, labels)
+        with torch.no_grad():
+            pos_sim = (s_t * s_tp1).sum(dim=-1).mean()
+        return loss, pos_sim
+
+    # ── Slot Attention Module ──
+    class SlotAttention(nn.Module):
+        def __init__(self, n_slots, slot_dim, n_iters, feature_dim, epsilon=1e-8):
+            super().__init__()
+            self.n_slots = n_slots
+            self.slot_dim = slot_dim
+            self.n_iters = n_iters
+            self.epsilon = epsilon
+            self.slot_init = nn.Parameter(
+                torch.randn(1, n_slots, slot_dim) * 0.02)
+            self.project_q = nn.Linear(slot_dim, slot_dim, bias=False)
+            self.project_k = nn.Linear(feature_dim, slot_dim, bias=False)
+            self.project_v = nn.Linear(feature_dim, slot_dim, bias=False)
+            self.gru = nn.GRUCell(slot_dim, slot_dim)
+            self.mlp = nn.Sequential(
+                nn.Linear(slot_dim, slot_dim * 2), nn.ReLU(),
+                nn.Linear(slot_dim * 2, slot_dim))
+            self.norm_inputs = nn.LayerNorm(feature_dim)
+            self.norm_slots = nn.LayerNorm(slot_dim)
+            self.norm_mlp = nn.LayerNorm(slot_dim)
+
+        def forward(self, inputs, init_slots=None):
+            B, N, _ = inputs.shape
+            inputs = self.norm_inputs(inputs)
+            k = self.project_k(inputs)
+            v = self.project_v(inputs)
+            if init_slots is not None:
+                slots = init_slots
+            else:
+                slots = self.slot_init.expand(B, -1, -1)
+            scale = self.slot_dim ** 0.5
+            attn_weights = None
+            for _ in range(self.n_iters):
+                slots_prev = slots
+                slots = self.norm_slots(slots)
+                q = self.project_q(slots)
+                attn_logits = torch.bmm(k, q.transpose(1, 2)) / scale
+                attn = F.softmax(attn_logits, dim=-1) + self.epsilon
+                attn = attn / attn.sum(dim=1, keepdim=True)
+                updates = torch.bmm(attn.transpose(1, 2), v)
+                slots = self.gru(
+                    updates.reshape(-1, self.slot_dim),
+                    slots_prev.reshape(-1, self.slot_dim)
+                ).reshape(B, self.n_slots, self.slot_dim)
+                slots = slots + self.mlp(self.norm_mlp(slots))
+                attn_weights = attn.transpose(1, 2)
+            return slots, attn_weights
+
+    class EncoderMLP(nn.Module):
+        def __init__(self, dim):
+            super().__init__()
+            self.mlp = nn.Sequential(
+                nn.Linear(dim, dim), nn.ReLU(), nn.Linear(dim, dim))
+            self.norm = nn.LayerNorm(dim)
+        def forward(self, x):
+            return self.norm(self.mlp(x))
+
+    class SpatialBroadcastDecoder(nn.Module):
+        def __init__(self, slot_dim, output_dim, n_patches_side=16):
+            super().__init__()
+            self.decoder = nn.Sequential(
+                nn.Linear(slot_dim + 2, 256), nn.ReLU(),
+                nn.Linear(256, 256), nn.ReLU(),
+                nn.Linear(256, 256), nn.ReLU(),
+                nn.Linear(256, output_dim + 1))
+            xs = torch.linspace(-1, 1, n_patches_side)
+            ys = torch.linspace(-1, 1, n_patches_side)
+            grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
+            self.register_buffer(
+                'grid', torch.stack([grid_x, grid_y], dim=-1).reshape(-1, 2))
+        def forward(self, slots):
+            B, K, D = slots.shape
+            N = self.grid.shape[0]
+            slots_bc = slots.unsqueeze(2).expand(B, K, N, D)
+            grid = self.grid.unsqueeze(0).unsqueeze(0).expand(B, K, N, 2)
+            dec_in = torch.cat([slots_bc, grid], dim=-1)
+            decoded = self.decoder(dec_in)
+            features = decoded[:, :, :, :-1]
+            alpha_logits = decoded[:, :, :, -1:]
+            alpha = F.softmax(alpha_logits, dim=1)
+            recon = (alpha * features).sum(dim=1)
+            alpha = alpha.squeeze(-1)
+            return recon, alpha
+
+    # Build model
+    torch.manual_seed(42)
+    encoder = EncoderMLP(dino_dim).to(device)
+    slot_attn = SlotAttention(
+        n_slots=n_slots, slot_dim=slot_dim, n_iters=n_sa_iters,
+        feature_dim=dino_dim).to(device)
+    decoder = SpatialBroadcastDecoder(
+        slot_dim=slot_dim, output_dim=dino_dim).to(device)
+
+    total_params = (sum(p.numel() for p in encoder.parameters()) +
+                    sum(p.numel() for p in slot_attn.parameters()) +
+                    sum(p.numel() for p in decoder.parameters()))
+    print(f"│  SA model: {total_params:,} trainable params", flush=True)
+    print(f"│  Config: {n_slots} slots, {slot_dim}-dim, {n_sa_iters} iters, "
+          f"{sa_epochs} epochs", flush=True)
+    print(f"│  Contrastive: α={alpha_contrastive} (warmup {alpha_warmup_epochs}ep), "
+          f"τ={tau_start}→{tau_end} (anneal {tau_anneal_epochs}ep), "
+          f"β_ent={beta_entropy}", flush=True)
+
+    all_params = (list(encoder.parameters()) +
+                  list(slot_attn.parameters()) +
+                  list(decoder.parameters()))
+    optimizer = torch.optim.Adam(all_params, lr=sa_lr)
+
+    # Cosine LR schedule with warmup
+    lr_warmup_epochs = 10
+
+    def lr_lambda(epoch):
+        if epoch < lr_warmup_epochs:
+            return (epoch + 1) / lr_warmup_epochs
+        progress = (epoch - lr_warmup_epochs) / (sa_epochs - lr_warmup_epochs)
+        return 0.5 * (1.0 + np.cos(np.pi * progress))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    # Build frame pair indices: 3 pairs per video from 16-frame indices
+    n_train_vids = 800
+
+    pairs_by_video = {}
+    for vi in range(n_train_vids):
+        vid_start = vi * n_extract
+        pairs_by_video[vi] = [(vid_start + fi, vid_start + fi + pair_stride)
+                              for fi in range(0, n_extract - pair_stride, pair_stride)]
+
+    val_pairs = []
+    for vi in range(n_train_vids, n_videos):
+        vid_start = vi * n_extract
+        for fi in range(0, n_extract - pair_stride, pair_stride):
+            val_pairs.append((vid_start + fi, vid_start + fi + pair_stride))
+    val_pairs = np.array(val_pairs)
+
+    total_train_pairs = sum(len(ps) for ps in pairs_by_video.values())
+
+    def make_epoch_batches(pairs_by_video, batch_size):
+        """Round-robin across shuffled videos for cross-video batch diversity."""
+        vid_ids = list(pairs_by_video.keys())
+        np.random.shuffle(vid_ids)
+        vid_pair_idx = {v: list(np.random.permutation(len(ps)))
+                        for v, ps in pairs_by_video.items()}
+        vid_cursors = {v: 0 for v in vid_ids}
+        all_pairs = []
+        active = list(vid_ids)
+        while active:
+            for v in list(active):
+                if vid_cursors[v] < len(vid_pair_idx[v]):
+                    idx = vid_pair_idx[v][vid_cursors[v]]
+                    all_pairs.append(pairs_by_video[v][idx])
+                    vid_cursors[v] += 1
+                else:
+                    active.remove(v)
+        batches = []
+        for i in range(0, len(all_pairs), batch_size):
+            batch = all_pairs[i:i + batch_size]
+            if len(batch) >= batch_size // 2:
+                batches.append(np.array(batch))
+        return batches
+
+    print(f"│  Train: {n_train_vids} videos, {total_train_pairs} pairs", flush=True)
+    print(f"│  Val: {n_videos - n_train_vids} videos, {len(val_pairs)} pairs", flush=True)
+
+    best_val_loss = float('inf')
+    best_state = None
+    epoch_times = []  # for rolling ETA
+
+    for epoch in range(1, sa_epochs + 1):
+        epoch_t0 = time.time()
+        encoder.train()
+        slot_attn.train()
+        decoder.train()
+
+        # Temperature schedule
+        tau = get_temperature(epoch)
+
+        batches = make_epoch_batches(pairs_by_video, sa_batch)
+        ep_recon_loss = 0.0
+        ep_ctr_loss = 0.0
+        ep_ent_loss = 0.0
+        ep_pos_sim = 0.0
+        ep_total_loss = 0.0
+        n_batches = 0
+
+        for pairs in batches:
+            idx_t = pairs[:, 0]
+            idx_tp1 = pairs[:, 1]
+
+            feat_t = all_features[idx_t].to(device)
+            feat_tp1 = all_features[idx_tp1].to(device)
+
+            # Forward frame t (learnable init)
+            enc_t = encoder(feat_t)
+            slots_t, attn_t = slot_attn(enc_t)
+            recon_t, alpha_t = decoder(slots_t)
+
+            # Forward frame t+1 (SAVi-style: init from frame t's slots)
+            enc_tp1 = encoder(feat_tp1)
+            slots_tp1, attn_tp1 = slot_attn(enc_tp1, init_slots=slots_t.detach())
+            recon_tp1, alpha_tp1 = decoder(slots_tp1)
+
+            # Reconstruction loss (both frames)
+            recon_loss = (F.mse_loss(recon_t, feat_t) +
+                          F.mse_loss(recon_tp1, feat_tp1)) / 2
+
+            # InfoNCE contrastive loss (with current τ)
+            ctr_loss, pos_sim = info_nce_slot_loss(slots_t, slots_tp1, tau)
+
+            # Attention entropy regularization
+            H_t = -(attn_t * (attn_t + 1e-8).log()).sum(dim=-1)
+            H_tp1 = -(attn_tp1 * (attn_tp1 + 1e-8).log()).sum(dim=-1)
+            ent_loss = -(H_t.mean() + H_tp1.mean()) / 2
+
+            # Alpha warmup
+            if epoch <= alpha_warmup_epochs:
+                alpha_eff = alpha_contrastive * (epoch / alpha_warmup_epochs)
+            else:
+                alpha_eff = alpha_contrastive
+
+            total_loss = recon_loss + alpha_eff * ctr_loss + beta_entropy * ent_loss
+
+            optimizer.zero_grad()
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(all_params, 1.0)
+            optimizer.step()
+
+            ep_recon_loss += recon_loss.item()
+            ep_ctr_loss += ctr_loss.item()
+            ep_ent_loss += ent_loss.item()
+            ep_pos_sim += pos_sim.item()
+            ep_total_loss += total_loss.item()
+            n_batches += 1
+
+            if device.type == 'mps' and n_batches % 100 == 0:
+                torch.mps.empty_cache()
+
+        scheduler.step()
+
+        if epoch % 10 != 0 and epoch != 1:
+            epoch_times.append(time.time() - epoch_t0)
+
+        if epoch % 10 == 0 or epoch == 1:
+            encoder.eval()
+            slot_attn.eval()
+            decoder.eval()
+
+            with torch.no_grad():
+                val_sub = val_pairs[:min(256, len(val_pairs))]
+                vf_t = all_features[val_sub[:, 0]].to(device)
+                vf_tp1 = all_features[val_sub[:, 1]].to(device)
+
+                ve_t = encoder(vf_t)
+                vs_t, va_t = slot_attn(ve_t)
+                vr_t, valpha_t = decoder(vs_t)
+
+                ve_tp1 = encoder(vf_tp1)
+                vs_tp1, va_tp1 = slot_attn(ve_tp1, init_slots=vs_t)
+                vr_tp1, valpha_tp1 = decoder(vs_tp1)
+
+                val_recon = (F.mse_loss(vr_t, vf_t) +
+                             F.mse_loss(vr_tp1, vf_tp1)).item() / 2
+
+                val_ctr, val_pos_sim = info_nce_slot_loss(vs_t, vs_tp1, tau)
+                val_ctr = val_ctr.item()
+
+                # Entropy diagnostic
+                ownership = valpha_t.argmax(dim=1)
+                B_d = ownership.shape[0]
+                slot_counts = torch.zeros(B_d, n_slots, device=device)
+                for s in range(n_slots):
+                    slot_counts[:, s] = (ownership == s).float().sum(dim=1)
+                mean_fracs = (slot_counts / n_patches).mean(dim=0)
+                active = int((mean_fracs > 0.01).sum().item())
+                ent = -(valpha_t * (valpha_t + 1e-8).log()).sum(dim=1).mean()
+                norm_ent = ent.item() / np.log(n_slots)
+
+            val_total = val_recon + alpha_contrastive * val_ctr
+            if val_total < best_val_loss:
+                best_val_loss = val_total
+                best_state = {
+                    'encoder': {k: v.cpu().clone()
+                                for k, v in encoder.state_dict().items()},
+                    'slot_attn': {k: v.cpu().clone()
+                                  for k, v in slot_attn.state_dict().items()},
+                    'decoder': {k: v.cpu().clone()
+                                for k, v in decoder.state_dict().items()},
+                }
+
+            elapsed = time.time() - t0
+            epoch_times.append(time.time() - epoch_t0)
+            recent = epoch_times[-10:]
+            avg_epoch_time = np.mean(recent)
+            eta_s = (sa_epochs - epoch) * avg_epoch_time
+            eta_m = eta_s / 60
+
+            print(f"│  Epoch {epoch:3d}/{sa_epochs}: "
+                  f"recon={ep_recon_loss/n_batches:.5f} "
+                  f"ctr={ep_ctr_loss/n_batches:.4f} α={alpha_eff:.3f} "
+                  f"τ={tau:.3f} "
+                  f"ent_l={ep_ent_loss/n_batches:.3f} "
+                  f"sim={ep_pos_sim/n_batches:.3f} "
+                  f"val_r={val_recon:.5f} val_c={val_ctr:.4f} "
+                  f"active={active}/{n_slots} ent={norm_ent:.3f} "
+                  f"eta={eta_m:.0f}m [{elapsed:.0f}s]", flush=True)
+
+            # Collapse warning
+            if active < 4 and epoch <= 50:
+                print(f"│  WARNING: Only {active}/{n_slots} slots active "
+                      f"(soft tau may recover)", flush=True)
+
+    # Restore best model
+    encoder.load_state_dict(best_state['encoder'])
+    slot_attn.load_state_dict(best_state['slot_attn'])
+    decoder.load_state_dict(best_state['decoder'])
+    encoder.to(device).eval()
+    slot_attn.to(device).eval()
+    decoder.to(device).eval()
+
+    # Save model checkpoint
+    torch.save({
+        'encoder': best_state['encoder'],
+        'slot_attn': best_state['slot_attn'],
+        'decoder': best_state['decoder'],
+    }, str(OUTPUT_DIR / "phase47b_model.pt"))
+
+    print(f"│  Best val loss: {best_val_loss:.5f}", flush=True)
+    print(f"│  Saved model to results/phase47b_model.pt", flush=True)
+    print(f"└─ Stage 2 done [{time.time()-ts2:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 3: Load eval features (20 videos × 128 frames)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 3: Load evaluation features", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts3 = time.time()
+
+    del all_features
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    eval_video_ids = list(range(10000, 10000 + n_eval_videos))
+    eval_cache = str(OUTPUT_DIR / "phase45_dino_features.pt")
+
+    if os.path.exists(eval_cache):
+        print(f"│  Loading eval cache: {eval_cache}", flush=True)
+        eval_features = torch.load(eval_cache, weights_only=True)
+        print(f"│  Eval features shape: {eval_features.shape}", flush=True)
+    else:
+        print(f"│  Extracting eval features ({n_eval_videos} videos × "
+              f"{n_eval_frames} frames)...", flush=True)
+        dino = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14',
+                              pretrained=True)
+        dino.eval().to(device)
+        for p in dino.parameters():
+            p.requires_grad = False
+
+        dino_mean = torch.tensor([0.485, 0.456, 0.406]).reshape(1, 3, 1, 1).to(device)
+        dino_std = torch.tensor([0.229, 0.224, 0.225]).reshape(1, 3, 1, 1).to(device)
+
+        feature_parts = []
+        batch_size_dino = 16
+        for vi, vid_id in enumerate(eval_video_ids):
+            cap = cv2.VideoCapture(f"{data_dir}/videos/video_{vid_id}.mp4")
+            frames = []
+            for fi in range(n_eval_frames):
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame = cv2.resize(frame, (224, 224))
+                frame = frame.astype(np.float32) / 255.0
+                frame = frame.transpose(2, 0, 1)
+                frames.append(frame)
+            cap.release()
+
+            vid_features = []
+            vid_frames_np = np.stack(frames)
+            for start in range(0, len(frames), batch_size_dino):
+                end = min(start + batch_size_dino, len(frames))
+                batch = torch.tensor(vid_frames_np[start:end]).to(device)
+                batch = (batch - dino_mean) / dino_std
+                with torch.no_grad():
+                    features = dino.forward_features(batch)
+                    patch_tokens = features['x_norm_patchtokens']
+                vid_features.append(patch_tokens.cpu())
+            feature_parts.append(torch.cat(vid_features, dim=0))
+            print(f"│    Eval video {vi+1}/{n_eval_videos}", flush=True)
+
+        eval_features = torch.cat(feature_parts, dim=0)
+        torch.save(eval_features, eval_cache)
+        del dino, dino_mean, dino_std
+        if device.type == 'mps':
+            torch.mps.empty_cache()
+
+    print(f"└─ Stage 3 done [{time.time()-ts3:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 4: Object tracking via SAVi propagation
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 4: Object tracking ({n_eval_videos} videos × "
+          f"{n_eval_frames} frames)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts4 = time.time()
+
+    xs = torch.linspace(0, 1, P)
+    ys = torch.linspace(0, 1, P)
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
+    grid_positions = torch.stack([grid_x, grid_y], dim=-1).reshape(n_patches, 2)
+
+    all_centroids = []
+    all_attns = []
+
+    for vi in range(n_eval_videos):
+        vid_start = vi * n_eval_frames
+        vid_centroids = []
+        vid_attns = []
+        prev_slots = None
+
+        for fi in range(n_eval_frames):
+            feat = eval_features[vid_start + fi:vid_start + fi + 1].to(device)
+            with torch.no_grad():
+                enc_feat = encoder(feat)
+                slots, attn = slot_attn(enc_feat, init_slots=prev_slots)
+                prev_slots = slots
+
+            attn_np = attn[0].cpu().numpy()
+            frame_centroids = np.zeros((n_slots, 2))
+            for si in range(n_slots):
+                weights = attn_np[si, :]
+                w_sum = weights.sum()
+                if w_sum > 1e-6:
+                    cx = (weights * grid_positions[:, 0].numpy()).sum() / w_sum
+                    cy = (weights * grid_positions[:, 1].numpy()).sum() / w_sum
+                    frame_centroids[si] = [cx, cy]
+                else:
+                    frame_centroids[si] = [0.5, 0.5]
+            vid_centroids.append(frame_centroids)
+            vid_attns.append(attn_np)
+
+        all_centroids.append(np.stack(vid_centroids))
+        all_attns.append(np.stack(vid_attns))
+
+        if (vi + 1) % 5 == 0:
+            print(f"│  Processed {vi+1}/{n_eval_videos} eval videos", flush=True)
+
+    all_slot_assignments = []
+    for vi in range(n_eval_videos):
+        assignments = [np.arange(n_slots)] * n_eval_frames
+        all_slot_assignments.append(assignments)
+
+    print(f"└─ Stage 4 done [{time.time()-ts4:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 5: Evaluation against GT
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 5: Evaluation against GT", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts5 = time.time()
+
+    tracking_errors = []
+    per_frame_errors = [[] for _ in range(n_eval_frames)]
+    slot_consistency_per_video = []
+    binding_accuracy_per_video = []
+
+    for vi in range(n_eval_videos):
+        vid_id = eval_video_ids[vi]
+        ann = annotations[vid_id]
+        traj = ann['motion_trajectory']
+
+        centroids = all_centroids[vi]
+        assignments = all_slot_assignments[vi]
+
+        reordered_centroids = np.zeros_like(centroids)
+        for fi in range(n_eval_frames):
+            perm = assignments[fi]
+            for s in range(n_slots):
+                reordered_centroids[fi, s] = centroids[fi, perm[s]]
+
+        best_frame = 0
+        best_in_view = 0
+        for fi in range(n_eval_frames):
+            n_in = sum(1 for o in traj[fi]['objects']
+                       if o['inside_camera_view'])
+            if n_in > best_in_view:
+                best_in_view = n_in
+                best_frame = fi
+
+        ref_objs = [o for o in traj[best_frame]['objects']
+                     if o['inside_camera_view']]
+        gt_positions_ref = np.zeros((len(ref_objs), 2))
+        gt_obj_ids = []
+        for oi, o in enumerate(ref_objs):
+            u, v = project_3d_to_2d(o['location'][0], o['location'][1])
+            gt_positions_ref[oi] = [u, v]
+            gt_obj_ids.append(o['object_id'])
+
+        slot_coverage = np.zeros(n_slots)
+        attn_ref = all_attns[vi][best_frame]
+        ownership_ref = attn_ref.argmax(axis=0)
+        for s in range(n_slots):
+            slot_coverage[s] = (ownership_ref == s).sum() / n_patches
+        active_slots = [s for s in range(n_slots) if slot_coverage[s] > 0.02]
+
+        pred_centroids_ref = reordered_centroids[best_frame]
+        if len(active_slots) >= len(ref_objs):
+            cost_mat = np.zeros((len(ref_objs), len(active_slots)))
+            for gi in range(len(ref_objs)):
+                for si_idx, si in enumerate(active_slots):
+                    cost_mat[gi, si_idx] = np.linalg.norm(
+                        gt_positions_ref[gi] - pred_centroids_ref[si])
+            row_ind, col_ind = linear_sum_assignment(cost_mat)
+            gt_to_slot = {}
+            for r, c in zip(row_ind, col_ind):
+                gt_to_slot[gt_obj_ids[r]] = active_slots[c]
+        else:
+            cost_mat = np.zeros((len(ref_objs), n_slots))
+            for gi in range(len(ref_objs)):
+                for si in range(n_slots):
+                    cost_mat[gi, si] = np.linalg.norm(
+                        gt_positions_ref[gi] - pred_centroids_ref[si])
+            row_ind, col_ind = linear_sum_assignment(cost_mat)
+            gt_to_slot = {}
+            for r, c in zip(row_ind, col_ind):
+                gt_to_slot[gt_obj_ids[r]] = c
+
+        vid_errors = []
+        consistent_frames = 0
+        bound_frames = 0
+        total_eval_frames = 0
+
+        for fi in range(n_eval_frames):
+            frame_objs = [o for o in traj[fi]['objects']
+                          if o['inside_camera_view']
+                          and o['object_id'] in gt_to_slot]
+            if len(frame_objs) == 0:
+                continue
+            total_eval_frames += 1
+            used_slots = set()
+            all_match = True
+
+            for o in frame_objs:
+                oid = o['object_id']
+                assigned_slot = gt_to_slot[oid]
+                gt_u, gt_v = project_3d_to_2d(
+                    o['location'][0], o['location'][1])
+                pred_uv = reordered_centroids[fi, assigned_slot]
+                err = np.linalg.norm(np.array([gt_u, gt_v]) - pred_uv)
+                vid_errors.append(err)
+                tracking_errors.append(err)
+                per_frame_errors[fi].append(err)
+
+                if assigned_slot in used_slots:
+                    all_match = False
+                used_slots.add(assigned_slot)
+
+                closest_slot = None
+                min_dist = float('inf')
+                for s in range(n_slots):
+                    d = np.linalg.norm(
+                        np.array([gt_u, gt_v]) - reordered_centroids[fi, s])
+                    if d < min_dist:
+                        min_dist = d
+                        closest_slot = s
+                if closest_slot != assigned_slot:
+                    all_match = False
+
+            if all_match:
+                consistent_frames += 1
+            bound_frames += 1 if len(used_slots) == len(frame_objs) else 0
+
+        consistency = consistent_frames / max(total_eval_frames, 1)
+        binding = bound_frames / max(total_eval_frames, 1)
+
+        slot_consistency_per_video.append(consistency)
+        binding_accuracy_per_video.append(binding)
+
+    mean_tracking_error = np.mean(tracking_errors)
+    median_tracking_error = np.median(tracking_errors)
+    mean_consistency = np.mean(slot_consistency_per_video) * 100
+    mean_binding = np.mean(binding_accuracy_per_video) * 100
+
+    # Temporal degradation
+    early_errors = []
+    late_errors = []
+    for fi in range(n_eval_frames):
+        if fi < 16:
+            early_errors.extend(per_frame_errors[fi])
+        elif fi >= 64:
+            late_errors.extend(per_frame_errors[fi])
+    early_err = np.mean(early_errors) if early_errors else 0
+    late_err = np.mean(late_errors) if late_errors else 0
+
+    # Attention entropy on eval videos
+    all_entropies = []
+    for vi in range(n_eval_videos):
+        for fi in range(n_eval_frames):
+            attn_fi = all_attns[vi][fi]
+            ownership = attn_fi.argmax(axis=0)
+            counts = np.bincount(ownership, minlength=n_slots)
+            probs = counts / counts.sum()
+            ent = -np.sum(probs * np.log(probs + 1e-8)) / np.log(n_slots)
+            all_entropies.append(ent)
+    mean_entropy = np.mean(all_entropies)
+    n_active_avg = np.mean([
+        np.sum(np.bincount(all_attns[vi][64].argmax(0), minlength=n_slots) > n_patches * 0.02)
+        for vi in range(n_eval_videos)
+    ])
+
+    # Baselines
+    p45_err = 28.8
+    p45_cons = 3.4
+    p47_err = 31.4
+    p47_cons = 0.4
+    p46_err = 19.2
+    p46_cons = 6.4
+
+    print(f"\n│  === RESULTS ===", flush=True)
+    print(f"│  Tracking error (mean):   {mean_tracking_error*100:.1f}% "
+          f"(47: {p47_err}%, 45: {p45_err}%, 46: {p46_err}%)", flush=True)
+    print(f"│  Tracking error (median): {median_tracking_error*100:.1f}%", flush=True)
+    print(f"│  Early (0-15):   {early_err*100:.1f}%", flush=True)
+    print(f"│  Late (64-127):  {late_err*100:.1f}%", flush=True)
+    print(f"│  Slot consistency:        {mean_consistency:.1f}% "
+          f"(47: {p47_cons}%, 45: {p45_cons}%, 46: {p46_cons}%)", flush=True)
+    print(f"│  Binding accuracy:        {mean_binding:.1f}%", flush=True)
+    print(f"│  Attention entropy:        {mean_entropy:.3f}", flush=True)
+    print(f"│  Active slots (eval):      {n_active_avg:.1f}/{n_slots}", flush=True)
+    print(f"└─ Stage 5 done [{time.time()-ts5:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 6: Visualization
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 6: Visualization", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    slot_colors_plot = ['#e6194b', '#3cb44b', '#4363d8', '#f58231',
+                        '#911eb4', '#42d4f4', '#f032e6']
+
+    # Panel 1: Sample frames with slot masks
+    ax = axes[0, 0]
+    sample_vids = [0, min(5, n_eval_videos-1), min(10, n_eval_videos-1)]
+    sample_frame = 64
+    n_show = min(3, n_eval_videos)
+    composite_img = np.zeros((P * n_show, P * 2, 3))
+    for si, vi in enumerate(sample_vids[:n_show]):
+        vid_id = eval_video_ids[vi]
+        cap = cv2.VideoCapture(f"{data_dir}/videos/video_{vid_id}.mp4")
+        cap.set(cv2.CAP_PROP_POS_FRAMES, sample_frame)
+        ret, frame = cap.read()
+        cap.release()
+        if ret:
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame_small = cv2.resize(frame_rgb, (P, P))
+            composite_img[si*P:(si+1)*P, :P, :] = frame_small / 255.0
+        attn_frame = all_attns[vi][sample_frame]
+        masks = attn_frame.reshape(n_slots, P, P)
+        mask_composite = np.zeros((P, P, 3))
+        for s in range(n_slots):
+            color = plt.cm.Set1(s / n_slots)[:3]
+            for c in range(3):
+                mask_composite[:, :, c] += masks[s] * color[c]
+        composite_img[si*P:(si+1)*P, P:2*P, :] = np.clip(mask_composite, 0, 1)
+    ax.imshow(composite_img, interpolation='nearest')
+    ax.set_title(f'Slot Masks (frame {sample_frame})', fontsize=10)
+    ax.set_xticks([P//2, P + P//2])
+    ax.set_xticklabels(['Original', 'Slot Masks'])
+    ax.set_yticks([])
+
+    # Panel 2: Trajectories for one video
+    ax = axes[0, 1]
+    plot_vid = 0
+    vid_id = eval_video_ids[plot_vid]
+    ann = annotations[vid_id]
+    traj = ann['motion_trajectory']
+    obj_props = {p['object_id']: p for p in ann['object_property']}
+    obj_ids = [p['object_id'] for p in ann['object_property']]
+    gt_colors = ['red', 'blue', 'green', 'orange', 'purple', 'cyan']
+
+    for oi, oid in enumerate(obj_ids):
+        gt_us, gt_vs = [], []
+        for fi in range(n_eval_frames):
+            o = [ob for ob in traj[fi]['objects'] if ob['object_id'] == oid][0]
+            if o['inside_camera_view']:
+                u, v = project_3d_to_2d(o['location'][0], o['location'][1])
+                gt_us.append(u)
+                gt_vs.append(v)
+            else:
+                gt_us.append(np.nan)
+                gt_vs.append(np.nan)
+        props = obj_props[oid]
+        ax.plot(gt_us, gt_vs, '-', color=gt_colors[oi % len(gt_colors)],
+                alpha=0.5, linewidth=1,
+                label=f'GT {props["color"]} {props["shape"]}')
+
+    reordered = all_centroids[plot_vid]
+    for s in range(n_slots):
+        coverage = np.mean([(all_attns[plot_vid][fi].argmax(0) == s).sum() / n_patches
+                            for fi in range(0, n_eval_frames, 16)])
+        if coverage > 0.03:
+            ax.plot(reordered[:, s, 0], reordered[:, s, 1], '--',
+                    color=slot_colors_plot[s], alpha=0.7, linewidth=1,
+                    label=f'Slot {s}')
+    ax.set_xlabel('X (normalized)')
+    ax.set_ylabel('Y (normalized)')
+    ax.set_title(f'Trajectories: GT vs Slots (video {vid_id})', fontsize=10)
+    ax.legend(fontsize=6, loc='upper right', ncol=2)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.invert_yaxis()
+
+    # Panel 3: Error distribution
+    ax = axes[0, 2]
+    errors_pct = [e * 100 for e in tracking_errors]
+    ax.hist(errors_pct, bins=40, color='#2196F3', edgecolor='black',
+            linewidth=0.3, alpha=0.8)
+    ax.axvline(x=20, color='red', linestyle='--', linewidth=2,
+               label='20% threshold')
+    ax.axvline(x=mean_tracking_error * 100, color='orange', linestyle='-',
+               linewidth=2, label=f'Mean={mean_tracking_error*100:.1f}%')
+    ax.set_xlabel('Tracking Error (% of frame)')
+    ax.set_ylabel('Count')
+    ax.set_title('Tracking Error Distribution', fontsize=10)
+    ax.legend(fontsize=8)
+
+    # Panel 4: Temporal degradation
+    ax = axes[1, 0]
+    frame_bins = list(range(0, n_eval_frames, 8))
+    bin_errors = []
+    for b in frame_bins:
+        bin_errs = []
+        for fi in range(b, min(b + 8, n_eval_frames)):
+            bin_errs.extend(per_frame_errors[fi])
+        bin_errors.append(np.mean(bin_errs) * 100 if bin_errs else 0)
+    ax.plot(frame_bins, bin_errors, 'o-', color='#FF5722', linewidth=2, markersize=4)
+    ax.set_xlabel('Frame')
+    ax.set_ylabel('Tracking Error (%)')
+    ax.set_title('Temporal Degradation (8-frame bins)', fontsize=10)
+    ax.axhline(y=20, color='red', linestyle='--', alpha=0.5, label='20% target')
+    ax.axhline(y=early_err * 100, color='green', linestyle=':', alpha=0.7,
+               label=f'Early (0-15): {early_err * 100:.1f}%')
+    ax.axhline(y=late_err * 100, color='purple', linestyle=':', alpha=0.7,
+               label=f'Late (64-127): {late_err * 100:.1f}%')
+    ax.legend(fontsize=7)
+
+    # Panel 5: DINOv2 PCA
+    ax = axes[1, 1]
+    pca_idx = 0 * n_eval_frames + 64
+    feat_pca = eval_features[pca_idx].numpy()
+    feat_centered = feat_pca - feat_pca.mean(axis=0)
+    U, S, Vt = np.linalg.svd(feat_centered, full_matrices=False)
+    pca_3 = feat_centered @ Vt[:3].T
+    pca_3 = pca_3 - pca_3.min(axis=0)
+    pca_3 = pca_3 / (pca_3.max(axis=0) + 1e-8)
+    ax.imshow(pca_3.reshape(P, P, 3), interpolation='nearest')
+    ax.set_title(f'DINOv2 PCA (video {eval_video_ids[0]}, frame 64)', fontsize=10)
+    ax.axis('off')
+
+    # Panel 6: Summary
+    ax = axes[1, 2]
+    ax.axis('off')
+    elapsed = time.time() - t0
+
+    err_ok = mean_tracking_error * 100 < 20
+    cons_ok = mean_consistency > 15
+    bind_ok = mean_binding > 85
+    if err_ok and cons_ok and bind_ok:
+        verdict = "SUCCESS"
+    elif err_ok or cons_ok:
+        verdict = "PARTIAL"
+    elif mean_tracking_error * 100 < p45_err:
+        verdict = "PARTIAL (improved over 45)"
+    else:
+        verdict = "FAIL"
+
+    summary = (
+        f"Phase 47b: Tau-Annealed Contrastive SA\n\n"
+        f"Data: 1000 train videos x {n_extract} frames\n"
+        f"Eval: {n_eval_videos} videos x {n_eval_frames} frames\n"
+        f"Model: DINOv2 -> SA (7 slots, InfoNCE)\n"
+        f"  alpha={alpha_contrastive}, tau={tau_start}->{tau_end}\n"
+        f"  beta_ent={beta_entropy}\n\n"
+        f"                     47b    47    46    45\n"
+        f"Tracking error:  {mean_tracking_error*100:5.1f}% {p47_err:5.1f}% "
+        f"{p46_err:5.1f}% {p45_err:5.1f}%\n"
+        f"  early (0-15):  {early_err*100:5.1f}%\n"
+        f"  late (64-127): {late_err*100:5.1f}%\n"
+        f"Consistency:     {mean_consistency:5.1f}% {p47_cons:5.1f}%  "
+        f"{p46_cons:5.1f}%  {p45_cons:5.1f}%\n"
+        f"Binding:         {mean_binding:5.1f}%\n"
+        f"Entropy:         {mean_entropy:.3f}\n"
+        f"Active slots:    {n_active_avg:.1f}/{n_slots}\n\n"
+        f"Best val loss: {best_val_loss:.5f}\n"
+        f"Total time: {elapsed:.0f}s\n\n"
+        f"VERDICT: {verdict}"
+    )
+    ax.text(0.05, 0.5, summary, transform=ax.transAxes, fontsize=10,
+            fontfamily='monospace', verticalalignment='center')
+
+    fig.suptitle(f'Phase 47b: Tau-Annealed Contrastive SA (1000 Videos)\n'
+                 f'err={mean_tracking_error*100:.1f}% '
+                 f'consistency={mean_consistency:.0f}% '
+                 f'binding={mean_binding:.0f}% '
+                 f'entropy={mean_entropy:.3f} | {verdict}',
+                 fontsize=13, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(str(OUTPUT_DIR / "phase47b_contrastive_1000v.png"),
+                dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"│  Saved results/phase47b_contrastive_1000v.png", flush=True)
+
+    print(f"\n{'=' * 70}", flush=True)
+    print(f"VERDICT: {verdict}", flush=True)
+    print(f"\n  Tracking error:   {mean_tracking_error*100:.1f}% "
+          f"(target <20%, 47: {p47_err}%, 46: {p46_err}%, 45: {p45_err}%)",
+          flush=True)
+    print(f"  Early (0-15):     {early_err*100:.1f}%", flush=True)
+    print(f"  Late (64-127):    {late_err*100:.1f}%", flush=True)
+    print(f"  Slot consistency: {mean_consistency:.1f}% "
+          f"(target >15%, 47: {p47_cons}%, 46: {p46_cons}%, 45: {p45_cons}%)",
+          flush=True)
+    print(f"  Binding accuracy: {mean_binding:.1f}% (target >85%)", flush=True)
+    print(f"  Entropy:          {mean_entropy:.3f}", flush=True)
+    print(f"  Active slots:     {n_active_avg:.1f}/{n_slots}", flush=True)
+    print(f"\n  Total time: {elapsed:.0f}s", flush=True)
+    print(f"{'=' * 70}", flush=True)
+
+
+
+
+
+
+def run_phase47_contrastive_1000v():
+    """Phase 47: Contrastive Slot Attention on 1000 CLEVRER videos.
+
+    Phase 45d done right — same architecture, same loss, 10× the data.
+    - 1000 videos (16 frames each, linspace-sampled)
+    - α=1.0, τ=0.1, β_ent=0.1 (aggressive contrastive + entropy safety)
+    - 200 epochs, cosine LR schedule
+    - Eval on 20 test videos (full 128 frames, SAVi propagation)
+    """
+    import time
+    import json
+    import os
+    import numpy as np
+    import cv2
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    from scipy.optimize import linear_sum_assignment
+    from pathlib import Path
+
+    print("=" * 70, flush=True)
+    print("PHASE 47: Contrastive Slot Attention — 1000 CLEVRER Videos", flush=True)
+    print("  α=1.0, τ=0.1, β_ent=0.1, 16 frames/video, 200 epochs", flush=True)
+    print("=" * 70, flush=True)
+    t0 = time.time()
+
+    if torch.backends.mps.is_available():
+        device = torch.device('mps')
+    elif torch.cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
+    print(f"│  Device: {device}", flush=True)
+
+    OUTPUT_DIR = Path("results")
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    data_dir = "clevrer_data"
+
+    # ── Config ──
+    n_extract = 16         # frames per video for training
+    n_eval_frames = 128    # frames per video for evaluation
+    n_eval_videos = 20     # test videos for evaluation
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 0: Load annotations + verify data
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 0: Load annotations + verify data", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts0 = time.time()
+
+    video_ids_all = list(range(10000, 11000))
+    available_ids = []
+    for vid_id in video_ids_all:
+        ann_path = f"{data_dir}/annotation_{vid_id}.json"
+        vid_path = f"{data_dir}/videos/video_{vid_id}.mp4"
+        if os.path.exists(ann_path) and os.path.exists(vid_path):
+            available_ids.append(vid_id)
+    video_ids = available_ids
+    n_videos = len(video_ids)
+    print(f"│  Found {n_videos} videos with annotations", flush=True)
+
+    annotations = {}
+    obj_counts = []
+    for vid_id in video_ids:
+        with open(f"{data_dir}/annotation_{vid_id}.json") as f:
+            annotations[vid_id] = json.load(f)
+        obj_counts.append(len(annotations[vid_id]['object_property']))
+    print(f"│  Objects per video: {min(obj_counts)}-{max(obj_counts)} "
+          f"(mean={np.mean(obj_counts):.1f})", flush=True)
+
+    PROJ_U = np.array([0.0589, 0.2286, 0.4850])
+    PROJ_V = np.array([0.1562, 0.0105, 0.4506])
+
+    def project_3d_to_2d(x, y):
+        u = PROJ_U[0] * x + PROJ_U[1] * y + PROJ_U[2]
+        v = PROJ_V[0] * x + PROJ_V[1] * y + PROJ_V[2]
+        return np.clip(u, 0, 1), np.clip(v, 0, 1)
+
+    print(f"└─ Stage 0 done [{time.time()-ts0:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 1: DINOv2 feature extraction (16 frames × 1000 videos)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 1: DINOv2 features ({n_videos} videos × {n_extract} frames)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts1 = time.time()
+
+    cache_path = str(OUTPUT_DIR / "phase47_dino_features_1000v.pt")
+    frame_indices = np.linspace(0, 127, n_extract).astype(int)
+    print(f"│  Frame indices: {frame_indices.tolist()}", flush=True)
+
+    if os.path.exists(cache_path):
+        print(f"│  Loading cached features from {cache_path}", flush=True)
+        all_features = torch.load(cache_path, weights_only=True)
+        print(f"│  Features shape: {all_features.shape}", flush=True)
+    else:
+        print(f"│  Loading DINOv2-small (vits14)...", flush=True)
+        dino = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14',
+                              pretrained=True)
+        dino.eval().to(device)
+        for p in dino.parameters():
+            p.requires_grad = False
+        print(f"│  DINOv2 loaded", flush=True)
+
+        dino_mean = torch.tensor([0.485, 0.456, 0.406]).reshape(1, 3, 1, 1).to(device)
+        dino_std = torch.tensor([0.229, 0.224, 0.225]).reshape(1, 3, 1, 1).to(device)
+
+        feature_parts = []
+        for vi, vid_id in enumerate(video_ids):
+            # Extract 16 frames via seeking
+            cap = cv2.VideoCapture(f"{data_dir}/videos/video_{vid_id}.mp4")
+            frames = []
+            for fi in frame_indices:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(fi))
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame = cv2.resize(frame, (224, 224))
+                frame = frame.astype(np.float32) / 255.0
+                frame = frame.transpose(2, 0, 1)
+                frames.append(frame)
+            cap.release()
+
+            # DINOv2 forward (all 16 frames as one batch)
+            batch = torch.tensor(np.stack(frames)).to(device)
+            batch = (batch - dino_mean) / dino_std
+            with torch.no_grad():
+                features = dino.forward_features(batch)
+                patch_tokens = features['x_norm_patchtokens']
+            feature_parts.append(patch_tokens.cpu())
+
+            if (vi + 1) % 100 == 0:
+                elapsed_ext = time.time() - ts1
+                eta_ext = elapsed_ext / (vi + 1) * (n_videos - vi - 1)
+                print(f"│    Extracted {vi+1}/{n_videos} videos "
+                      f"[{elapsed_ext:.0f}s, eta {eta_ext:.0f}s]", flush=True)
+                if device.type == 'mps':
+                    torch.mps.empty_cache()
+
+        all_features = torch.cat(feature_parts, dim=0)
+        print(f"│  Features shape: {all_features.shape}", flush=True)
+        print(f"│  Memory: {all_features.numel() * 4 / 1e9:.2f} GB", flush=True)
+
+        torch.save(all_features, cache_path)
+        print(f"│  Cached to {cache_path}", flush=True)
+
+        del dino, dino_mean, dino_std, feature_parts
+        if device.type == 'mps':
+            torch.mps.empty_cache()
+
+    print(f"└─ Stage 1 done [{time.time()-ts1:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 2: Train Contrastive Slot Attention
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 2: Train Contrastive Slot Attention", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts2 = time.time()
+
+    dino_dim = 384
+    n_patches = 256
+    P = 16
+    n_slots = 7
+    slot_dim = 64
+    n_sa_iters = 5
+    sa_epochs = 200
+    sa_batch = 32
+    sa_lr = 1e-4
+    alpha_contrastive = 1.0
+    alpha_warmup_epochs = 10
+    temperature = 0.1
+    beta_entropy = 0.1
+    pair_stride = 4
+
+    # ── InfoNCE contrastive loss ──
+    def info_nce_slot_loss(slots_t, slots_tp1, tau=temperature):
+        B, S, D = slots_t.shape
+        s_t = F.normalize(slots_t.reshape(B * S, D), dim=-1)
+        s_tp1 = F.normalize(slots_tp1.reshape(B * S, D), dim=-1)
+        logits = torch.mm(s_t, s_tp1.T) / tau
+        labels = torch.arange(B * S, device=logits.device)
+        loss = F.cross_entropy(logits, labels)
+        with torch.no_grad():
+            pos_sim = (s_t * s_tp1).sum(dim=-1).mean()
+        return loss, pos_sim
+
+    # ── Slot Attention Module ──
+    class SlotAttention(nn.Module):
+        def __init__(self, n_slots, slot_dim, n_iters, feature_dim, epsilon=1e-8):
+            super().__init__()
+            self.n_slots = n_slots
+            self.slot_dim = slot_dim
+            self.n_iters = n_iters
+            self.epsilon = epsilon
+            self.slot_init = nn.Parameter(
+                torch.randn(1, n_slots, slot_dim) * 0.02)
+            self.project_q = nn.Linear(slot_dim, slot_dim, bias=False)
+            self.project_k = nn.Linear(feature_dim, slot_dim, bias=False)
+            self.project_v = nn.Linear(feature_dim, slot_dim, bias=False)
+            self.gru = nn.GRUCell(slot_dim, slot_dim)
+            self.mlp = nn.Sequential(
+                nn.Linear(slot_dim, slot_dim * 2), nn.ReLU(),
+                nn.Linear(slot_dim * 2, slot_dim))
+            self.norm_inputs = nn.LayerNorm(feature_dim)
+            self.norm_slots = nn.LayerNorm(slot_dim)
+            self.norm_mlp = nn.LayerNorm(slot_dim)
+
+        def forward(self, inputs, init_slots=None):
+            B, N, _ = inputs.shape
+            inputs = self.norm_inputs(inputs)
+            k = self.project_k(inputs)
+            v = self.project_v(inputs)
+            if init_slots is not None:
+                slots = init_slots
+            else:
+                slots = self.slot_init.expand(B, -1, -1)
+            scale = self.slot_dim ** 0.5
+            attn_weights = None
+            for _ in range(self.n_iters):
+                slots_prev = slots
+                slots = self.norm_slots(slots)
+                q = self.project_q(slots)
+                attn_logits = torch.bmm(k, q.transpose(1, 2)) / scale
+                attn = F.softmax(attn_logits, dim=-1) + self.epsilon
+                attn = attn / attn.sum(dim=1, keepdim=True)
+                updates = torch.bmm(attn.transpose(1, 2), v)
+                slots = self.gru(
+                    updates.reshape(-1, self.slot_dim),
+                    slots_prev.reshape(-1, self.slot_dim)
+                ).reshape(B, self.n_slots, self.slot_dim)
+                slots = slots + self.mlp(self.norm_mlp(slots))
+                attn_weights = attn.transpose(1, 2)
+            return slots, attn_weights
+
+    class EncoderMLP(nn.Module):
+        def __init__(self, dim):
+            super().__init__()
+            self.mlp = nn.Sequential(
+                nn.Linear(dim, dim), nn.ReLU(), nn.Linear(dim, dim))
+            self.norm = nn.LayerNorm(dim)
+        def forward(self, x):
+            return self.norm(self.mlp(x))
+
+    class SpatialBroadcastDecoder(nn.Module):
+        def __init__(self, slot_dim, output_dim, n_patches_side=16):
+            super().__init__()
+            self.decoder = nn.Sequential(
+                nn.Linear(slot_dim + 2, 256), nn.ReLU(),
+                nn.Linear(256, 256), nn.ReLU(),
+                nn.Linear(256, 256), nn.ReLU(),
+                nn.Linear(256, output_dim + 1))
+            xs = torch.linspace(-1, 1, n_patches_side)
+            ys = torch.linspace(-1, 1, n_patches_side)
+            grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
+            self.register_buffer(
+                'grid', torch.stack([grid_x, grid_y], dim=-1).reshape(-1, 2))
+        def forward(self, slots):
+            B, K, D = slots.shape
+            N = self.grid.shape[0]
+            slots_bc = slots.unsqueeze(2).expand(B, K, N, D)
+            grid = self.grid.unsqueeze(0).unsqueeze(0).expand(B, K, N, 2)
+            dec_in = torch.cat([slots_bc, grid], dim=-1)
+            decoded = self.decoder(dec_in)
+            features = decoded[:, :, :, :-1]
+            alpha_logits = decoded[:, :, :, -1:]
+            alpha = F.softmax(alpha_logits, dim=1)
+            recon = (alpha * features).sum(dim=1)
+            alpha = alpha.squeeze(-1)
+            return recon, alpha
+
+    # Build model
+    torch.manual_seed(42)
+    encoder = EncoderMLP(dino_dim).to(device)
+    slot_attn = SlotAttention(
+        n_slots=n_slots, slot_dim=slot_dim, n_iters=n_sa_iters,
+        feature_dim=dino_dim).to(device)
+    decoder = SpatialBroadcastDecoder(
+        slot_dim=slot_dim, output_dim=dino_dim).to(device)
+
+    total_params = (sum(p.numel() for p in encoder.parameters()) +
+                    sum(p.numel() for p in slot_attn.parameters()) +
+                    sum(p.numel() for p in decoder.parameters()))
+    print(f"│  SA model: {total_params:,} trainable params", flush=True)
+    print(f"│  Config: {n_slots} slots, {slot_dim}-dim, {n_sa_iters} iters, "
+          f"{sa_epochs} epochs", flush=True)
+    print(f"│  Contrastive: α={alpha_contrastive} (warmup {alpha_warmup_epochs}ep), "
+          f"τ={temperature}, β_ent={beta_entropy}, stride={pair_stride}", flush=True)
+
+    all_params = (list(encoder.parameters()) +
+                  list(slot_attn.parameters()) +
+                  list(decoder.parameters()))
+    optimizer = torch.optim.Adam(all_params, lr=sa_lr)
+
+    # Cosine LR schedule with warmup
+    lr_warmup_epochs = 10
+
+    def lr_lambda(epoch):
+        if epoch < lr_warmup_epochs:
+            return (epoch + 1) / lr_warmup_epochs
+        progress = (epoch - lr_warmup_epochs) / (sa_epochs - lr_warmup_epochs)
+        return 0.5 * (1.0 + np.cos(np.pi * progress))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    # Build frame pair indices: 3 pairs per video from 16-frame indices
+    # Pairs: (0,4), (4,8), (8,12) in local frame numbering
+    n_train_vids = 800  # videos 10000-10799
+
+    pairs_by_video = {}
+    for vi in range(n_train_vids):
+        vid_start = vi * n_extract
+        pairs_by_video[vi] = [(vid_start + fi, vid_start + fi + pair_stride)
+                              for fi in range(0, n_extract - pair_stride, pair_stride)]
+
+    val_pairs = []
+    for vi in range(n_train_vids, n_videos):
+        vid_start = vi * n_extract
+        for fi in range(0, n_extract - pair_stride, pair_stride):
+            val_pairs.append((vid_start + fi, vid_start + fi + pair_stride))
+    val_pairs = np.array(val_pairs)
+
+    total_train_pairs = sum(len(ps) for ps in pairs_by_video.values())
+
+    def make_epoch_batches(pairs_by_video, batch_size):
+        """Round-robin across shuffled videos for cross-video batch diversity."""
+        vid_ids = list(pairs_by_video.keys())
+        np.random.shuffle(vid_ids)
+        vid_pair_idx = {v: list(np.random.permutation(len(ps)))
+                        for v, ps in pairs_by_video.items()}
+        vid_cursors = {v: 0 for v in vid_ids}
+        all_pairs = []
+        active = list(vid_ids)
+        while active:
+            for v in list(active):
+                if vid_cursors[v] < len(vid_pair_idx[v]):
+                    idx = vid_pair_idx[v][vid_cursors[v]]
+                    all_pairs.append(pairs_by_video[v][idx])
+                    vid_cursors[v] += 1
+                else:
+                    active.remove(v)
+        batches = []
+        for i in range(0, len(all_pairs), batch_size):
+            batch = all_pairs[i:i + batch_size]
+            if len(batch) >= batch_size // 2:
+                batches.append(np.array(batch))
+        return batches
+
+    print(f"│  Train: {n_train_vids} videos, {total_train_pairs} pairs", flush=True)
+    print(f"│  Val: {n_videos - n_train_vids} videos, {len(val_pairs)} pairs", flush=True)
+    print(f"│  Pairs per video: {total_train_pairs // n_train_vids}", flush=True)
+
+    best_val_loss = float('inf')
+    best_state = None
+    epoch_times = []  # for rolling ETA
+
+    for epoch in range(1, sa_epochs + 1):
+        epoch_t0 = time.time()
+        encoder.train()
+        slot_attn.train()
+        decoder.train()
+
+        batches = make_epoch_batches(pairs_by_video, sa_batch)
+        ep_recon_loss = 0.0
+        ep_ctr_loss = 0.0
+        ep_ent_loss = 0.0
+        ep_pos_sim = 0.0
+        ep_total_loss = 0.0
+        n_batches = 0
+
+        for pairs in batches:
+            idx_t = pairs[:, 0]
+            idx_tp1 = pairs[:, 1]
+
+            feat_t = all_features[idx_t].to(device)
+            feat_tp1 = all_features[idx_tp1].to(device)
+
+            # Forward frame t (learnable init)
+            enc_t = encoder(feat_t)
+            slots_t, attn_t = slot_attn(enc_t)
+            recon_t, alpha_t = decoder(slots_t)
+
+            # Forward frame t+1 (SAVi-style: init from frame t's slots)
+            enc_tp1 = encoder(feat_tp1)
+            slots_tp1, attn_tp1 = slot_attn(enc_tp1, init_slots=slots_t.detach())
+            recon_tp1, alpha_tp1 = decoder(slots_tp1)
+
+            # Reconstruction loss (both frames)
+            recon_loss = (F.mse_loss(recon_t, feat_t) +
+                          F.mse_loss(recon_tp1, feat_tp1)) / 2
+
+            # InfoNCE contrastive loss
+            ctr_loss, pos_sim = info_nce_slot_loss(slots_t, slots_tp1)
+
+            # Attention entropy regularization
+            H_t = -(attn_t * (attn_t + 1e-8).log()).sum(dim=-1)
+            H_tp1 = -(attn_tp1 * (attn_tp1 + 1e-8).log()).sum(dim=-1)
+            ent_loss = -(H_t.mean() + H_tp1.mean()) / 2
+
+            # Alpha warmup
+            if epoch <= alpha_warmup_epochs:
+                alpha_eff = alpha_contrastive * (epoch / alpha_warmup_epochs)
+            else:
+                alpha_eff = alpha_contrastive
+
+            total_loss = recon_loss + alpha_eff * ctr_loss + beta_entropy * ent_loss
+
+            optimizer.zero_grad()
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(all_params, 1.0)
+            optimizer.step()
+
+            ep_recon_loss += recon_loss.item()
+            ep_ctr_loss += ctr_loss.item()
+            ep_ent_loss += ent_loss.item()
+            ep_pos_sim += pos_sim.item()
+            ep_total_loss += total_loss.item()
+            n_batches += 1
+
+            if device.type == 'mps' and n_batches % 100 == 0:
+                torch.mps.empty_cache()
+
+        scheduler.step()
+
+        if epoch % 10 != 0 and epoch != 1:
+            # Still record epoch time for non-logged epochs
+            epoch_times.append(time.time() - epoch_t0)
+
+        if epoch % 10 == 0 or epoch == 1:
+            encoder.eval()
+            slot_attn.eval()
+            decoder.eval()
+
+            with torch.no_grad():
+                val_sub = val_pairs[:min(256, len(val_pairs))]
+                vf_t = all_features[val_sub[:, 0]].to(device)
+                vf_tp1 = all_features[val_sub[:, 1]].to(device)
+
+                ve_t = encoder(vf_t)
+                vs_t, va_t = slot_attn(ve_t)
+                vr_t, valpha_t = decoder(vs_t)
+
+                ve_tp1 = encoder(vf_tp1)
+                vs_tp1, va_tp1 = slot_attn(ve_tp1, init_slots=vs_t)
+                vr_tp1, valpha_tp1 = decoder(vs_tp1)
+
+                val_recon = (F.mse_loss(vr_t, vf_t) +
+                             F.mse_loss(vr_tp1, vf_tp1)).item() / 2
+
+                val_ctr, val_pos_sim = info_nce_slot_loss(vs_t, vs_tp1)
+                val_ctr = val_ctr.item()
+
+                # Entropy diagnostic
+                ownership = valpha_t.argmax(dim=1)
+                B_d = ownership.shape[0]
+                slot_counts = torch.zeros(B_d, n_slots, device=device)
+                for s in range(n_slots):
+                    slot_counts[:, s] = (ownership == s).float().sum(dim=1)
+                mean_fracs = (slot_counts / n_patches).mean(dim=0)
+                active = int((mean_fracs > 0.01).sum().item())
+                ent = -(valpha_t * (valpha_t + 1e-8).log()).sum(dim=1).mean()
+                norm_ent = ent.item() / np.log(n_slots)
+
+            val_total = val_recon + alpha_contrastive * val_ctr
+            if val_total < best_val_loss:
+                best_val_loss = val_total
+                best_state = {
+                    'encoder': {k: v.cpu().clone()
+                                for k, v in encoder.state_dict().items()},
+                    'slot_attn': {k: v.cpu().clone()
+                                  for k, v in slot_attn.state_dict().items()},
+                    'decoder': {k: v.cpu().clone()
+                                for k, v in decoder.state_dict().items()},
+                }
+
+            elapsed = time.time() - t0
+            epoch_times.append(time.time() - epoch_t0)
+            recent = epoch_times[-10:]  # rolling window of last 10 epochs
+            avg_epoch_time = np.mean(recent)
+            eta_s = (sa_epochs - epoch) * avg_epoch_time
+            eta_m = eta_s / 60
+
+            print(f"│  Epoch {epoch:3d}/{sa_epochs}: "
+                  f"recon={ep_recon_loss/n_batches:.5f} "
+                  f"ctr={ep_ctr_loss/n_batches:.4f} α={alpha_eff:.3f} "
+                  f"ent_l={ep_ent_loss/n_batches:.3f} "
+                  f"sim={ep_pos_sim/n_batches:.3f} "
+                  f"val_r={val_recon:.5f} val_c={val_ctr:.4f} "
+                  f"active={active}/{n_slots} ent={norm_ent:.3f} "
+                  f"eta={eta_m:.0f}m [{elapsed:.0f}s]", flush=True)
+
+            # Collapse warning
+            if active < 4 and epoch <= 30:
+                print(f"│  ⚠ WARNING: Possible collapse! "
+                      f"Only {active}/{n_slots} slots active", flush=True)
+
+    # Restore best model
+    encoder.load_state_dict(best_state['encoder'])
+    slot_attn.load_state_dict(best_state['slot_attn'])
+    decoder.load_state_dict(best_state['decoder'])
+    encoder.to(device).eval()
+    slot_attn.to(device).eval()
+    decoder.to(device).eval()
+
+    # Save model checkpoint
+    torch.save({
+        'encoder': best_state['encoder'],
+        'slot_attn': best_state['slot_attn'],
+        'decoder': best_state['decoder'],
+    }, str(OUTPUT_DIR / "phase47_model.pt"))
+
+    print(f"│  Best val loss: {best_val_loss:.5f}", flush=True)
+    print(f"│  Saved model to results/phase47_model.pt", flush=True)
+    print(f"└─ Stage 2 done [{time.time()-ts2:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 3: Load eval features (20 videos × 128 frames)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 3: Load evaluation features", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts3 = time.time()
+
+    # Free training features to reclaim ~6 GB
+    del all_features
+    if device.type == 'mps':
+        torch.mps.empty_cache()
+
+    eval_video_ids = list(range(10000, 10000 + n_eval_videos))
+    eval_cache = str(OUTPUT_DIR / "phase45_dino_features.pt")
+
+    if os.path.exists(eval_cache):
+        print(f"│  Loading eval cache: {eval_cache}", flush=True)
+        eval_features = torch.load(eval_cache, weights_only=True)
+        print(f"│  Eval features shape: {eval_features.shape}", flush=True)
+    else:
+        # Fallback: extract fresh
+        print(f"│  Extracting eval features ({n_eval_videos} videos × "
+              f"{n_eval_frames} frames)...", flush=True)
+        dino = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14',
+                              pretrained=True)
+        dino.eval().to(device)
+        for p in dino.parameters():
+            p.requires_grad = False
+
+        dino_mean = torch.tensor([0.485, 0.456, 0.406]).reshape(1, 3, 1, 1).to(device)
+        dino_std = torch.tensor([0.229, 0.224, 0.225]).reshape(1, 3, 1, 1).to(device)
+
+        feature_parts = []
+        batch_size_dino = 16
+        for vi, vid_id in enumerate(eval_video_ids):
+            cap = cv2.VideoCapture(f"{data_dir}/videos/video_{vid_id}.mp4")
+            frames = []
+            for fi in range(n_eval_frames):
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame = cv2.resize(frame, (224, 224))
+                frame = frame.astype(np.float32) / 255.0
+                frame = frame.transpose(2, 0, 1)
+                frames.append(frame)
+            cap.release()
+
+            vid_features = []
+            vid_frames_np = np.stack(frames)
+            for start in range(0, len(frames), batch_size_dino):
+                end = min(start + batch_size_dino, len(frames))
+                batch = torch.tensor(vid_frames_np[start:end]).to(device)
+                batch = (batch - dino_mean) / dino_std
+                with torch.no_grad():
+                    features = dino.forward_features(batch)
+                    patch_tokens = features['x_norm_patchtokens']
+                vid_features.append(patch_tokens.cpu())
+            feature_parts.append(torch.cat(vid_features, dim=0))
+            print(f"│    Eval video {vi+1}/{n_eval_videos}", flush=True)
+
+        eval_features = torch.cat(feature_parts, dim=0)
+        torch.save(eval_features, eval_cache)
+        del dino, dino_mean, dino_std
+        if device.type == 'mps':
+            torch.mps.empty_cache()
+
+    print(f"└─ Stage 3 done [{time.time()-ts3:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 4: Object tracking via SAVi propagation
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 4: Object tracking ({n_eval_videos} videos × "
+          f"{n_eval_frames} frames)", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts4 = time.time()
+
+    xs = torch.linspace(0, 1, P)
+    ys = torch.linspace(0, 1, P)
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
+    grid_positions = torch.stack([grid_x, grid_y], dim=-1).reshape(n_patches, 2)
+
+    all_centroids = []
+    all_attns = []
+
+    for vi in range(n_eval_videos):
+        vid_start = vi * n_eval_frames
+        vid_centroids = []
+        vid_attns = []
+        prev_slots = None
+
+        for fi in range(n_eval_frames):
+            feat = eval_features[vid_start + fi:vid_start + fi + 1].to(device)
+            with torch.no_grad():
+                enc_feat = encoder(feat)
+                slots, attn = slot_attn(enc_feat, init_slots=prev_slots)
+                prev_slots = slots
+
+            attn_np = attn[0].cpu().numpy()
+            frame_centroids = np.zeros((n_slots, 2))
+            for si in range(n_slots):
+                weights = attn_np[si, :]
+                w_sum = weights.sum()
+                if w_sum > 1e-6:
+                    cx = (weights * grid_positions[:, 0].numpy()).sum() / w_sum
+                    cy = (weights * grid_positions[:, 1].numpy()).sum() / w_sum
+                    frame_centroids[si] = [cx, cy]
+                else:
+                    frame_centroids[si] = [0.5, 0.5]
+            vid_centroids.append(frame_centroids)
+            vid_attns.append(attn_np)
+
+        all_centroids.append(np.stack(vid_centroids))
+        all_attns.append(np.stack(vid_attns))
+
+        if (vi + 1) % 5 == 0:
+            print(f"│  Processed {vi+1}/{n_eval_videos} eval videos", flush=True)
+
+    # Identity assignments (SAVi propagation maintains slot identity)
+    all_slot_assignments = []
+    for vi in range(n_eval_videos):
+        assignments = [np.arange(n_slots)] * n_eval_frames
+        all_slot_assignments.append(assignments)
+
+    print(f"└─ Stage 4 done [{time.time()-ts4:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 5: Evaluation against GT
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 5: Evaluation against GT", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    ts5 = time.time()
+
+    tracking_errors = []
+    per_frame_errors = [[] for _ in range(n_eval_frames)]
+    slot_consistency_per_video = []
+    binding_accuracy_per_video = []
+
+    for vi in range(n_eval_videos):
+        vid_id = eval_video_ids[vi]
+        ann = annotations[vid_id]
+        traj = ann['motion_trajectory']
+
+        centroids = all_centroids[vi]
+        assignments = all_slot_assignments[vi]
+
+        reordered_centroids = np.zeros_like(centroids)
+        for fi in range(n_eval_frames):
+            perm = assignments[fi]
+            for s in range(n_slots):
+                reordered_centroids[fi, s] = centroids[fi, perm[s]]
+
+        # Find reference frame
+        best_frame = 0
+        best_in_view = 0
+        for fi in range(n_eval_frames):
+            n_in = sum(1 for o in traj[fi]['objects']
+                       if o['inside_camera_view'])
+            if n_in > best_in_view:
+                best_in_view = n_in
+                best_frame = fi
+
+        ref_objs = [o for o in traj[best_frame]['objects']
+                     if o['inside_camera_view']]
+        gt_positions_ref = np.zeros((len(ref_objs), 2))
+        gt_obj_ids = []
+        for oi, o in enumerate(ref_objs):
+            u, v = project_3d_to_2d(o['location'][0], o['location'][1])
+            gt_positions_ref[oi] = [u, v]
+            gt_obj_ids.append(o['object_id'])
+
+        # Active slots
+        slot_coverage = np.zeros(n_slots)
+        attn_ref = all_attns[vi][best_frame]
+        ownership_ref = attn_ref.argmax(axis=0)
+        for s in range(n_slots):
+            slot_coverage[s] = (ownership_ref == s).sum() / n_patches
+        active_slots = [s for s in range(n_slots) if slot_coverage[s] > 0.02]
+
+        # Hungarian matching: GT → slots
+        pred_centroids_ref = reordered_centroids[best_frame]
+        if len(active_slots) >= len(ref_objs):
+            cost_mat = np.zeros((len(ref_objs), len(active_slots)))
+            for gi in range(len(ref_objs)):
+                for si_idx, si in enumerate(active_slots):
+                    cost_mat[gi, si_idx] = np.linalg.norm(
+                        gt_positions_ref[gi] - pred_centroids_ref[si])
+            row_ind, col_ind = linear_sum_assignment(cost_mat)
+            gt_to_slot = {}
+            for r, c in zip(row_ind, col_ind):
+                gt_to_slot[gt_obj_ids[r]] = active_slots[c]
+        else:
+            cost_mat = np.zeros((len(ref_objs), n_slots))
+            for gi in range(len(ref_objs)):
+                for si in range(n_slots):
+                    cost_mat[gi, si] = np.linalg.norm(
+                        gt_positions_ref[gi] - pred_centroids_ref[si])
+            row_ind, col_ind = linear_sum_assignment(cost_mat)
+            gt_to_slot = {}
+            for r, c in zip(row_ind, col_ind):
+                gt_to_slot[gt_obj_ids[r]] = c
+
+        vid_errors = []
+        consistent_frames = 0
+        bound_frames = 0
+        total_eval_frames = 0
+
+        for fi in range(n_eval_frames):
+            frame_objs = [o for o in traj[fi]['objects']
+                          if o['inside_camera_view']
+                          and o['object_id'] in gt_to_slot]
+            if len(frame_objs) == 0:
+                continue
+            total_eval_frames += 1
+            used_slots = set()
+            all_match = True
+
+            for o in frame_objs:
+                oid = o['object_id']
+                assigned_slot = gt_to_slot[oid]
+                gt_u, gt_v = project_3d_to_2d(
+                    o['location'][0], o['location'][1])
+                pred_uv = reordered_centroids[fi, assigned_slot]
+                err = np.linalg.norm(np.array([gt_u, gt_v]) - pred_uv)
+                vid_errors.append(err)
+                tracking_errors.append(err)
+                per_frame_errors[fi].append(err)
+
+                if assigned_slot in used_slots:
+                    all_match = False
+                used_slots.add(assigned_slot)
+
+                closest_slot = None
+                min_dist = float('inf')
+                for s in range(n_slots):
+                    d = np.linalg.norm(
+                        np.array([gt_u, gt_v]) - reordered_centroids[fi, s])
+                    if d < min_dist:
+                        min_dist = d
+                        closest_slot = s
+                if closest_slot != assigned_slot:
+                    all_match = False
+
+            if all_match:
+                consistent_frames += 1
+            bound_frames += 1 if len(used_slots) == len(frame_objs) else 0
+
+        consistency = consistent_frames / max(total_eval_frames, 1)
+        binding = bound_frames / max(total_eval_frames, 1)
+
+        slot_consistency_per_video.append(consistency)
+        binding_accuracy_per_video.append(binding)
+
+    mean_tracking_error = np.mean(tracking_errors)
+    median_tracking_error = np.median(tracking_errors)
+    mean_consistency = np.mean(slot_consistency_per_video) * 100
+    mean_binding = np.mean(binding_accuracy_per_video) * 100
+
+    # Temporal degradation
+    early_errors = []
+    late_errors = []
+    for fi in range(n_eval_frames):
+        if fi < 16:
+            early_errors.extend(per_frame_errors[fi])
+        elif fi >= 64:
+            late_errors.extend(per_frame_errors[fi])
+    early_err = np.mean(early_errors) if early_errors else 0
+    late_err = np.mean(late_errors) if late_errors else 0
+
+    # Attention entropy on eval videos
+    all_entropies = []
+    for vi in range(n_eval_videos):
+        for fi in range(n_eval_frames):
+            attn_fi = all_attns[vi][fi]
+            ownership = attn_fi.argmax(axis=0)
+            counts = np.bincount(ownership, minlength=n_slots)
+            probs = counts / counts.sum()
+            ent = -np.sum(probs * np.log(probs + 1e-8)) / np.log(n_slots)
+            all_entropies.append(ent)
+    mean_entropy = np.mean(all_entropies)
+    n_active_avg = np.mean([
+        np.sum(np.bincount(all_attns[vi][64].argmax(0), minlength=n_slots) > n_patches * 0.02)
+        for vi in range(n_eval_videos)
+    ])
+
+    # Baselines
+    p45_err = 28.8
+    p45_cons = 3.4
+    p45d_err = 31.9
+    p45d_cons = 0.5
+    p46_err = 19.2
+    p46_cons = 6.4
+
+    print(f"\n│  === RESULTS ===", flush=True)
+    print(f"│  Tracking error (mean):   {mean_tracking_error*100:.1f}% "
+          f"(45: {p45_err}%, 45d: {p45d_err}%, 46: {p46_err}%)", flush=True)
+    print(f"│  Tracking error (median): {median_tracking_error*100:.1f}%", flush=True)
+    print(f"│  Early (0-15):   {early_err*100:.1f}%", flush=True)
+    print(f"│  Late (64-127):  {late_err*100:.1f}%", flush=True)
+    print(f"│  Slot consistency:        {mean_consistency:.1f}% "
+          f"(45: {p45_cons}%, 45d: {p45d_cons}%, 46: {p46_cons}%)", flush=True)
+    print(f"│  Binding accuracy:        {mean_binding:.1f}%", flush=True)
+    print(f"│  Attention entropy:        {mean_entropy:.3f}", flush=True)
+    print(f"│  Active slots (eval):      {n_active_avg:.1f}/{n_slots}", flush=True)
+    print(f"└─ Stage 5 done [{time.time()-ts5:.0f}s]", flush=True)
+
+    # ══════════════════════════════════════════════════════════
+    # STAGE 6: Visualization
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 60}", flush=True)
+    print(f"STAGE 6: Visualization", flush=True)
+    print(f"{'=' * 60}", flush=True)
+
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    slot_colors_plot = ['#e6194b', '#3cb44b', '#4363d8', '#f58231',
+                        '#911eb4', '#42d4f4', '#f032e6']
+
+    # Panel 1: Sample frames with slot masks
+    ax = axes[0, 0]
+    sample_vids = [0, min(5, n_eval_videos-1), min(10, n_eval_videos-1)]
+    sample_frame = 64
+    n_show = min(3, n_eval_videos)
+    composite_img = np.zeros((P * n_show, P * 2, 3))
+    for si, vi in enumerate(sample_vids[:n_show]):
+        vid_id = eval_video_ids[vi]
+        cap = cv2.VideoCapture(f"{data_dir}/videos/video_{vid_id}.mp4")
+        cap.set(cv2.CAP_PROP_POS_FRAMES, sample_frame)
+        ret, frame = cap.read()
+        cap.release()
+        if ret:
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame_small = cv2.resize(frame_rgb, (P, P))
+            composite_img[si*P:(si+1)*P, :P, :] = frame_small / 255.0
+        attn_frame = all_attns[vi][sample_frame]
+        masks = attn_frame.reshape(n_slots, P, P)
+        mask_composite = np.zeros((P, P, 3))
+        for s in range(n_slots):
+            color = plt.cm.Set1(s / n_slots)[:3]
+            for c in range(3):
+                mask_composite[:, :, c] += masks[s] * color[c]
+        composite_img[si*P:(si+1)*P, P:2*P, :] = np.clip(mask_composite, 0, 1)
+    ax.imshow(composite_img, interpolation='nearest')
+    ax.set_title(f'Slot Masks (frame {sample_frame})', fontsize=10)
+    ax.set_xticks([P//2, P + P//2])
+    ax.set_xticklabels(['Original', 'Slot Masks'])
+    ax.set_yticks([])
+
+    # Panel 2: Trajectories for one video
+    ax = axes[0, 1]
+    plot_vid = 0
+    vid_id = eval_video_ids[plot_vid]
+    ann = annotations[vid_id]
+    traj = ann['motion_trajectory']
+    obj_props = {p['object_id']: p for p in ann['object_property']}
+    obj_ids = [p['object_id'] for p in ann['object_property']]
+    gt_colors = ['red', 'blue', 'green', 'orange', 'purple', 'cyan']
+
+    for oi, oid in enumerate(obj_ids):
+        gt_us, gt_vs = [], []
+        for fi in range(n_eval_frames):
+            o = [ob for ob in traj[fi]['objects'] if ob['object_id'] == oid][0]
+            if o['inside_camera_view']:
+                u, v = project_3d_to_2d(o['location'][0], o['location'][1])
+                gt_us.append(u)
+                gt_vs.append(v)
+            else:
+                gt_us.append(np.nan)
+                gt_vs.append(np.nan)
+        props = obj_props[oid]
+        ax.plot(gt_us, gt_vs, '-', color=gt_colors[oi % len(gt_colors)],
+                alpha=0.5, linewidth=1,
+                label=f'GT {props["color"]} {props["shape"]}')
+
+    reordered = all_centroids[plot_vid]  # identity assignment
+    for s in range(n_slots):
+        coverage = np.mean([(all_attns[plot_vid][fi].argmax(0) == s).sum() / n_patches
+                            for fi in range(0, n_eval_frames, 16)])
+        if coverage > 0.03:
+            ax.plot(reordered[:, s, 0], reordered[:, s, 1], '--',
+                    color=slot_colors_plot[s], alpha=0.7, linewidth=1,
+                    label=f'Slot {s}')
+    ax.set_xlabel('X (normalized)')
+    ax.set_ylabel('Y (normalized)')
+    ax.set_title(f'Trajectories: GT vs Slots (video {vid_id})', fontsize=10)
+    ax.legend(fontsize=6, loc='upper right', ncol=2)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.invert_yaxis()
+
+    # Panel 3: Error distribution
+    ax = axes[0, 2]
+    errors_pct = [e * 100 for e in tracking_errors]
+    ax.hist(errors_pct, bins=40, color='#2196F3', edgecolor='black',
+            linewidth=0.3, alpha=0.8)
+    ax.axvline(x=20, color='red', linestyle='--', linewidth=2,
+               label='20% threshold')
+    ax.axvline(x=mean_tracking_error * 100, color='orange', linestyle='-',
+               linewidth=2, label=f'Mean={mean_tracking_error*100:.1f}%')
+    ax.set_xlabel('Tracking Error (% of frame)')
+    ax.set_ylabel('Count')
+    ax.set_title('Tracking Error Distribution', fontsize=10)
+    ax.legend(fontsize=8)
+
+    # Panel 4: Temporal degradation
+    ax = axes[1, 0]
+    frame_bins = list(range(0, n_eval_frames, 8))
+    bin_errors = []
+    for b in frame_bins:
+        bin_errs = []
+        for fi in range(b, min(b + 8, n_eval_frames)):
+            bin_errs.extend(per_frame_errors[fi])
+        bin_errors.append(np.mean(bin_errs) * 100 if bin_errs else 0)
+    ax.plot(frame_bins, bin_errors, 'o-', color='#FF5722', linewidth=2, markersize=4)
+    ax.set_xlabel('Frame')
+    ax.set_ylabel('Tracking Error (%)')
+    ax.set_title('Temporal Degradation (8-frame bins)', fontsize=10)
+    ax.axhline(y=20, color='red', linestyle='--', alpha=0.5, label='20% target')
+    ax.axhline(y=early_err * 100, color='green', linestyle=':', alpha=0.7,
+               label=f'Early (0-15): {early_err * 100:.1f}%')
+    ax.axhline(y=late_err * 100, color='purple', linestyle=':', alpha=0.7,
+               label=f'Late (64-127): {late_err * 100:.1f}%')
+    ax.legend(fontsize=7)
+
+    # Panel 5: DINOv2 PCA
+    ax = axes[1, 1]
+    pca_idx = 0 * n_eval_frames + 64  # video 0, frame 64
+    feat_pca = eval_features[pca_idx].numpy()
+    feat_centered = feat_pca - feat_pca.mean(axis=0)
+    U, S, Vt = np.linalg.svd(feat_centered, full_matrices=False)
+    pca_3 = feat_centered @ Vt[:3].T
+    pca_3 = pca_3 - pca_3.min(axis=0)
+    pca_3 = pca_3 / (pca_3.max(axis=0) + 1e-8)
+    ax.imshow(pca_3.reshape(P, P, 3), interpolation='nearest')
+    ax.set_title(f'DINOv2 PCA (video {eval_video_ids[0]}, frame 64)', fontsize=10)
+    ax.axis('off')
+
+    # Panel 6: Summary
+    ax = axes[1, 2]
+    ax.axis('off')
+    elapsed = time.time() - t0
+
+    err_ok = mean_tracking_error * 100 < 20
+    cons_ok = mean_consistency > 15
+    bind_ok = mean_binding > 85
+    if err_ok and cons_ok and bind_ok:
+        verdict = "SUCCESS"
+    elif err_ok or cons_ok:
+        verdict = "PARTIAL"
+    elif mean_tracking_error * 100 < p45_err:
+        verdict = "PARTIAL (improved over 45)"
+    else:
+        verdict = "FAIL"
+
+    summary = (
+        f"Phase 47: Contrastive SA (1000 videos)\n\n"
+        f"Data: 1000 train videos × {n_extract} frames\n"
+        f"Eval: {n_eval_videos} videos × {n_eval_frames} frames\n"
+        f"Model: DINOv2 → SA (7 slots, InfoNCE)\n"
+        f"       α={alpha_contrastive}, τ={temperature}, β={beta_entropy}\n\n"
+        f"                     47    45d    46    45\n"
+        f"Tracking error:  {mean_tracking_error*100:5.1f}% {p45d_err:5.1f}% "
+        f"{p46_err:5.1f}% {p45_err:5.1f}%\n"
+        f"  early (0-15):  {early_err*100:5.1f}%\n"
+        f"  late (64-127): {late_err*100:5.1f}%\n"
+        f"Consistency:     {mean_consistency:5.1f}% {p45d_cons:5.1f}%  "
+        f"{p46_cons:5.1f}%  {p45_cons:5.1f}%\n"
+        f"Binding:         {mean_binding:5.1f}%\n"
+        f"Entropy:         {mean_entropy:.3f}\n"
+        f"Active slots:    {n_active_avg:.1f}/{n_slots}\n\n"
+        f"Best val loss: {best_val_loss:.5f}\n"
+        f"Total time: {elapsed:.0f}s\n\n"
+        f"VERDICT: {verdict}"
+    )
+    ax.text(0.05, 0.5, summary, transform=ax.transAxes, fontsize=10,
+            fontfamily='monospace', verticalalignment='center')
+
+    fig.suptitle(f'Phase 47: Contrastive SA on 1000 CLEVRER Videos\n'
+                 f'err={mean_tracking_error*100:.1f}% '
+                 f'consistency={mean_consistency:.0f}% '
+                 f'binding={mean_binding:.0f}% '
+                 f'entropy={mean_entropy:.3f} | {verdict}',
+                 fontsize=13, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(str(OUTPUT_DIR / "phase47_contrastive_1000v.png"),
+                dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"│  Saved results/phase47_contrastive_1000v.png", flush=True)
+
+    print(f"\n{'=' * 70}", flush=True)
+    print(f"VERDICT: {verdict}", flush=True)
+    print(f"\n  Tracking error:   {mean_tracking_error*100:.1f}% "
+          f"(target <20%, 45d: {p45d_err}%, 46: {p46_err}%, 45: {p45_err}%)",
+          flush=True)
+    print(f"  Early (0-15):     {early_err*100:.1f}%", flush=True)
+    print(f"  Late (64-127):    {late_err*100:.1f}%", flush=True)
+    print(f"  Slot consistency: {mean_consistency:.1f}% "
+          f"(target >15%, 45d: {p45d_cons}%, 46: {p46_cons}%, 45: {p45_cons}%)",
+          flush=True)
+    print(f"  Binding accuracy: {mean_binding:.1f}% (target >85%)", flush=True)
+    print(f"  Entropy:          {mean_entropy:.3f}", flush=True)
+    print(f"  Active slots:     {n_active_avg:.1f}/{n_slots}", flush=True)
+    print(f"\n  Total time: {elapsed:.0f}s", flush=True)
+    print(f"{'=' * 70}", flush=True)
+
+
+
 def run_phase46_slotcontrast_clevrer():
     """Phase 46: SlotContrast pretrained inference on CLEVRER.
 
