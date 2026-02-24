@@ -3059,3 +3059,61 @@ The collapse coincides with Gumbel temperature dropping below ~0.7. At low tempe
 | 48f | **4×16 Gumbel** | Obj A, GT | 89.8% | 64.1% | **18.4%** | **-45.7pp** | **0.0** |
 
 The multi-token channel collapsed. Before collapse (epoch 100), it showed +8pp comm gain — more bandwidth does help, but the optimization is unstable. Next: either fix the optimization (entropy reg, temperature floor) or use a continuous channel.
+
+## Phase 48g: Entropy Regularization
+
+**Date**: 2026-02-24
+**Status**: FAIL — collapse not prevented
+
+### Goal
+
+Fix 48f's message collapse with two changes: (1) `gumbel_tau_end = 1.0` (was 0.5), (2) entropy regularization `loss = task_loss - 0.1 * msg_entropy` to penalize low-entropy messages.
+
+### Config
+
+| Parameter | Phase 48f | Phase 48g |
+|-----------|-----------|-----------|
+| gumbel_tau_end | 0.5 | **1.0** |
+| Entropy reg | None | **-0.1 × msg_entropy** |
+| Everything else | Identical | Identical |
+
+Entropy computed from softmax of sender logits (differentiable), normalized by log(vocab_size) to [0,1].
+
+### Results
+
+| Metric | Phase 48g | Phase 48f | Target |
+|--------|-----------|-----------|--------|
+| Val with communication | 18.4% | 18.4% | >30% |
+| Val without communication | 64.1% | 64.1% | — |
+| Val oracle | 89.8% | 89.8% | >50% |
+| Communication gain | **-45.7pp** | -45.7pp | >10pp |
+| Message entropy | 0.0 | 0.0 | >0.3 |
+| Unique messages | 1/65536 | 1/65536 | — |
+
+### Training Dynamics
+
+Identical collapse pattern to 48f:
+- Epoch 100: comm 54% val, entropy 0.598, tau=1.29 — **+7pp gain**
+- Epoch 120: **complete collapse** at tau=1.14 — all tokens → symbol 0
+- Epochs 120-200: constant message, comm at chance (18%)
+
+The tau floor (1.0) was irrelevant — collapse happened at tau=1.14, above the floor. The entropy regularization using softmax of logits creates a positive feedback loop: once tokens start converging, softmax entropy drops to 0, removing the regularization pressure exactly when it's needed most.
+
+### Analysis
+
+**Softmax entropy reg fails for Gumbel-Softmax.** The problem is that the regularizer operates on the *logits* softmax, which tracks the hard samples. When the hard Gumbel-Softmax commits to one-hot outputs, the logits shift to match, and the softmax entropy tracks the already-collapsed distribution rather than preventing collapse.
+
+**The collapse is in the hard Gumbel-Softmax itself**, not in the temperature schedule. At tau≈1.1, the 4 independent Gumbel-Softmax tokens create a noisy gradient landscape. The sender's encoder weights shift to produce extreme logits, making one symbol dominate regardless of temperature.
+
+**VERDICT: FAIL** — entropy regularization on logits softmax cannot prevent multi-token Gumbel-Softmax collapse. The +7pp pre-collapse gain is reproducible (48f: +8pp, 48g: +7pp) but unsustainable.
+
+### Updated Key Takeaway (48 series)
+
+| Phase | Channel | Agent B | Oracle | No-comm | Comm | Gain | Entropy |
+|-------|---------|---------|--------|---------|------|------|---------|
+| 48d | 1×8 Gumbel | Both obj, GT | 92.4% | 72.3% | 73.0% | +0.6pp | 0.513 |
+| 48e | 1×8 Gumbel | Obj A, GT | 86.9% | 65.2% | 62.1% | -3.1pp | 0.548 |
+| 48f | 4×16 Gumbel | Obj A, GT | 89.8% | 64.1% | 18.4% | -45.7pp | 0.0 |
+| 48g | 4×16 Gumbel+ent | Obj A, GT | 89.8% | 64.1% | 18.4% | -45.7pp | 0.0 |
+
+Multi-token Gumbel-Softmax consistently collapses. Pre-collapse shows +7-8pp gain proving bandwidth helps. Need fundamentally different channel: continuous bottleneck (VQ-VAE, straight-through estimator) or single-token with larger vocab.
