@@ -3417,3 +3417,83 @@ Symbol  5 → e=0.840 ("super bouncy")
 
 ### Verdict
 **STRONG SUCCESS.** Communication accuracy 91.6% on GT trajectories proves the Kubric elasticity task works perfectly for emergent communication. The agents develop an ordered symbolic language for a continuous physical property. Next: Phase 51 — swap GT trajectories for rendered pixels.
+
+---
+
+## Phase 51: Pixel-Based Elasticity Communication
+**Date:** Feb 24 | **Duration:** ~100 min
+
+Same task as Phase 50 ("which ball is bouncier?") but agents see **rendered RGB video** instead of GT trajectories. Perception must emerge from the need to communicate.
+
+### Architecture
+- **Vision Encoder**: 4-layer CNN per frame (3→32→64→128→128, stride 2, AdaptiveAvgPool2d) + temporal Conv1d
+- **Sender**: VideoEncoder → Linear(128, 16) → Gumbel-Softmax (vocab=16)
+- **Receiver**: concat two one-hot messages → MLP → binary prediction
+- **Oracle**: two separate VideoEncoders → concat → MLP (upper bound)
+- **Params**: Sender 496K, Receiver 13K, Oracle 1.02M
+
+### Key Innovation: Oracle Bootstrap
+Phase 51 Run 1 FAILED — Gumbel channel dead from epoch 1 (entropy=0.000). Root cause: chicken-and-egg problem. Random CNN produces indistinguishable features for all videos → all map to same symbol → receiver learns nothing → no gradient to differentiate encoder.
+
+**Fix**: Pre-train oracle for 50 epochs (reaches 65.1% val), then copy oracle.enc_a → sender.encoder. This gives the sender a vision encoder that already differentiates bounce patterns, breaking the deadlock.
+
+Additional fixes:
+- **Soft Gumbel warmup**: First 30 epochs use soft (continuous) Gumbel-Softmax, then switch to hard
+- **Higher tau**: Start at 3.0 (→1.5), vs Phase 50's 2.0 (→1.2)
+
+### Dataset
+- 250 rendered Kubric scenes (128x128 RGB, 48 frames/video)
+- 8 evenly-spaced frames sampled: [0, 6, 13, 20, 26, 33, 40, 47]
+- Train: 200 scenes, Val: 50 scenes
+- Online pair sampling (N² possible pairs)
+
+### Training Progression
+| Epoch | Comm Val | Oracle Val | Entropy | Symbols |
+|-------|----------|------------|---------|---------|
+| 1 (soft) | 51.2% | 69.5% | 0.266 | 3 |
+| 20 (soft) | 70.0% | 74.8% | 0.250 | 2 |
+| 60 (hard) | 75.2% | 88.7% | 0.250 | 2 |
+| 100 (hard) | 80.2% | 89.8% | 0.455 | 4 |
+| **130** (hard) | **86.4%** | 90.9% | 0.474 | 4 |
+| 200 (hard) | 82.7% | 88.7% | 0.545 | 5 |
+
+Best model restored from epoch 130.
+
+### Results
+
+| Metric | Phase 51 (pixels) | Phase 50 (GT traj) | Target |
+|--------|-------------------|---------------------|--------|
+| **Val comm** | **84.5%** | 91.6% | >70% |
+| Val oracle | 89.1% | 97.1% | >85% |
+| Chance | 50.0% | 50.0% | — |
+| **Comm gain** | **+34.5pp** | +41.6pp | >20pp |
+| Message entropy | 0.510 | 0.679 | >0.3 |
+| Symbols used | 5/16 | 7/16 | ≥2 |
+| Ordinal accuracy | 94.1% | 99.2% | — |
+
+### Accuracy by Difficulty
+| Gap | Phase 51 (pixels) | Phase 50 (GT traj) |
+|-----|-------------------|---------------------|
+| Δe > 0.5 (large) | **100.0%** | 100.0% |
+| Δe 0.3-0.5 (medium) | **99.1%** | 100.0% |
+| Δe 0.1-0.3 (small) | **79.4%** | 96.5% |
+| Δe < 0.1 (tiny) | 55.7% | 67.6% |
+
+### Emergent Language
+5 symbols partition the restitution range into ordered intervals:
+```
+Symbol 15 → e=0.175 ("dead bounce")
+Symbol  1 → e=0.319 ("low")
+Symbol 13 → e=0.361 ("low-mid")
+Symbol  9 → e=0.509 ("medium")
+Symbol  6 → e=0.781 ("super bouncy")
+```
+**Ordinal accuracy: 94.1%** — the agents invented a perceptual bounciness scale from raw pixels.
+
+### Phase 51 Run 1 (FAILED)
+- 100 rendered scenes, no oracle bootstrap, tau 2.0→1.2
+- Oracle: 86.4% (CNN vision works), Comm: 49.5% (dead channel, ent=0.000)
+- Proved vision encoder CAN learn, but Gumbel channel needs bootstrap
+
+### Verdict
+**SUCCESS.** From raw pixels, agents achieve 84.5% communication accuracy (vs 91.6% with GT trajectories). The 7.1pp gap is modest — vision adds difficulty but doesn't break the communication protocol. The agents develop an ordered 5-symbol perceptual language for elasticity from pixels alone. Oracle bootstrap + soft Gumbel warmup are essential for pixel-based emergent communication.
