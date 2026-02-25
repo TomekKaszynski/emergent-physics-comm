@@ -3551,3 +3551,42 @@ All ablations validate Phase 51 claims:
 2. **Bottleneck is efficient**: Only 5.8pp below supervised upper bound
 3. **Temporal dynamics help**: 8-frame beats single-frame by 11.5pp
 4. **Symbols encode physics**: 1.26 bits MI, 86% variance reduction
+
+---
+
+## Phase 52: Transfer Test for Emergent Communication
+**Date:** Feb 25 | **Duration:** rendering 70 min + eval 33s
+
+Tests whether the frozen Phase 51 communication protocol transfers to visually different Kubric scenes. Same physics (restitution ∈ [0.05, 0.95], floor e=1.0) but different visual properties.
+
+### Transfer Dataset (200 rendered scenes)
+- **Near-transfer (100 scenes)**: Different ball colors/textures (metallic, roughness), different ground colors (blue/red/green/sand/purple), camera azimuth ±15°, lighting intensity 0.8-2.5
+- **Far-transfer (100 scenes)**: Larger balls (0.25-0.35 vs training 0.12-0.20), lower camera elevation, specular ground material, lower drop height (1.2-1.8 vs 1.5-2.5)
+
+### Results (all weights frozen)
+
+| Condition | Accuracy | Target |
+|-----------|----------|--------|
+| Original val (sanity) | 85.9% | ~84.5% |
+| **Near-transfer** | **50.1%** | >75% strong |
+| **Far-transfer** | **54.8%** | >65% remarkable |
+| Cross-domain (orig↔xfer) | 59.6% | — |
+| Chance | 50.0% | — |
+
+### Symbol Collapse on Transfer
+The sender maps 171/200 transfer scenes (85.5%) to Symbol 6, vs balanced 5-symbol usage on training data. The CNN vision encoder learned pixel statistics specific to the training distribution — when visual style changes, all scenes look "the same" to the encoder.
+
+- Transfer entropy: 0.216 (vs 0.512 on training)
+- Symbol ordering Kendall τ: 0.200 (weak agreement)
+- Per-symbol restitution means are flat (no differentiation)
+
+### Interpretation
+The protocol is **appearance-specific, not abstractly physical**. The agents learned to communicate about elasticity within a specific visual distribution, but the CNN features that distinguish "bouncy" from "not bouncy" are entangled with surface-level pixel statistics (lighting, color, texture, scale). When those change, the encoder can no longer differentiate scenes.
+
+This is expected for a small CNN trained from scratch on 250 scenes. Options for future work:
+1. **DINOv2 backbone** — pre-trained features should be more visually invariant
+2. **Data augmentation** — color jitter, random crop during training
+3. **Domain randomization** — train on visually diverse scenes from the start
+
+### Verdict
+**NO TRANSFER.** Near-transfer 50.1% (chance), far-transfer 54.8% (barely above chance). The communication protocol does not generalize to new visual contexts. This is a limitation of the from-scratch CNN, not of the communication framework itself.
