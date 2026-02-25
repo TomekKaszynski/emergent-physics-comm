@@ -1,0 +1,28 @@
+{
+  "supervised": {
+    "pairwise_acc": 0.9028125,
+    "val_mae": 0.05917666107416153,
+    "spearman_r": 0.9499895826099032,
+    "pearson_r": 0.9591868623710544
+  },
+  "random_messages": {
+    "acc_random": 0.4934375
+  },
+  "single_frame": {
+    "sf_comm_acc": 0.73,
+    "sf_oracle_acc": 0.729375
+  },
+  "shuffled_messages": {
+    "acc_normal": 0.8525,
+    "acc_shuffled": 0.494375
+  },
+  "mutual_info": {
+    "mi_bits": 1.256241778697987,
+    "channel_capacity": 4.0,
+    "h_symbol": 2.049314061723509,
+    "h_elasticity": 3.270605428610163,
+    "nmi": 0.6130059819340066,
+    "mi_over_capacity": 0.31406044467449673,
+    "variance_reduction": 0.8579322819571688
+  }
+}

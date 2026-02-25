@@ -3497,3 +3497,57 @@ Symbol  6 → e=0.781 ("super bouncy")
 
 ### Verdict
 **SUCCESS.** From raw pixels, agents achieve 84.5% communication accuracy (vs 91.6% with GT trajectories). The 7.1pp gap is modest — vision adds difficulty but doesn't break the communication protocol. The agents develop an ordered 5-symbol perceptual language for elasticity from pixels alone. Oracle bootstrap + soft Gumbel warmup are essential for pixel-based emergent communication.
+
+---
+
+## Phase 51 Ablations: Validating Emergent Communication
+**Date:** Feb 25 | **Duration:** ~18 min (1101s)
+
+5 ablation experiments on the Phase 51 pixel-based system. Dataset: 600 rendered scenes (renderer progressed during ablation run).
+
+### Ablation 1: Supervised Baseline
+- Same CNN architecture, trained with MSE to directly regress restitution
+- **Pairwise accuracy: 90.3%** — upper bound without communication bottleneck
+- Spearman r=0.950, Pearson r=0.959, val MAE=0.059
+- Phase 51 comm (84.5%) is only 5.8pp below — bottleneck is remarkably efficient
+
+### Ablation 2: Random Messages
+- Load trained receiver, feed random one-hot vectors instead of learned messages
+- **Accuracy: 49.3%** — indistinguishable from chance
+- Confirms learned messages carry real physics information
+
+### Ablation 3: Single-Frame Communication (critical ablation)
+- Retrain full comm system with only 1 frame (post-bounce, frame index 6/8)
+- Oracle bootstrap + soft Gumbel warmup (same recipe as Phase 51)
+- **Single-frame comm: 73.0%** (vs 84.5% with 8 frames)
+- **Single-frame oracle: 72.9%** (vs 89.1% with 8 frames)
+- Gap: 11.5pp — temporal dynamics provide meaningful additional signal
+- Interpretation: "perceptual grounding with temporal enhancement"
+
+### Ablation 4: Shuffled Messages
+- Trained sender encodes videos normally, but messages shuffled across pairs
+- **Shuffled: 49.4%** (chance) vs Normal: 85.2%
+- Receiver exploits message content, not statistical artifacts
+
+### Ablation 5: Mutual Information
+- **I(symbol; elasticity) = 1.256 bits** (of 4.0 bit capacity = log2(16))
+- **NMI = 0.613** — strong symbol-physics coupling
+- **Variance reduction = 85.8%** — symbols explain 86% of restitution variance
+- H(symbol) = 2.049 bits, H(elasticity binned) = 3.271 bits
+
+### Summary Table
+
+| Condition | Accuracy | vs Phase 51 |
+|-----------|----------|-------------|
+| Supervised baseline | 90.3% | Upper bound |
+| **Phase 51 comm (8-frame)** | **84.5%** | — |
+| Single-frame comm | 73.0% | −11.5pp |
+| Random messages | 49.3% | Chance |
+| Shuffled messages | 49.4% | Chance |
+
+### Verdict
+All ablations validate Phase 51 claims:
+1. **Messages are informative**: Random/shuffled → chance (49%)
+2. **Bottleneck is efficient**: Only 5.8pp below supervised upper bound
+3. **Temporal dynamics help**: 8-frame beats single-frame by 11.5pp
+4. **Symbols encode physics**: 1.26 bits MI, 86% variance reduction
