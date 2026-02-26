@@ -3590,3 +3590,61 @@ This is expected for a small CNN trained from scratch on 250 scenes. Options for
 
 ### Verdict
 **NO TRANSFER.** Near-transfer 50.1% (chance), far-transfer 54.8% (barely above chance). The communication protocol does not generalize to new visual contexts. This is a limitation of the from-scratch CNN, not of the communication framework itself.
+
+---
+
+## Phase 53: Augmented Training + Transfer Re-test
+**Date:** Feb 25-26 | **Duration:** ~6.7h (oracle 25min + comm 375min + eval)
+
+Retrain Phase 51 with heavy data augmentation during communication training, then re-evaluate on the Phase 52 transfer dataset (200 scenes already rendered).
+
+### Changes from Phase 51
+- **Augmentation during comm training** (NOT oracle pretrain): ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4), horizontal flip (p=0.5), random erasing (p=0.2)
+- Vectorized augmentor (no per-frame Python loops)
+- Oracle pretrain: 50 epochs WITHOUT augmentation (augmented oracle can't learn from random weights — stuck at 49.7%)
+- Comm training: 250 epochs (vs 200), soft warmup 40 epochs (vs 30)
+- Gumbel tau: 3.0 → 1.5
+
+### Training Progression
+| Epoch | Val Comm | Oracle | Entropy | Symbols | Note |
+|-------|----------|--------|---------|---------|------|
+| 1 (soft) | 50.0% | 81.7% | 0.000 | 1/16 | Dead channel start |
+| 20 (soft) | 73.1% | 88.7% | 0.248 | 2/16 | Channel alive |
+| 60 (hard) | 80.8% | 89.8% | 0.378 | 3/16 | Hard switch helps |
+| 120 (hard) | 83.0% | 91.6% | 0.395 | 3/16 | |
+| 180 (hard) | 85.9% | 92.5% | 0.490 | 4/16 | **Best** |
+| 210 (hard) | 86.6% | 93.0% | 0.495 | 4/16 | **Best restored** |
+| 240 (hard) | 47.8% | 92.0% | 0.000 | 1/16 | **COLLAPSED** |
+
+Collapsed at epoch 240 (all symbols → 1). Restored best from epoch 210.
+
+### Transfer Results
+
+| Condition | Phase 52 (no aug) | Phase 53 (augmented) | Δ |
+|-----------|-------------------|----------------------|---|
+| Original val | 85.9% | 85.4% | -0.5pp |
+| **Near-transfer** | 50.1% | **53.5%** | +3.4pp |
+| **Far-transfer** | 54.8% | **61.3%** | +6.5pp |
+| **Cross-domain** | 59.6% | **76.8%** | +17.2pp |
+| Kendall τ | 0.200 | **0.667** | +0.467 |
+
+### Far-Transfer by Difficulty
+| Gap | Accuracy |
+|-----|----------|
+| Tiny (<0.1) | 51.0% |
+| Small (0.1-0.3) | 52.7% |
+| Medium (0.3-0.5) | 65.9% |
+| Large (>0.5) | 75.8% |
+
+### Interpretation
+Augmentation helped **partially** but did not solve the transfer problem:
+- **Cross-domain (76.8%)**: When comparing an original scene to a transfer scene, the shared encoder now produces meaningfully different symbols. This is the strongest improvement.
+- **Far-transfer large gaps (75.8%)**: For extreme restitution differences, the augmented CNN can still differentiate. The bounce dynamics signal overwhelms the visual domain shift for large gaps.
+- **Kendall τ 0.667**: Symbol ordering is now much more consistent across domains (vs 0.200). The 4-symbol vocabulary [15→12→7→10] maps roughly to the same restitution order on transfer data [15→7→12→10].
+- **Near-transfer still 53.5%**: Surface-level visual changes (different materials, lighting) are NOT covered by the augmentation types used (brightness/contrast/saturation). Would need material/texture augmentation specifically.
+- **Symbol dominance reduced**: Symbol 10 absorbed 76.5% of transfer scenes (vs 85.5% for Symbol 6 in Phase 52). Less extreme collapse.
+
+### Verdict
+**PARTIAL IMPROVEMENT, NOT SUFFICIENT.** Augmentation improves cross-domain (+17pp) and far-transfer large gaps (+21pp on large), but near-transfer remains at chance (53.5%). The CNN architecture with simple color augmentation cannot generalize to material/texture changes. Next steps:
+1. **DINOv2 backbone** — pre-trained features with built-in visual invariance
+2. **Domain randomization at data generation time** — train on Kubric scenes with randomized materials/lighting from the start
