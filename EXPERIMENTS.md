@@ -3986,3 +3986,40 @@ Augmentation helped **partially** but did not solve the transfer problem:
 ### Files
 - `_phase54e_pop_simultaneous.py` — simultaneous reset + vocab=5
 - `results/phase54e_pop_simultaneous.json` — all results
+
+### Phase 54e: 20-seed characterization
+
+**Date:** 2026-02-27
+**Purpose:** Characterize the bimodal distribution seen in 5-seed run. Same config (pop simultaneous + vocab=5), 20 seeds (0-19).
+
+**Results (n=20):**
+
+| Group | Count | % | Mean Holdout | Mean PosDis |
+|---|---|---|---|---|
+| **Compositional (PosDis > 0.4)** | **8** | **40%** | 79.5% ± 6.8% | 0.611 ± 0.121 |
+| Intermediate (0.15-0.4) | 10 | 50% | 76.4% ± 5.3% | 0.286 ± 0.063 |
+| Holistic (PosDis < 0.15) | 2 | 10% | 76.7% ± 4.3% | 0.100 ± 0.042 |
+| **Overall** | **20** | **100%** | **77.7% ± 6.1%** | **0.397 ± 0.203** |
+
+PosDis histogram:
+```
+0.0-0.1 | #   1
+0.1-0.2 | ### 3
+0.2-0.3 | ### 3
+0.3-0.4 | ##### 5
+0.4-0.5 | ## 2
+0.5-0.6 | # 1
+0.6-0.7 | #### 4
+0.7+    | # 1
+```
+
+**Key findings:**
+1. **40% of seeds achieve compositionality (PosDis > 0.4).** This is the highest rate across all conditions. The distribution is NOT purely bimodal — there's a large intermediate group (50%), with only 10% truly holistic.
+2. **Compositional seeds: [0, 4, 6, 14, 16, 17, 18, 19].** Seed 0 reached PosDis=0.814 (highest ever). The compositional group averages 0.611, with strong MI values.
+3. **Holdout is similar across groups.** Compositional (79.5%), intermediate (76.4%), holistic (76.7%) — compositionality doesn't significantly help or hurt accuracy.
+4. **TopSim uniformly high (0.650 ± 0.028).** Even non-compositional seeds have structured protocols, just not disentangled ones.
+5. **Population + simultaneous reset + vocab=5 is the best recipe so far**, but compositionality emergence is stochastic — depends on early training dynamics.
+
+### Files
+- `_phase54e_20seeds.py` — 20-seed characterization
+- `results/phase54e_20seeds.json` — all results
