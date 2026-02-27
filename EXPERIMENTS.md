@@ -3648,3 +3648,86 @@ Augmentation helped **partially** but did not solve the transfer problem:
 **PARTIAL IMPROVEMENT, NOT SUFFICIENT.** Augmentation improves cross-domain (+17pp) and far-transfer large gaps (+21pp on large), but near-transfer remains at chance (53.5%). The CNN architecture with simple color augmentation cannot generalize to material/texture changes. Next steps:
 1. **DINOv2 backbone** — pre-trained features with built-in visual invariance
 2. **Domain randomization at data generation time** — train on Kubric scenes with randomized materials/lighting from the start
+
+---
+
+## Phase 54: Compositional Emergent Communication
+**Date:** Feb 27 | **Duration:** ~3h (incl. rendering)
+
+**Goal:** Test whether compositional communication structure (separate symbols for separate properties) emerges naturally when agents must communicate about TWO independent physical properties.
+
+### Setup
+- **Dataset:** 300 Kubric ramp scenes, 5×5 grid (restitution × friction, each ∈ {0.1, 0.3, 0.5, 0.7, 0.9}), 12 scenes/cell
+- **Ramp physics:** 70° angle, μ_crit=0.785. f=0.1-0.7 slide at distinct speeds, f=0.9 rolls. x_travel ranges 2.1m (f=0.1) to 3.1m (f=0.9). Elasticity controls bounce height after leaving ramp.
+- **Rendered:** 128×128 RGB, 24 frames at 12fps, 8 subsampled for training
+- **Task:** Binary comparison — given two scenes, predict which has higher elasticity AND which has higher friction
+- **Holdout:** Latin square — 5 cells {(0,1), (1,3), (2,0), (3,4), (4,2)}, one per row AND column → 240 train, 60 holdout
+
+### Architecture
+- **Sender (2×8):** VideoEncoder (CNN + temporal pooling) → TWO Gumbel-Softmax heads (vocab=8 each) → concat 16-dim message
+- **Sender (1×64):** Same encoder → ONE Gumbel-Softmax head (vocab=64) → 64-dim message (same capacity control)
+- **Receiver:** Two output heads (elasticity comparison, friction comparison)
+- **Oracle:** Direct comparison (two encoders, no communication bottleneck)
+- **CNN input:** 6-channel (RGB + cumulative diff from frame 0 — encodes displacement/speed)
+- **Encoder transfer:** Oracle pretrain → copy enc_a weights to sender encoder
+
+### Config
+- Oracle: 100 epochs, LR=1e-3
+- Comm: 200 epochs, τ: 3.0→1.0, soft warmup 30 epochs
+- Sender LR=1e-3, Receiver LR=3e-3 (1×64: halved)
+- Entropy regularization (coef=0.03, threshold=0.1)
+- Gradient clipping at 1.0
+
+### Results — Trajectory Mode (sanity check)
+| Metric | 2×8 Train | 2×8 Holdout | 1×64 Train | 1×64 Holdout |
+|--------|-----------|-------------|------------|--------------|
+| Elast | 94.0% | 83.3% | 92.8% | 86.4% |
+| Frict | 93.8% | 85.7% | 93.0% | 81.8% |
+| Both | 89.7% | 69.1% | 87.7% | 68.1% |
+
+**Compositionality metrics (trajectory 2×8):**
+- PosDis: 0.318, TopSim: 0.678
+- MI matrix: Pos 0→Elasticity (0.91), Pos 1→Friction (0.85) — **clear compositional separation!**
+- Entropy: [0.76, 0.77] — good token diversity
+
+**Verdict (trajectory):** SUCCESS — compositionality emerges naturally. Each message position specializes for one property.
+
+### Results — Pixel Mode
+| Metric | 2×8 Train | 2×8 Holdout | 1×64 Train | 1×64 Holdout |
+|--------|-----------|-------------|------------|--------------|
+| Elast | 100% | 93.4% | 88.7% | 86.3% |
+| Frict | 58.0% | 31.9% | 59.1% | 36.8% |
+| Both | 60.6% | 27.4% | 54.7% | 29.3% |
+
+**Compositionality metrics (pixel 2×8):**
+- PosDis: 0.982 (misleadingly high — both positions encode same property!)
+- TopSim: 0.627
+- MI matrix: Pos 0→e (0.92), f (0.03); Pos 1→e (1.06), f (0.005) — **BOTH positions encode elasticity, NEITHER encodes friction**
+- CBM: tokens cluster by elasticity bins (e.g., token=0: e=0.5, token=6: e=3.8)
+
+**Oracle pixel:** Best 52.5% both (e=81.1%, f=61.2% peak). Friction partially detectable but unstable.
+**1×64 pixel:** NaN crash at epoch 100 (Gumbel-Softmax instability with 64-dim vocab). Best before crash: 54.2%.
+
+### Interpretation
+1. **Compositionality requires extractable inputs.** With trajectory data (position sequences), the 2×8 sender learns a clean compositional code: Pos 0→elasticity, Pos 1→friction. MI matrix confirms clear separation (0.91/0.85).
+2. **CNN learns bounce (elasticity) but NOT speed (friction).** Bounce is a large, discrete visual event (ball goes up/down). Speed is a subtle, continuous signal (ball position varies by ~20px across friction levels). Cumulative frame diffs help but don't fully solve it.
+3. **Without friction signal, "compositionality" degenerates to redundant encoding.** Both 2×8 positions encode elasticity, achieving PosDis=0.982 — but this is NOT true compositionality, just redundancy.
+4. **Friction overfits on train (58%) but inverts on holdout (32%).** The CNN memorizes training-specific friction patterns that don't generalize to held-out (e,f) combinations.
+
+### CNN Architecture Details
+- FrameEncoder: 6-channel input (RGB + cumulative diff from frame[0])
+- 4 conv layers with BatchNorm: 6→32→64→128→128, stride=2, AdaptiveAvgPool
+- VideoEncoder: FrameEncoder per frame → Conv1d temporal pooling → FC
+- Pre-fix attempt (no temporal diffs): Oracle stuck at chance (21.5%) for all epochs
+- Post-fix (consecutive diffs): Oracle learned elasticity (99.4%) but not friction
+- Final (cumulative diffs): Oracle learned both partially (81.1% e, 61.2% f peak)
+
+### Verdict
+**PARTIAL SUCCESS.** Trajectory mode demonstrates clean compositional emergence. Pixel mode reveals that compositionality depends on input quality — when only one property is extractable, the compositional structure degenerates. This is an important finding about the prerequisites for compositional communication.
+
+### Files
+- `_phase54_compositional_communication.py` — full training + eval pipeline
+- `kubric/generate_ramp_dataset.py` — ramp scene generator (70° angle)
+- `results/phase54_compositionality.png` — 6-panel visualization
+- `results/phase54_results.json` — final metrics
+- `results/phase54_model.pt` — best models
