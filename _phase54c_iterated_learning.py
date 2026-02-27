@@ -9,9 +9,10 @@ sender to maintain a learnable (compositional) language structure.
 Sender keeps its weights throughout — the language persists, the listener changes.
 
 Run:
-  PYTHONUNBUFFERED=1 PYTORCH_ENABLE_MPS_FALLBACK=1 python3 _phase54c_iterated_learning.py
+  PYTHONUNBUFFERED=1 PYTORCH_ENABLE_MPS_FALLBACK=1 python3 _phase54c_iterated_learning.py [seed]
 """
 
+import sys
 import time
 import json
 import math
@@ -289,7 +290,7 @@ def evaluate_accuracy(sender, receiver, data_t, e_bins, f_bins,
 # Training
 # ══════════════════════════════════════════════════════════════════
 
-def train_oracle(data_t, e_bins, f_bins, train_ids, device):
+def train_oracle(data_t, e_bins, f_bins, train_ids, device, seed=42):
     """Pretrain oracle (no communication bottleneck)."""
     print(f"\n{'='*60}", flush=True)
     print(f"Oracle Pretrain ({ORACLE_EPOCHS} epochs)", flush=True)
@@ -302,7 +303,7 @@ def train_oracle(data_t, e_bins, f_bins, train_ids, device):
     print(f"  Oracle trainable params: {n_params:,}", flush=True)
 
     optimizer = torch.optim.Adam(oracle.parameters(), lr=ORACLE_LR)
-    rng = np.random.RandomState(42)
+    rng = np.random.RandomState(seed)
     e_dev = torch.tensor(e_bins, dtype=torch.float32).to(device)
     f_dev = torch.tensor(f_bins, dtype=torch.float32).to(device)
 
@@ -356,7 +357,8 @@ def train_oracle(data_t, e_bins, f_bins, train_ids, device):
 
 
 def train_communication(sender, receiver, data_t, e_bins, f_bins,
-                        train_ids, holdout_ids, device, msg_dim, tag="2x8"):
+                        train_ids, holdout_ids, device, msg_dim, tag="2x8",
+                        seed=42):
     """Train sender-receiver with iterated learning (periodic receiver resets)."""
     print(f"\n{'='*60}", flush=True)
     print(f"Communication Training [{tag}] ({COMM_EPOCHS} epochs, "
@@ -368,7 +370,7 @@ def train_communication(sender, receiver, data_t, e_bins, f_bins,
     sender_opt = torch.optim.Adam(sender.parameters(), lr=s_lr)
     receiver_opt = torch.optim.Adam(receiver.parameters(), lr=r_lr)
 
-    rng = np.random.RandomState(42)
+    rng = np.random.RandomState(seed)
     e_dev = torch.tensor(e_bins, dtype=torch.float32).to(device)
     f_dev = torch.tensor(f_bins, dtype=torch.float32).to(device)
 
@@ -805,10 +807,18 @@ def plot_results(history_2x8, history_1x64, comp_2x8, comp_1x64,
 # ══════════════════════════════════════════════════════════════════
 
 def main():
+    # Parse optional seed from command line
+    seed = int(sys.argv[1]) if len(sys.argv) > 1 else 42
+    seed_suffix = f"_seed{seed}" if len(sys.argv) > 1 else ""
+
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
     print("=" * 60, flush=True)
-    print("Phase 54c: Iterated Learning (DINOv2)", flush=True)
+    print(f"Phase 54c: Iterated Learning (DINOv2) [seed={seed}]", flush=True)
     print("=" * 60, flush=True)
     print(f"  Device: {DEVICE}", flush=True)
+    print(f"  Seed: {seed}", flush=True)
     print(f"  Receiver reset interval: {RECEIVER_RESET_INTERVAL} epochs", flush=True)
 
     t_total = time.time()
@@ -843,7 +853,7 @@ def main():
     # ================================================================
     # STAGE 1: Oracle pretrain
     # ================================================================
-    oracle = train_oracle(data_t, e_bins, f_bins, train_ids, DEVICE)
+    oracle = train_oracle(data_t, e_bins, f_bins, train_ids, DEVICE, seed=seed)
 
     # Extract encoder weights for sender initialization
     oracle_enc_state = oracle.enc_a.state_dict()
@@ -861,7 +871,8 @@ def main():
 
     history_2x8, receiver_2x8 = train_communication(
         sender_2x8, receiver_2x8, data_t, e_bins, f_bins,
-        train_ids, holdout_ids, DEVICE, msg_dim=msg_dim_2x8, tag="2x8")
+        train_ids, holdout_ids, DEVICE, msg_dim=msg_dim_2x8, tag="2x8",
+        seed=seed)
 
     # ================================================================
     # STAGE 2b: Communication training — 1x64 control + IL
@@ -875,7 +886,8 @@ def main():
 
     history_1x64, receiver_1x64 = train_communication(
         sender_1x64, receiver_1x64, data_t, e_bins, f_bins,
-        train_ids, holdout_ids, DEVICE, msg_dim=CONTROL_VOCAB, tag="1x64")
+        train_ids, holdout_ids, DEVICE, msg_dim=CONTROL_VOCAB, tag="1x64",
+        seed=seed + 1000)
 
     # ================================================================
     # STAGE 3: Final evaluation
@@ -970,13 +982,13 @@ def main():
     final_results['mode'] = 'dino_iterated_learning'
     final_results['receiver_reset_interval'] = RECEIVER_RESET_INTERVAL
 
-    results_path = RESULTS_DIR / "phase54c_results.json"
+    results_path = RESULTS_DIR / f"phase54c{seed_suffix}_results.json"
     with open(results_path, 'w') as f:
         json.dump(final_results, f, indent=2)
     print(f"\n  Saved results to {results_path}", flush=True)
 
     # Save models
-    model_path = RESULTS_DIR / "phase54c_model.pt"
+    model_path = RESULTS_DIR / f"phase54c{seed_suffix}_model.pt"
     torch.save({
         'sender_2x8': sender_2x8.state_dict(),
         'receiver_2x8': receiver_2x8.state_dict(),
@@ -986,7 +998,7 @@ def main():
     print(f"  Saved model to {model_path}", flush=True)
 
     # Visualization
-    plot_path = RESULTS_DIR / "phase54c_iterated_learning.png"
+    plot_path = RESULTS_DIR / f"phase54c{seed_suffix}_iterated_learning.png"
     plot_results(history_2x8, history_1x64, comp_2x8, comp_1x64,
                  final_results, e_bins, f_bins, plot_path)
 

@@ -3865,3 +3865,38 @@ Augmentation helped **partially** but did not solve the transfer problem:
 ### Files
 - `_phase54c_multiseed.py` — multi-seed wrapper
 - `results/phase54c_multiseed.json` — per-seed and summary metrics
+
+### Phase 54c Full Comparison: Original IL=40 vs Aggressive IL=20
+**Date:** Feb 27 | **Duration:** 11.6 min
+
+**Goal:** (1) Understand why original script got higher PosDis than multiseed script. (2) Test whether more aggressive IL (reset every 20 vs 40) improves compositionality.
+
+**Finding:** The original script and multiseed script had different seeding strategies (the multiseed used `seed+1000` for comm training RNG). After fixing to consistent seeding, the original code path gets higher PosDis.
+
+| Condition | Holdout Both | PosDis | MI→e | MI→f |
+|---|---|---|---|---|
+| **Original IL=40 ×5** | **77.1% ± 5.3%** | **0.291 ± 0.095** | **0.897 ± 0.088** | **0.901 ± 0.133** |
+| Multiseed IL=40 ×5 | 77.7% ± 4.0% | 0.198 ± 0.126 | 0.818 ± 0.048 | 0.879 ± 0.042 |
+| Aggressive IL=20 ×5 | 75.7% ± 3.8% | 0.168 ± 0.031 | 0.737 ± 0.086 | 0.849 ± 0.079 |
+
+**Per-seed results (Original IL=40):**
+| Seed | Holdout Both | PosDis | MI→e | MI→f |
+|------|-------------|--------|------|------|
+| 42 | 78.1% | 0.344 | 0.986 | 0.783 |
+| 123 | 79.5% | 0.219 | 0.736 | 1.012 |
+| 456 | 84.6% | 0.429 | 0.914 | 1.106 |
+| 789 | 68.8% | 0.157 | 0.886 | 0.796 |
+| 1337 | 74.3% | 0.304 | 0.962 | 0.806 |
+
+**Interpretation:**
+1. **IL=40 is the sweet spot.** Receiver resets every 40 epochs give the best PosDis (0.291). More aggressive resets (IL=20) reduce compositionality (0.168) — the receiver doesn't have enough time to learn between resets, reducing selection pressure on the sender's language.
+2. **Code path matters.** The original script (which trains 1×64 control inline) gets higher PosDis than the multiseed wrapper (which only trains 2×8). The 1×64 control training step may create beneficial weight perturbations or memory pressure that helps.
+3. **Accuracy is consistent across conditions.** All three conditions achieve ~75-77% holdout both. Compositionality doesn't reliably help accuracy in this setup — it's a structural property, not a performance one.
+4. **3/5 seeds show PosDis >0.3 with original IL=40.** Seeds 42 (0.344), 456 (0.429), 1337 (0.304). This is the best reproducibility rate so far.
+5. **MI values confirm both properties encoded.** MI→e=0.897, MI→f=0.901 with original IL=40 — higher than multiseed (0.818/0.879) or IL=20 (0.737/0.849).
+
+### Files
+- `_phase54c_iterated_learning.py` — now accepts seed via `sys.argv[1]`
+- `_phase54c_full_comparison.py` — runs both experiments
+- `results/phase54c_full_comparison.json` — all results
+- `results/phase54c_seed{N}_results.json` — per-seed results for each seed
