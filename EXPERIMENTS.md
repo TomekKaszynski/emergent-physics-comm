@@ -3943,3 +3943,46 @@ Augmentation helped **partially** but did not solve the transfer problem:
 ### Files
 - `_phase54d_population.py` — self-contained with 5 seeds, population training, staggered IL
 - `results/phase54d_population.json` — all results
+
+## Phase 54e: Population + Simultaneous Reset + Vocab=5
+
+**Date:** 2026-02-27
+**Hypothesis:** Two changes to fix 54d's failure: (1) Reset ALL 3 receivers simultaneously (no survivors — maximum learnability pressure), (2) Reduce vocab from 8 to 5 (matching 5 property levels — no room for holistic shortcuts).
+**Base:** `_phase54d_population.py`.
+
+### Changes from Phase 54d
+1. **Simultaneous reset:** ALL 3 receivers reset at once every 40 epochs (not staggered). Sender's language must be learnable from scratch by 3 independent new listeners.
+2. **Vocab=5:** 2×5 compositional (was 2×8). 5 symbols for 5 property levels — perfect bijection forced. Control: 1×25 (was 1×64).
+
+### Results
+
+| Seed | Holdout Both | PosDis | TopSim | MI→e | MI→f | NaN |
+|------|-------------|--------|--------|------|------|-----|
+| 42 | 68.2% | 0.072 | 0.676 | 0.644 | 0.704 | 0 |
+| 123 | 70.9% | 0.177 | 0.650 | 0.632 | 0.736 | 0 |
+| 456 | 73.3% | **0.507** | 0.687 | 0.870 | 1.045 | 0 |
+| 789 | 82.6% | **0.538** | 0.638 | 0.843 | 0.880 | 0 |
+| 1337 | 77.8% | 0.180 | 0.676 | 0.674 | 0.855 | 0 |
+| **Mean** | **74.5% ± 5.1%** | **0.295 ± 0.190** | **0.665 ± 0.019** | **0.732 ± 0.102** | **0.844 ± 0.121** | |
+
+### Comparison across all conditions
+
+| Condition | Holdout Both | PosDis | MI→e | MI→f |
+|---|---|---|---|---|
+| IL=40 single receiver (54c) | 77.1% ± 5.3% | 0.291 ± 0.095 | 0.897 ± 0.088 | 0.901 ± 0.133 |
+| Pop staggered (54d) | 80.6% ± 4.7% | 0.272 ± 0.203 | 0.915 ± 0.151 | 0.876 ± 0.109 |
+| **Pop simultaneous + vocab=5 (54e)** | 74.5% ± 5.1% | 0.295 ± 0.190 | 0.732 ± 0.102 | 0.844 ± 0.121 |
+
+### Verdict: MIXED — stronger peaks but not reliable
+
+**Success criterion was PosDis > 0.35.** Got 0.295 — did not meet target.
+
+1. **Strongest individual seeds yet.** Seeds 456 (0.507) and 789 (0.538) exceed any prior seed's PosDis (best before was 0.429 with IL=40). Simultaneous reset + tight vocab CAN produce strong compositionality.
+2. **But 3/5 seeds failed.** Seeds 42, 123, 1337 got PosDis < 0.2. The bimodal distribution (either ~0.5 or ~0.15) suggests the protocol either "clicks" into compositional mode or gets stuck in a holistic attractor — even with vocab=5.
+3. **Accuracy dropped.** 74.5% vs 77.1% (IL=40) and 80.6% (staggered). Smaller vocab = less capacity, simultaneous reset = more disruption.
+4. **TopSim improved.** 0.665 vs 0.612 (54d) vs ~0.61 (54c). When the language IS structured, it's more topographically systematic.
+5. **MI values lower.** 0.732/0.844 vs 0.897/0.901. Smaller vocab carries less information per position.
+
+### Files
+- `_phase54e_pop_simultaneous.py` — simultaneous reset + vocab=5
+- `results/phase54e_pop_simultaneous.json` — all results
