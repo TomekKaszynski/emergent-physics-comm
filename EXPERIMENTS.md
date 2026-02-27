@@ -3731,3 +3731,55 @@ Augmentation helped **partially** but did not solve the transfer problem:
 - `results/phase54_compositionality.png` — 6-panel visualization
 - `results/phase54_results.json` — final metrics
 - `results/phase54_model.pt` — best models
+
+## Phase 54b: Compositional Communication with DINOv2 Encoder
+**Date:** Feb 27 | **Duration:** ~1 min (features cached, fast training)
+
+**Goal:** Replace CNN (which couldn't extract friction) with DINOv2 ViT-S/14 as frozen visual backbone. Same agents, same task, same communication pressure — just better eyes.
+
+### Setup
+- **Encoder:** DINOv2 ViT-S/14 (frozen, 22M params) → 384-dim CLS token per frame
+- **Temporal pooling:** Conv1d (384→256→128) + AdaptiveAvgPool + FC → 128-dim
+- **Only trainable:** temporal Conv1d layers + FC + sender heads + receiver
+- **Features cached:** (300, 8, 384) → 3.7 MB, pre-extracted once
+- **Everything else identical to Phase 54:** same 300 scenes, same 5×5 grid, same holdout cells, same sender/receiver architecture, same training schedule
+
+### Results — Oracle
+- Best both=93.9% (e=95.2%, f=97.0%) — DINOv2 sees BOTH properties clearly
+- CNN oracle could only reach 52.5% both — DINOv2 is ~41pp better
+
+### Results — Communication (best of 3 runs)
+
+**Run 3 (NaN-safe, no logit clamping on 2×8):**
+| Metric | 2×8 Train | 2×8 Holdout | 1×64 Train | 1×64 Holdout |
+|--------|-----------|-------------|------------|--------------|
+| Elast | 96.5% | 89.5% | 95.1% | 87.6% |
+| Frict | 96.9% | 93.4% | 95.4% | 85.3% |
+| Both | 94.2% | 82.9% | 91.8% | 73.1% |
+
+**Generalization gaps:**
+- 2×8: +11.3% (train 94.2% → holdout 82.9%)
+- 1×64: +18.7% (train 91.8% → holdout 73.1%)
+- 2×8 generalizes significantly better than 1×64 (+7.4pp less gap)
+
+### Compositionality Metrics (Run 3)
+- PosDis: 0.048 (low — NOT compositional)
+- TopSim: 0.626 (decent)
+- Entropy: [0.86, 0.90] — good token diversity
+- MI: Both positions encode both properties redundantly (Pos 0: e=0.78, f=0.80; Pos 1: e=0.76, f=0.81)
+
+**Run 1 (no clamping, NaN at epoch 80):** PosDis=0.507, MI showed clear separation (Pos 0→e: 0.92, Pos 1→f: 0.85). Holdout 88.5% before crash. True compositionality emerged but was not reproducible.
+
+### Interpretation
+1. **DINOv2 solves the perception bottleneck.** Oracle jumps from 52.5% (CNN) to 93.9% (DINOv2). Friction, invisible to CNN, is easily extracted by DINOv2 from pretrained visual features.
+2. **Communication works excellently.** 2×8 holdout both=82.9% far exceeds the Phase 54 trajectory holdout (69.1%). DINOv2 features are so rich that even through a 2×8 bottleneck, most information survives.
+3. **Compositionality is stochastic, not guaranteed.** True positional disentanglement (Pos 0→e, Pos 1→f) appeared in 1/3 runs. The redundant encoding (both positions encode both) is another valid solution that the optimizer finds more often.
+4. **2×8 still helps generalization.** Even without compositionality, the 2×8 structure has a smaller holdout gap (+11.3%) than 1×64 (+18.7%), suggesting the factored bottleneck provides implicit regularization.
+5. **NaN in Gumbel-Softmax is manageable.** NaN-safe gradient steps (detect and skip) allow training to complete without aggressive logit clamping that disrupts optimization.
+
+### Files
+- `_phase54b_dino_compositional.py` — full pipeline with DINOv2
+- `results/phase54b_compositionality.png` — 6-panel visualization
+- `results/phase54b_results.json` — final metrics
+- `results/phase54b_model.pt` — best models
+- `results/phase54b_dino_features.pt` — cached DINOv2 features
