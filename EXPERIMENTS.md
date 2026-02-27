@@ -4023,3 +4023,56 @@ PosDis histogram:
 ### Files
 - `_phase54e_20seeds.py` — 20-seed characterization
 - `results/phase54e_20seeds.json` — all results
+
+### Phase 54f: Extended training (400 epochs)
+
+**Date:** 2026-02-27
+**Purpose:** Test if doubling training time (200→400 epochs, 9 receiver generations instead of 4) converts intermediate seeds to compositional. Same config as 54e otherwise.
+
+**Results (n=20, 400 epochs):**
+
+| Group | Count | % | Mean Holdout | Mean PosDis |
+|---|---|---|---|---|
+| **Compositional (PosDis > 0.4)** | **16** | **80%** | 77.1% ± 6.9% | 0.557 ± 0.136 |
+| Intermediate (0.15-0.4) | 3 | 15% | 74.2% ± 4.4% | 0.246 ± 0.075 |
+| Holistic (PosDis < 0.15) | 1 | 5% | 77.4% | 0.065 |
+| **Overall** | **20** | **100%** | **76.7% ± 6.5%** | **0.486 ± 0.193** |
+
+PosDis histogram:
+```
+0.0-0.1 | #         1
+0.1-0.2 | #         1
+0.2-0.3 | #         1
+0.3-0.4 | #         1
+0.4-0.5 | ######### 9
+0.5-0.6 | #         1
+0.6-0.7 | ###       3
+0.7+    | ###       3
+```
+
+**Comparison: 54e (200 ep) → 54f (400 ep):**
+
+| Group | 54e (200 ep) | 54f (400 ep) | Change |
+|---|---|---|---|
+| Compositional (>0.4) | 8/20 (40%) | **16/20 (80%)** | **+40pp** |
+| Intermediate (0.15-0.4) | 10/20 (50%) | 3/20 (15%) | -35pp |
+| Holistic (<0.15) | 2/20 (10%) | 1/20 (5%) | -5pp |
+| Mean PosDis | 0.397 | **0.486** | +0.089 |
+
+**Seed-level conversions (54e→54f):**
+- Seeds 2, 3, 5, 7, 8, 10, 11, 13: intermediate → **compositional** (8 conversions)
+- Seed 15: intermediate → still intermediate (0.310→0.351)
+- Seed 9: intermediate → still intermediate (0.197→0.208)
+- Seed 1: holistic → still intermediate (0.182→0.180)
+- Seed 18: holistic → still holistic (0.058→0.065)
+
+**Key findings:**
+1. **More evolutionary time reliably converts intermediate seeds.** 8/10 intermediate seeds from 54e crossed the 0.4 threshold at 400 epochs. The compositional attractor is strong — seeds just need enough receiver generations to find it.
+2. **80% compositionality rate is the highest ever.** Up from 40% at 200 epochs. The 0.4-0.5 bin exploded (2→9 seeds), showing most conversions land just above threshold.
+3. **Holistic seeds are stuck.** Seed 18 (PosDis 0.065) didn't budge. Some initial conditions are too far from the compositional basin.
+4. **Accuracy stable.** Mean holdout 76.7% ≈ 77.7% (54e). Extended training doesn't hurt or help accuracy.
+5. **9 receiver generations (resets at 40, 80, 120, 160, 200, 240, 280, 320, 360) provide enough evolutionary pressure** to push most protocols toward compositionality.
+
+### Files
+- `_phase54f_extended.py` — 400-epoch extended training
+- `results/phase54f_extended.json` — all results
