@@ -3900,3 +3900,46 @@ Augmentation helped **partially** but did not solve the transfer problem:
 - `_phase54c_full_comparison.py` — runs both experiments
 - `results/phase54c_full_comparison.json` — all results
 - `results/phase54c_seed{N}_results.json` — per-seed results for each seed
+
+## Phase 54d: Population-based Compositional Communication
+
+**Date:** 2026-02-27
+**Hypothesis:** Training sender against 3 receivers simultaneously (with staggered IL resets) forces more universally decodable — and thus more compositional — messages than single-receiver IL.
+**Base:** `_phase54c_iterated_learning.py` with DINOv2 cached features, 2×8 Gumbel-Softmax.
+
+### Changes from Phase 54c
+1. **Population of 3 receivers** trained simultaneously. Each step: sender produces messages once, each receiver decodes, loss = mean BCE across all 3.
+2. **Staggered IL resets:** Every 40 epochs, reset ONE receiver (cycling through: receiver 0 at epoch 41, receiver 1 at epoch 81, receiver 2 at epoch 121, etc.). This maintains pressure without complete communication collapse.
+3. **Evaluation:** Pick best receiver by accuracy on train set, then eval holdout with it.
+4. **5 seeds built in:** [42, 123, 456, 789, 1337], no wrapper needed.
+
+### Results
+
+| Seed | Holdout Both | PosDis | TopSim | MI→e | MI→f | NaN |
+|------|-------------|--------|--------|------|------|-----|
+| 42 | 88.2% | 0.228 | 0.632 | 0.983 | 0.715 | 0 |
+| 123 | 79.2% | 0.221 | 0.609 | 0.729 | 0.929 | 0 |
+| 456 | 75.6% | 0.155 | 0.658 | 0.909 | 0.821 | 0 |
+| 789 | 83.4% | **0.666** | 0.609 | 1.158 | 1.041 | 0 |
+| 1337 | 76.7% | 0.093 | 0.550 | 0.794 | 0.875 | 1 |
+| **Mean** | **80.6% ± 4.7%** | **0.272 ± 0.203** | **0.612 ± 0.037** | **0.915 ± 0.151** | **0.876 ± 0.109** | |
+
+### Comparison with IL=40 baseline
+
+| Condition | Holdout Both | PosDis | MI→e | MI→f |
+|---|---|---|---|---|
+| IL=40 single receiver ×5 | 77.1% ± 5.3% | 0.291 ± 0.095 | 0.897 ± 0.088 | 0.901 ± 0.133 |
+| **Population 3rx + staggered IL ×5** | **80.6% ± 4.7%** | 0.272 ± 0.203 | 0.915 ± 0.151 | 0.876 ± 0.109 |
+
+### Verdict: MIXED — better generalization, NOT more compositional
+
+**Success criterion was PosDis > 0.35.** Got 0.272 — did not meet target.
+
+1. **Generalization improved.** Holdout 80.6% vs 77.1% (+3.5%). Population training forces sender to produce messages decodable by diverse receivers, which improves zero-shot generalization even without compositionality.
+2. **Compositionality NOT reliably improved.** PosDis 0.272 ± 0.203 vs 0.291 ± 0.095. Similar mean but MUCH higher variance. Only 1/5 seeds (789) showed strong compositionality (0.666). The staggered resets don't reliably create compositionality pressure.
+3. **Why it doesn't work for compositionality:** The staggered reset only removes one receiver at a time, so the sender can still satisfy the remaining 2 receivers with a non-compositional protocol. The compositional pressure from IL requires ALL receivers to be fresh — but that crashes performance.
+4. **MI values comparable.** Both conditions encode both properties well (MI→e ~0.9, MI→f ~0.9).
+
+### Files
+- `_phase54d_population.py` — self-contained with 5 seeds, population training, staggered IL
+- `results/phase54d_population.json` — all results
