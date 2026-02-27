@@ -3838,3 +3838,30 @@ Augmentation helped **partially** but did not solve the transfer problem:
 - `results/phase54c_iterated_learning.png` — 6-panel visualization (with green lines at resets)
 - `results/phase54c_results.json` — final metrics
 - `results/phase54c_model.pt` — best models
+
+### Phase 54c Multi-seed: Reproducibility (5 seeds)
+**Date:** Feb 27 | **Duration:** 2.6 min (32s/seed)
+
+**Goal:** Test whether IL compositionality is reliable or stochastic across random seeds.
+
+**Seeds:** [42, 123, 456, 789, 1337] — each gets different weight init + pair sampling.
+
+| Seed | Holdout Both | PosDis | TopSim | MI→e | MI→f | NaN |
+|------|-------------|--------|--------|------|------|-----|
+| 42 | 73.6% | 0.050 | 0.623 | 0.877 | 0.811 | 0 |
+| 123 | 78.0% | 0.153 | 0.631 | 0.760 | 0.854 | 0 |
+| 456 | 73.5% | 0.307 | 0.607 | 0.842 | 0.904 | 0 |
+| 789 | 84.3% | 0.098 | 0.597 | 0.851 | 0.895 | 0 |
+| 1337 | 79.0% | 0.380 | 0.633 | 0.761 | 0.930 | 1 |
+| **Mean** | **77.7±4.0%** | **0.198±0.126** | **0.618±0.014** | **0.818±0.048** | **0.879±0.042** | |
+
+**Interpretation:**
+1. **Holdout accuracy is consistent.** 77.7% ± 4.0% across seeds — the communication system reliably works.
+2. **Compositionality is variable.** PosDis ranges 0.050–0.380. Only 2/5 seeds (456, 1337) show meaningful disentanglement (>0.3). IL increases the probability of compositionality but doesn't guarantee it.
+3. **Both properties are always encoded.** MI→e = 0.818 ± 0.048, MI→f = 0.879 ± 0.042 — both consistently high. The bottleneck reliably transmits both properties; the question is whether they're separated across positions.
+4. **TopSim is stable.** 0.618 ± 0.014 — language structure is consistent regardless of compositionality level.
+5. **NaN is essentially solved.** Only 1 NaN step across 5 full runs (5 × 200 epochs × 7 batches = 7000 gradient steps).
+
+### Files
+- `_phase54c_multiseed.py` — multi-seed wrapper
+- `results/phase54c_multiseed.json` — per-seed and summary metrics
