@@ -4076,3 +4076,48 @@ PosDis histogram:
 ### Files
 - `_phase54f_extended.py` — 400-epoch extended training
 - `results/phase54f_extended.json` — all results
+
+### Phase 54g: 1×25 control at 400 epochs (null hypothesis)
+
+**Date:** 2026-02-27
+**Purpose:** Null hypothesis test — does extended training (400 epochs) + population (3 receivers) + simultaneous IL produce high accuracy WITHOUT compositional structure? Uses 1×25 vocab (single position, 25 symbols) instead of 2×5. Same everything else as 54f.
+
+**Results (n=20, 400 epochs, 1×25 control):**
+
+| Metric | Mean ± Std |
+|---|---|
+| Holdout (both) | 71.2% ± 3.5% |
+| PosDis | 0.000 (by definition — single position) |
+| TopSim | 0.432 ± 0.016 |
+| MI→elevation | 1.002 ± 0.098 |
+| MI→flower | 1.100 ± 0.090 |
+
+TopSim histogram:
+```
+0.40-0.42 | #####     5
+0.42-0.44 | ########  8
+0.44-0.46 | ####      4
+0.46-0.48 | ###       3
+```
+
+**Comparison: 54f (2×5 compositional) vs 54g (1×25 control):**
+
+| Metric | 54f (2×5) | 54g (1×25) | Δ |
+|---|---|---|---|
+| Holdout (both) | **76.7% ± 6.5%** | 71.2% ± 3.5% | **+5.5pp** |
+| PosDis | **0.486 ± 0.193** | 0.000 | — |
+| TopSim | **0.655 ± 0.028** | 0.432 ± 0.016 | **+0.223** |
+| MI→elevation | 1.116 ± 0.199 | 1.002 ± 0.098 | +0.114 |
+| MI→flower | 1.060 ± 0.182 | 1.100 ± 0.090 | -0.040 |
+| Std (holdout) | 6.5% | **3.5%** | — |
+
+**Key findings:**
+1. **Null hypothesis rejected.** Compositional 2×5 generalizes better than holistic 1×25 by +5.5pp on holdout. The structure imposed by two separate positions provides a real generalization advantage.
+2. **Control is remarkably consistent.** All 20 seeds land in 61-77% holdout range with TopSim tightly clustered at 0.41-0.47. No bimodality, no collapse. The 1×25 channel reliably finds a decent-but-not-great protocol.
+3. **TopSim gap is large.** 0.655 vs 0.432 — the 2×5 compositional protocols are significantly more structured than 1×25 holistic ones, confirming TopSim captures real compositional structure.
+4. **Variance tradeoff.** Control has lower variance (3.5% vs 6.5%) because there's no stochastic compositionality emergence — all seeds converge to similar holistic protocols. The 2×5 variance comes from the bimodal compositional/holistic split.
+5. **MI similar.** Both conditions encode similar mutual information about attributes, but 2×5 encodes it in a disentangled way (high PosDis) while 1×25 encodes it holistically.
+
+### Files
+- `_phase54g_control_extended.py` — 1×25 control at 400 epochs
+- `results/phase54g_control.json` — all results
