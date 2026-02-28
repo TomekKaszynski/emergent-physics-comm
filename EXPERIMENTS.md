@@ -4121,3 +4121,98 @@ TopSim histogram:
 ### Files
 - `_phase54g_control_extended.py` — 1×25 control at 400 epochs
 - `results/phase54g_control.json` — all results
+
+---
+
+## Phase 55: 3-Property Compositional Communication
+
+### Phase 55: 3×5 compositional with restitution + friction + damping
+
+**Date:** 2026-02-28
+**Purpose:** Scale compositionality from 2 properties (Phase 54f) to 3. Add linearDamping as 3rd invisible physical property. Test whether 3×5 Gumbel-Softmax messages develop 3-way compositional structure.
+
+**Dataset:** 500 Kubric ramp scenes, 5×5×5 = 125 property combos × 4 scenes each.
+- restitution ∈ {0.1, 0.3, 0.5, 0.7, 0.9}
+- friction ∈ {0.1, 0.3, 0.5, 0.7, 0.9}
+- linearDamping ∈ {0.0, 0.2, 0.5, 0.8, 1.2}
+
+**Physics signals (x_travel by property):**
+```
+damping:     d=0.0: +2.66  d=0.2: +2.34  d=0.5: +1.84  d=0.8: +1.25  d=1.2: +0.03
+friction:    f=0.1: +1.30  f=0.3: +1.46  f=0.5: +1.65  f=0.7: +1.84  f=0.9: +1.88
+restitution: e=0.1: +1.63  e=0.3: +1.63  e=0.5: +1.62  e=0.7: +1.62  e=0.9: +1.61
+```
+Damping is the strongest signal by far. Restitution barely affects x_travel (shows up in bounce height instead).
+
+**Holdout:** Latin cube — (e_bin + f_bin + d_bin) % 5 == 0 → 25/125 triples (20%).
+
+**Architecture:** 3 Gumbel-Softmax heads (vocab=5 each, msg_dim=15), 3 receiver output heads. Population of 3 receivers, simultaneous IL resets every 40 epochs, 400 epochs total.
+
+**Oracle accuracy (20 seeds):**
+
+| Property | Mean ± Std |
+|---|---|
+| Elasticity | 85.3% ± 2.5% |
+| Friction | 87.4% ± 1.4% |
+| **Damping** | **98.6% ± 1.2%** |
+| All-three | 74.9% ± 2.7% |
+
+Damping is nearly perfectly extractable from visual features.
+
+**Results (n=20, 3×5, 400 epochs):**
+
+| Metric | Mean ± Std |
+|---|---|
+| Holdout (all-three) | 63.3% ± 2.4% |
+| Holdout (elasticity) | 81.9% ± 1.6% |
+| Holdout (friction) | 80.7% ± 2.0% |
+| Holdout (damping) | 94.6% ± 1.3% |
+| PosDis | 0.380 ± 0.080 |
+| TopSim | 0.575 ± 0.017 |
+| MI→elasticity | 0.414 ± 0.066 |
+| MI→friction | 0.387 ± 0.069 |
+| MI→damping | 0.719 ± 0.088 |
+
+PosDis histogram:
+```
+0.2-0.3 | ####         4
+0.3-0.4 | ########     8
+0.4-0.5 | #######      7
+0.5-0.6 | #            1
+```
+
+**Average MI matrix (positions × properties):**
+```
+       | elast  | frict  | damp
+pos_0  | 0.336  | 0.276  | 0.531
+pos_1  | 0.289  | 0.283  | 0.574
+pos_2  | 0.260  | 0.276  | 0.655
+```
+
+**Comparison: 2-property (54f) vs 3-property (55):**
+
+| Metric | 54f (2×5, 2 props) | 55 (3×5, 3 props) |
+|---|---|---|
+| Holdout (all) | 76.7% ± 6.5% | 63.3% ± 2.4% |
+| PosDis | 0.486 ± 0.193 | 0.380 ± 0.080 |
+| TopSim | 0.655 ± 0.028 | 0.575 ± 0.017 |
+| Compositional (>0.4) | 16/20 (80%) | 8/20 (40%) |
+
+**Key findings:**
+1. **All 3 properties are communicated.** Individual holdout accuracy: e=81.9%, f=80.7%, d=94.6%. The agents successfully encode all three invisible physical properties through the communication channel.
+2. **Damping dominates the MI matrix.** All 3 positions encode damping more than elasticity or friction. No diagonal dominance — the 3×3 MI matrix doesn't show clean position→property specialization. Damping is too easy (oracle 98.6%) and floods all positions.
+3. **Compositionality is weaker than 2-property case.** 40% compositional (vs 80% for 54f). The PosDis distribution shifted left: most seeds cluster at 0.3-0.4, just below the 0.4 threshold. The compositional attractor is weaker with 3 properties.
+4. **Low variance.** Std on holdout_all is only 2.4% (vs 6.5% for 54f). No bimodality — all seeds land in a tight 59-70% range. The 3-property task creates more uniform behavior.
+5. **The damping dominance problem.** When one property is much easier than the others (d=98.6% vs e=85%, f=87%), the sender allocates redundant capacity to it rather than disentangling. This is a known issue in emergent communication: the easiest feature captures all positions.
+6. **Holdout below 2-property baseline.** 63.3% vs 76.7% — the 3-way task is genuinely harder. But it's well above chance (12.5% for all-three random) and individual properties are strong.
+
+**Possible next steps:**
+- Equalize property difficulty (widen restitution/friction ranges, narrow damping range) so no single property dominates
+- Try weighted loss (upweight harder properties) to encourage balanced encoding
+- Try 1×125 control to quantify the compositional advantage
+
+### Files
+- `kubric/generate_ramp_3prop_dataset.py` — 3-property scene generator
+- `_phase55_3prop_compositional.py` — training + evaluation
+- `results/phase55_dino_features.pt` — cached DINOv2 features (500 scenes)
+- `results/phase55_results.json` — all results
