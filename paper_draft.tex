@@ -1,0 +1,254 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage[margin=1in]{geometry}
+\usepackage{natbib}
+\usepackage{caption}
+\usepackage{subcaption}
+
+\title{Compositional Emergent Communication\\for Invisible Physical Properties}
+
+\author{Tomek Kaszy\'{n}ski\\
+\texttt{t.kaszynski@proton.me}}
+
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We study whether neural agents can develop compositional language to communicate invisible physical properties observed through video.
+Two agents watch a ball roll down a ramp from different viewpoints and must communicate through a discrete bottleneck to jointly predict which ball is bouncier and has more friction.
+Using Gumbel-Softmax message heads with iterated learning and population-based training, agents develop positionally disentangled protocols where each message position specializes for a distinct physical property.
+With 2$\times$5 factored messages (two 5-symbol positions), 80\% of random seeds develop compositional protocols after 400 training epochs, achieving 76.7\% zero-shot generalization to held-out property combinations---a 5.5 percentage point advantage over a capacity-matched 1$\times$25 holistic baseline.
+Scaling to three properties (adding linear damping) reveals a \emph{signal dominance} failure mode: the easiest-to-extract property captures all message positions, reducing compositionality from 80\% to 40\% of seeds.
+\end{abstract}
+
+%% ─────────────────────────────────────────────────────────
+\section{Introduction}
+\label{sec:intro}
+
+Physical properties like elasticity and friction are not directly visible---they must be inferred from how objects move and interact.
+When multiple agents observe the same scene from different viewpoints, they face a \emph{communication} problem: how to encode their private observations into messages that allow joint inference about these latent properties.
+
+We ask whether compositional structure can emerge in this communication channel without explicit supervision.
+Compositionality---where each part of a message independently encodes a distinct meaning component---is a hallmark of human language and is theorized to improve systematic generalization \citep{kirby2002emergence,lazaridou2018emergence}.
+
+Our setup uses physically simulated ramp scenes rendered with Kubric \citep{greff2022kubric}.
+A ball with varying restitution (elasticity) and friction slides down a 70$^\circ$ ramp, bounces, and rolls.
+Two sender agents observe the scene through frozen DINOv2 \citep{oquab2024dinov2} features and communicate via Gumbel-Softmax \citep{jang2017categorical} discrete messages.
+A receiver must predict pairwise property comparisons (``which ball is bouncier?'') from the messages alone.
+
+We find that:
+\begin{enumerate}
+    \item Factored 2$\times$5 messages develop compositional structure under iterated learning with population-based training (80\% of seeds at 400 epochs).
+    \item Compositional protocols generalize better to held-out property combinations than capacity-matched holistic baselines (+5.5pp).
+    \item Scaling to three properties reveals signal dominance: an overly easy property (damping, 99\% oracle accuracy) captures all message positions, hindering disentanglement.
+\end{enumerate}
+
+%% ─────────────────────────────────────────────────────────
+\section{Method}
+\label{sec:method}
+
+\subsection{Scene Generation}
+
+We generate ramp scenes using Kubric with PyBullet physics.
+Each scene places a ball near the top of a 70$^\circ$ ramp; the ball slides down (friction signal), bounces at the ramp--floor transition (elasticity signal), and decelerates through air (damping signal).
+For the two-property experiments, we use a 5$\times$5 grid of restitution $\in \{0.1, 0.3, 0.5, 0.7, 0.9\}$ and friction $\in \{0.1, 0.3, 0.5, 0.7, 0.9\}$ with 12 scenes per combination (300 total).
+Ball color, lighting, and spawn position are randomized to prevent visual shortcuts.
+
+\subsection{Visual Features}
+
+We extract features using a frozen DINOv2 ViT-S/14 backbone.
+Each scene yields 8 evenly-spaced frames resized to 224$\times$224, producing a $(8, 384)$ feature tensor (CLS tokens).
+A temporal encoder (two 1D convolution layers with adaptive pooling) maps this to a 128-dimensional scene representation.
+
+\subsection{Communication Architecture}
+
+Two senders observe different scenes (a pair) and each produces a discrete message via $k$ independent Gumbel-Softmax heads with vocabulary size $v$.
+The resulting one-hot tokens are concatenated into a $k \times v$-dimensional message.
+A receiver takes both messages and predicts binary comparisons (``which scene has higher elasticity?'', etc.) through separate output heads per property.
+
+For the \textbf{compositional} condition, we use $k{=}2, v{=}5$ (msg\_dim$=$10, capacity$=$25 messages).
+The \textbf{holistic control} uses $k{=}1, v{=}25$ (msg\_dim$=$25, same capacity).
+
+\subsection{Training Protocol}
+
+\paragraph{Oracle pretraining.}
+An oracle model with direct visual access to both scenes is trained for 100 epochs to establish an accuracy ceiling and provide encoder initialization (oracle encoder weights are transferred to the sender).
+
+\paragraph{Population-based iterated learning.}
+We train a population of $N{=}3$ receivers simultaneously against a single sender.
+Every 40 epochs, \emph{all} receivers are reset to random initialization (simultaneous reset).
+This iterated learning pressure encourages the sender to develop protocols that are easy for na\"ive learners to acquire---a known driver of compositionality \citep{kirby2015compression,ren2020compositional}.
+Training runs for 400 epochs (9 receiver generations).
+
+\paragraph{Regularization.}
+Gumbel temperature anneals from $\tau{=}3.0$ to $1.0$ with 30-epoch soft warmup.
+Entropy regularization ($\lambda{=}0.03$) activates when per-head entropy drops below 10\% of maximum, preventing vocabulary collapse.
+Gradient clipping at 1.0 and NaN-safe updates ensure stability.
+
+\subsection{Evaluation}
+
+\paragraph{Holdout.}
+We use a Latin square design: 5 property pairs $\{(0,1),(1,3),(2,0),(3,4),(4,2)\}$ are held out.
+Every individual property value appears in training; only specific \emph{combinations} are novel.
+
+\paragraph{Compositionality metrics.}
+We compute \textbf{PosDis} (positional disentanglement): for each message position, we measure mutual information with each property and compute the gap between the best and second-best property, normalized and averaged across positions.
+PosDis $> 0.4$ indicates compositional structure.
+We also report \textbf{TopSim} (topographic similarity): Spearman correlation between meaning distance and message Hamming distance.
+
+%% ─────────────────────────────────────────────────────────
+\section{Results}
+\label{sec:results}
+
+\subsection{Two-Property Compositionality}
+
+Figure~\ref{fig:compositionality} summarizes the main result across 20 random seeds.
+With 2$\times$5 factored messages, 16/20 seeds (80\%) develop compositional protocols (PosDis $> 0.4$), compared to PosDis $= 0$ by definition for the 1$\times$25 control.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=\textwidth]{figures/fig1_compositionality.pdf}
+    \caption{\textbf{Two-property compositionality.}
+    (a)~Distribution of PosDis across 20 seeds.
+    The 2$\times$5 condition (blue) produces bimodal compositionality; the 1$\times$25 control (orange) has PosDis$=$0 by definition.
+    Dashed line: compositionality threshold at 0.4.
+    (b)~MI matrix for the best compositional seed showing clean diagonal structure: position~0 encodes elasticity, position~1 encodes friction.
+    (c)~Training vs.\ holdout accuracy. The 2$\times$5 condition generalizes better on ``both correct'' (+5.5pp over control).}
+    \label{fig:compositionality}
+\end{figure}
+
+Table~\ref{tab:comparison} quantifies the advantage.
+The compositional 2$\times$5 condition achieves higher holdout accuracy (76.7\% vs.\ 71.2\%), higher TopSim (0.655 vs.\ 0.432), and exhibits meaningful positional disentanglement.
+The control is more consistent (lower variance) because all seeds converge to similar holistic protocols, whereas the 2$\times$5 condition shows stochastic emergence.
+
+\begin{table}[ht]
+    \centering
+    \caption{Comparison of 2$\times$5 compositional vs.\ 1$\times$25 holistic control (20 seeds each, 400 epochs).}
+    \label{tab:comparison}
+    \begin{tabular}{lccc}
+        \toprule
+        Metric & 2$\times$5 & 1$\times$25 & $\Delta$ \\
+        \midrule
+        Holdout (both) & $76.7 \pm 6.5\%$ & $71.2 \pm 3.5\%$ & $+5.5$pp \\
+        PosDis & $0.486 \pm 0.193$ & $0.000$ & --- \\
+        TopSim & $0.655 \pm 0.028$ & $0.432 \pm 0.016$ & $+0.223$ \\
+        Compositional seeds & 16/20 (80\%) & 0/20 (0\%) & --- \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Ablation: What Drives Compositionality?}
+
+Figure~\ref{fig:ablation} shows an ablation across five training conditions.
+Without iterated learning (No~IL), the sender achieves the highest raw accuracy (82.9\%) but near-zero compositionality (PosDis$=$0.048).
+Adding IL reduces accuracy but increases PosDis.
+The critical transition occurs with extended training (400 epochs): PosDis jumps from ${\sim}0.29$ to $0.486$, crossing the compositionality threshold.
+This suggests that compositionality requires sufficient \emph{evolutionary time}---enough receiver generations for the iterated learning pressure to reshape the protocol.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.75\textwidth]{figures/fig2_ablation.pdf}
+    \caption{\textbf{Ablation of training conditions.}
+    Bars show holdout accuracy (left axis); line shows PosDis (right axis).
+    Compositionality (PosDis$>$0.4, dotted line) only emerges with extended training (400 epochs, 9 receiver generations).
+    There is a compositionality--accuracy tradeoff: the most compositional condition has lower raw accuracy than the non-IL baseline.}
+    \label{fig:ablation}
+\end{figure}
+
+\subsection{Scaling to Three Properties}
+
+We extend to three properties by adding linear damping (PyBullet velocity-proportional drag) as a third invisible property, with a 5$\times$5$\times$5 grid (500 scenes) and 3$\times$5 messages.
+Figure~\ref{fig:three_property} reveals a \emph{signal dominance} problem.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.85\textwidth]{figures/fig3_three_property.pdf}
+    \caption{\textbf{Three-property scaling.}
+    (a)~Average MI matrix across 20 seeds.
+    All three positions encode damping most strongly (rightmost column dominates), with no diagonal structure.
+    (b)~PosDis distribution shifts left compared to the 2-property mean (blue dotted line), with only 40\% of seeds crossing the compositionality threshold.}
+    \label{fig:three_property}
+\end{figure}
+
+The oracle achieves 98.6\% on damping vs.\ 85--87\% on elasticity and friction, making damping the path of least resistance for all message positions.
+The average MI matrix (Fig.~\ref{fig:three_property}a) shows no diagonal structure---every position preferentially encodes damping.
+Compositionality drops from 80\% to 40\% of seeds, and mean PosDis falls from 0.486 to 0.380.
+
+Despite the lack of disentanglement, agents still communicate all three properties effectively: individual holdout accuracies are 81.9\% (elasticity), 80.7\% (friction), and 94.6\% (damping).
+The bottleneck is not capacity but \emph{balanced pressure}---when properties differ greatly in extractability, the sender allocates redundant capacity to the easiest one.
+
+%% ─────────────────────────────────────────────────────────
+\section{Discussion}
+\label{sec:discussion}
+
+Our results demonstrate that compositional communication can emerge for invisible physical properties when the communication channel is factored and training includes iterated learning pressure.
+Three findings stand out.
+
+\paragraph{Structure begets generalization.}
+The 5.5pp holdout advantage of 2$\times$5 over 1$\times$25 confirms that positional disentanglement provides a real generalization benefit, not just a structural curiosity.
+This aligns with theoretical arguments that compositionality enables systematic generalization \citep{brighton2006understanding}.
+
+\paragraph{Compositionality requires evolutionary time.}
+The ablation shows that neither population diversity nor iterated learning alone suffices at 200 epochs.
+The critical ingredient is extended training (400 epochs, 9 receiver generations), suggesting that the compositional attractor exists but requires many cycles of cultural transmission to reach.
+
+\paragraph{Signal imbalance disrupts disentanglement.}
+The three-property experiment reveals a practical failure mode: when one property is much easier to extract from visual features, it monopolizes all message positions.
+This suggests that balanced property difficulty---or explicit mechanisms like weighted losses or information bottlenecks---may be necessary for scaling compositional communication to richer environments.
+
+%% ─────────────────────────────────────────────────────────
+
+\bibliographystyle{plainnat}
+\begin{thebibliography}{10}
+
+\bibitem[Brighton and Kirby(2006)]{brighton2006understanding}
+H.~Brighton and S.~Kirby.
+\newblock Understanding linguistic evolution by visualizing the emergence of topographic mappings.
+\newblock \emph{Artificial Life}, 12(2):229--242, 2006.
+
+\bibitem[Greff et~al.(2022)]{greff2022kubric}
+K.~Greff, F.~Belletti, L.~Beyer, C.~Doersch, Y.~Du, D.~Duckworth, D.~J.~Fleet, D.~Gnanapragasam, F.~Golemo, C.~Herrmann, et~al.
+\newblock Kubric: A scalable dataset generator.
+\newblock In \emph{CVPR}, 2022.
+
+\bibitem[Jang et~al.(2017)]{jang2017categorical}
+E.~Jang, S.~Gu, and B.~Poole.
+\newblock Categorical reparameterization with {G}umbel-softmax.
+\newblock In \emph{ICLR}, 2017.
+
+\bibitem[Kirby(2002)]{kirby2002emergence}
+S.~Kirby.
+\newblock Natural language from artificial life.
+\newblock \emph{Artificial Life}, 8(2):185--215, 2002.
+
+\bibitem[Kirby et~al.(2015)]{kirby2015compression}
+S.~Kirby, M.~Tamariz, H.~Cornish, and K.~Smith.
+\newblock Compression and communication in the cultural evolution of linguistic structure.
+\newblock \emph{Cognition}, 141:87--102, 2015.
+
+\bibitem[Lazaridou et~al.(2018)]{lazaridou2018emergence}
+A.~Lazaridou, K.~M.~Hermann, K.~Tuyls, and S.~Clark.
+\newblock Emergence of linguistic communication from referential games with symbolic and pixel input.
+\newblock In \emph{ICLR}, 2018.
+
+\bibitem[Oquab et~al.(2024)]{oquab2024dinov2}
+M.~Oquab, T.~Darcet, T.~Moutakanni, H.~V.~Vo, M.~Szafraniec, V.~Khalidov, P.~Fernandez, D.~Haziza, F.~Massa, A.~El-Nouby, et~al.
+\newblock {DINOv2}: Learning robust visual features without supervision.
+\newblock \emph{TMLR}, 2024.
+
+\bibitem[Ren et~al.(2020)]{ren2020compositional}
+Y.~Ren, S.~Guo, M.~Labeau, S.~B.~Cohen, and S.~Kirby.
+\newblock Compositional languages emerge in a neural iterated learning model.
+\newblock In \emph{ICLR}, 2020.
+
+\end{thebibliography}
+
+\end{document}
