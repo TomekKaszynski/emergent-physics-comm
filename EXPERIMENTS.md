@@ -4315,3 +4315,60 @@ pos_2  | 0.260  | 0.276  | 0.655
 ### Files
 - `_phase58_interaction.py` — full experiment pipeline
 - `results/phase58_interaction.json` — all results (20 seeds × 3 conditions)
+
+---
+
+## Phase 58b: Cross-Property Task — Compositionality Enables Selective Property Access
+
+**Date:** Mar 1 | **Duration:** 46 min
+
+**Goal:** Redesign Phase 58 with a genuinely non-decomposable task that CROSSES property dimensions: "is ball A's elasticity > ball B's friction?" The receiver must extract elasticity from message A and friction from message B — can't be solved from one property alone, can't be solved additively. Does factored 2×5 now outperform holistic 1×25?
+
+**Setup:**
+- Same ramp dataset, DINOv2 features, Latin square holdout as Phase 54f
+- Task: binary classification — is e_bin(A) > f_bin(B)? Ties excluded.
+- Three conditions × 20 seeds:
+  1. **FACTORED 2×5**: fresh sender+receiver on cross-property task, population IL, 400 epochs
+  2. **HOLISTIC 1×25**: same but holistic control
+  3. **TRANSFER**: frozen compositional sender (best of 5 candidates, seed 2, PosDis=0.753), new receiver only (200 epochs)
+- Transfer sender MI: pos0→e (MI=1.098), pos1→f (MI=1.120) — clean separation
+
+**Oracle:** train=99.4%, holdout=97.7%
+
+**Results (20 seeds):**
+
+| Condition | Holdout | Std |
+|-----------|---------|-----|
+| Transfer | **93.8%** | **0.7%** |
+| Factored 2×5 | 92.2% | 2.4% |
+| Holistic 1×25 | 87.5% | 9.5% |
+
+**Ablation analysis — which message positions does the receiver use?**
+
+Transfer ablation (zeroing individual positions):
+| Position | Accuracy drop |
+|----------|--------------|
+| A_pos0 (elasticity) | **+14.7% ± 1.6%** |
+| A_pos1 (friction) | +0.4% ± 1.9% |
+| B_pos0 (elasticity) | +2.9% ± 1.7% |
+| B_pos1 (friction) | **+15.2% ± 0.8%** |
+
+Factored ablation: all positions used roughly equally (+4.9% to +6.6%) — no selective extraction.
+
+**Key findings:**
+
+1. **Transfer is best AND most stable.** 93.8% ± 0.7% — beats both factored (92.2% ± 2.4%) and holistic (87.5% ± 9.5%). Pre-trained compositional encoding gives the receiver a clean, stable interface.
+
+2. **Holistic is weakest and unstable.** 87.5% mean with 9.5% std. One seed collapsed entirely (47.8% ≈ chance). Without compositional structure, the joint sender-receiver must discover how to encode cross-property information from scratch — this sometimes fails catastrophically.
+
+3. **Transfer receiver learns SURGICAL property extraction.** The ablation proves the receiver selectively reads elasticity from pos0 of msg A (14.7% drop) and friction from pos1 of msg B (15.2% drop), while ignoring the irrelevant positions (0.4% and 2.9% drops). This is the strongest evidence yet that compositional encoding creates a structured interface that downstream tasks can selectively access.
+
+4. **Factored learns the task but NOT selectively.** Factored senders don't reliably develop compositionality on this task (only 4/20 seeds, mean PosDis=0.291). The ablation shows all positions contribute roughly equally. The factored architecture can solve cross-property tasks, but without pre-training on property prediction, it doesn't develop the clean positional structure that enables surgical extraction.
+
+5. **Pre-training is the key.** The critical comparison is transfer (93.8%) vs factored (92.2%): same architecture capacity, but transfer's pre-trained compositional structure provides +1.6pp advantage and 3× lower variance. The compositionality developed during property prediction transfers directly to novel cross-property reasoning.
+
+**Verdict:** Compositional encoding enables selective property access across messages. Transfer from property-trained sender is best (93.8%), most stable (0.7% std), and shows surgically precise extraction of individual properties from specific message positions. Holistic encoding struggles with cross-property tasks (87.5%, one collapse). This validates the core thesis: compositional communication creates a reusable, addressable interface for downstream reasoning.
+
+### Files
+- `_phase58b_cross_property.py` — full experiment pipeline
+- `results/phase58b_cross_property.json` — all results (20 seeds × 3 conditions + ablation)
