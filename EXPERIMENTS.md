@@ -4271,3 +4271,47 @@ pos_2  | 0.260  | 0.276  | 0.655
 - `_phase56_transfer.py` — full transfer experiment pipeline
 - `results/phase56_flat_dino_features.pt` — cached DINOv2 features (300 scenes)
 - `results/phase56_results.json` — all results (20 seeds × 3 conditions)
+
+---
+
+## Phase 58: Interaction-Dependent Communication Task
+**Date:** Mar 1 | **Duration:** 41 min
+
+**Goal:** Test whether compositional property encoding enables reasoning about property INTERACTIONS, not just individual properties. The interaction task ("which ball has longer trajectory?") requires knowing both elasticity and friction — it can't be solved from one property alone (e-only: 70%, f-only: 78%, both: 100%).
+
+**Outcome variable: trajectory length.** x_travel was 99.5% friction (useless). Trajectory length (sum of Euclidean distances between consecutive positions) depends on both: R²(e)=0.395, R²(f)=0.552, interaction=0.031. 33% of pairs have properties that disagree on ordering.
+
+**Setup:**
+- Same ramp dataset, DINOv2 features, Latin square holdout as Phase 54f
+- Three conditions × 20 seeds:
+  1. **FACTORED 2×5**: fresh sender+receiver on interaction task, population IL, 400 epochs
+  2. **HOLISTIC 1×25**: same but holistic control
+  3. **TRANSFER**: frozen property-trained sender (Phase 54f-style, seed 0), new receiver only (200 epochs)
+
+**Oracle:** train=93.3%, holdout=87.2%
+
+**Results (20 seeds):**
+
+| Condition | Holdout | Std |
+|-----------|---------|-----|
+| Factored 2×5 | 86.6% | 1.1% |
+| Holistic 1×25 | 86.7% | 0.8% |
+| Transfer | 82.5% | 1.6% |
+
+**Key findings:**
+
+1. **Factored ≈ Holistic on interaction task.** 86.6% vs 86.7% — no measurable difference. The compositional architecture provides no advantage when the task doesn't decompose into independent property questions. Both conditions reach near-oracle performance (87.2%).
+
+2. **Compositionality still emerges despite non-decomposable task.** 14/20 factored seeds develop PosDis > 0.4 (mean 0.450 ± 0.127). This is comparable to Phase 54f where the task DID decompose (0.486 ± 0.193). Compositionality appears to be an architectural prior of the factored channel, not just a task-driven emergent property.
+
+3. **Transfer enables interaction reasoning.** Transfer at 82.5% is well above single-property ceilings (e-only: 70%, f-only: 78%) and chance (50%). A property-trained sender's messages contain enough information about both e and f for a new receiver to learn the interaction function.
+
+4. **Transfer gap is moderate.** Transfer (82.5%) is 4.2pp below factored/holistic (86.6-86.7%). This gap likely reflects: (a) only 200 vs 400 training epochs, (b) frozen sender limits adaptation, (c) the sender's encoding wasn't optimized for the interaction task.
+
+5. **Caveat: transfer sender was not compositional.** The retrained property sender got PosDis=0.148 (holistic), so the transfer condition tests "can ANY property-trained sender enable interaction reasoning?" rather than "does COMPOSITIONAL property encoding specifically help?" The answer to the first question is yes. The second question remains open — a properly compositional transfer sender might close the 4.2pp gap.
+
+**Verdict:** Interaction task solved at near-oracle level by both factored and holistic channels. Compositionality emerges even on non-decomposable tasks (architectural prior). Transfer from property-trained sender enables interaction reasoning (82.5%) but with a 4pp gap. The factored vs holistic equivalence suggests that for this task complexity (2 properties, nearly additive effects), the information capacity of 25 symbols is sufficient regardless of decomposition.
+
+### Files
+- `_phase58_interaction.py` — full experiment pipeline
+- `results/phase58_interaction.json` — all results (20 seeds × 3 conditions)
