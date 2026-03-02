@@ -4595,3 +4595,64 @@ All prior communication phases (53-59) gave both agents the SAME full observatio
 ### Files
 - `_phase60_collaborative.py` — full collaborative inference experiment
 - `results/phase60_collaborative.json` — all results (3 conditions × 20 seeds)
+
+---
+
+## Phase 59d: Hard-Concrete Gates — Differentiable Message Length Discovery
+**Date:** Mar 2 ~19:00 | **Duration:** ~144 min | **Commit:** TBD
+
+### Motivation
+Phase 59b showed agents can communicate with variable-length messages using a discrete STOP token, but the STOP mechanism is non-differentiable and must be trained with Gumbel-Softmax alongside the content tokens, creating tension between length and content optimization. Phase 59d replaces the discrete STOP token with **hard-concrete gates** (Louizos et al. 2018) — each of the 6 positions gets a continuous, differentiable on/off gate. A length penalty λ·Σp(gate_t > 0) pushes the system to discover the minimal message length needed for the task. Combined with an **impatient listener** (Rita et al. 2020) that processes every prefix, this should find whether 2 positions (matching the 2-property task) suffice.
+
+### Setup
+- **Architecture:** GatedSender replaces AutoregressiveSender. No GRU, no STOP token. Each position has an independent gate z_t ∈ [0,1] sampled from the hard-concrete distribution: z_t = clamp(sigmoid((log(u/(1-u)) + log_α_t) / β) · (ζ-γ) + γ, 0, 1). Gate probability: p(z_t > 0) = sigmoid(log_α_t - β·log(-γ/ζ))
+- **Parameters:** β=0.66, γ=-0.1, ζ=1.1, log_α init=2.0 (p_active ≈ 0.97 at start)
+- **Impatient listener:** Receiver makes predictions at every prefix length k=1..6. Loss averaged over all prefixes × all receivers
+- **Gate penalty:** λ · Σ_t p(z_t > 0), applied after 50-epoch warmup
+- **Four conditions × 20 seeds:** λ = 0.0, 0.05, 0.1, 0.2
+- **Same infrastructure:** 2-property ramp task, DINOv2 features, vocab=5, max_positions=6, population IL (3 receivers), 400 epochs, tau 2.0→0.5
+
+### Results
+
+| Lambda | Both% | Active Positions | PosDis | Unique | TopSim |
+|--------|-------|-----------------|--------|--------|--------|
+| 0.00 | 79.5 ± 14.8 | 6.0 ± 0.0 | 0.512 ± 0.263 | 40.1 | 0.741 |
+| 0.05 | 72.3 ± 17.8 | 5.5 ± 0.5 | 0.552 ± 0.323 | 32.4 | 0.708 |
+| 0.10 | 70.0 ± 17.8 | 4.9 ± 0.9 | 0.584 ± 0.340 | 25.9 | 0.686 |
+| 0.20 | 74.6 ± 14.0 | 3.8 ± 1.0 | 0.457 ± 0.289 | 22.7 | 0.691 |
+
+**Gate probabilities per position (mean over 20 seeds):**
+
+| Lambda | p0 | p1 | p2 | p3 | p4 | p5 |
+|--------|-----|-----|-----|-----|-----|-----|
+| 0.00 | 0.99 | 0.99 | 0.98 | 0.98 | 0.98 | 0.98 |
+| 0.05 | 0.99 | 0.98 | 0.98 | 0.97 | 0.95 | 0.78 |
+| 0.10 | 0.99 | 0.98 | 0.97 | 0.95 | 0.82 | 0.71 |
+| 0.20 | 0.99 | 0.98 | 0.94 | 0.80 | 0.69 | 0.64 |
+
+**Best seed per condition (MI analysis):**
+- λ=0.00 (seed 6, both=91.8%, 6pos): spread MI across all 6 positions, no specialization
+- λ=0.05 (seed 0, both=92.3%, 5pos): similar MI across 5 positions, position 5 gated off
+- λ=0.10 (seed 1, both=90.2%, 5pos): 5 positions, mixed MI per position
+- λ=0.20 (seed 7, both=91.7%, 4pos): 4 positions, position 2 shows f-specialization (MI_f=1.097)
+
+### Analysis
+
+**Gates work — monotonic length reduction.** Active positions decrease smoothly: 6.0 → 5.5 → 4.9 → 3.8 as lambda increases. The hard-concrete mechanism successfully discovers the required message length through gradient-based optimization.
+
+**Position hierarchy is consistent.** Across all conditions, positions are pruned back-to-front: position 5 closes first, then 4, then 3. This is a consequence of the static (input-independent) gate architecture — the system learns a fixed ordering of position importance.
+
+**Accuracy is maintained.** λ=0.20 achieves 74.6% with only 3.8 positions, comparable to λ=0.00's 79.5% with 6.0 positions. The best seeds at λ=0.20 (seed 7: both=91.7% with 4 positions) match the best at λ=0.00 (seed 6: both=91.8% with 6 positions). The penalty reduces redundancy without destroying communication.
+
+**Did agents find 2 positions?** No — the minimum stable configuration is 3-4 positions, not 2. Even at λ=0.20, the system stabilizes at 3.8 active positions. This suggests the task requires more than 2 symbols, likely because: (1) the impatient listener forces information into early positions, distributing load; (2) the ramp property comparison may require finer-grained encoding than binary (more than 2 values per property); (3) the vocab size of 5 at each position means 2 positions only gives 25 messages, which may be insufficient for 300 scenes.
+
+**Seed failure rate.** About 25-30% of seeds fail to learn across all conditions (both ≈ 46-50%). This is consistent with prior phases' Gumbel-Softmax instability and is not caused by the gate mechanism.
+
+**Key finding:** Static gates combined with the impatient listener create an effective, differentiable alternative to discrete STOP tokens. The system discovers a preferred message length of ~4 positions for this 2-property task with vocab=5, and does so smoothly through gradient descent rather than discrete search.
+
+### Verdict
+**PARTIAL SUCCESS** — hard-concrete gates successfully control message length via a smooth penalty, producing a clear lambda→length dose-response curve. However, agents did not converge to exactly 2 positions as hypothesized — the minimum stable length is 3-4 positions. The mechanism works but the task apparently requires more structural capacity than the minimal 2-position encoding.
+
+### Files
+- `_phase59d_gated.py` — full experiment with hard-concrete gates + impatient listener
+- `results/phase59d_gated.json` — all results (4 lambda × 20 seeds)
