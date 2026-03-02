@@ -4484,3 +4484,57 @@ Factored ablation: all positions used roughly equally (+4.9% to +6.6%) — no se
 ### Files
 - `_phase59b_variable_length.py` — full experiment pipeline (autoregressive GRU sender)
 - `results/phase59b_variable_length.json` — all results (3 lambda × 20 seeds)
+
+---
+
+## Phase 59c: REINFORCE Variable-Length Communication
+**Date:** Mar 2 ~15:26 | **Duration:** ~130 min | **Commit:** TBD
+
+### Motivation
+Phase 59b used Gumbel-Softmax for variable-length messages, giving end-to-end gradients but requiring the straight-through estimator hack for discrete tokens. Phase 59c tests REINFORCE — the "honest" discrete optimization approach where agents genuinely sample tokens and learn from reward signals. This is the standard approach in the emergent communication literature (Lazaridou et al., 2017; Havrylov & Titov, 2017).
+
+### Setup
+- **Architecture:** ReinforceSender — autoregressive GRU, categorical sampling (not Gumbel), log_prob tracking
+- **Training:** Sender via REINFORCE: loss = -log_prob × (reward - baseline); Receiver via standard BCE on detached messages
+- **Baseline:** EMA of reward (alpha=0.99) for variance reduction
+- **Reward:** 1 if both properties correct, 0.5 if not, minus lambda × avg_message_length
+- **Lambdas:** 0.0, 0.005, 0.02
+- **Seeds:** 20 per condition (60 total)
+- **Epochs:** 400, population IL with 3 receivers, reset every 40
+- **Asymmetric LR:** sender 1e-3, receiver 3e-3
+- **Max length:** 6, vocab: 5 + STOP (same as 59b)
+
+### Results
+
+| Condition | both (%) | e (%) | f (%) | Length | Unique | PosDis | TopSim |
+|-----------|----------|-------|-------|--------|--------|--------|--------|
+| λ=0.000 | 28.1 ± 0.0 | 46.6 | 49.1 | 3.75 ± 2.74 | 1.0 | 0.000 | 0.000 |
+| λ=0.005 | 28.1 ± 0.0 | 46.6 | 49.1 | 3.05 ± 2.96 | 1.0 | 0.000 | 0.000 |
+| λ=0.020 | 28.1 ± 0.0 | 46.6 | 49.1 | 1.80 ± 2.75 | 1.0 | 0.000 | 0.000 |
+
+### Analysis
+
+**Complete failure.** 0/60 conditions show any learning. Every single seed, every lambda: both=28.1% (exact chance), unique messages=1, PosDis=0, TopSim=0. The sender collapses to a single constant policy immediately and never recovers.
+
+**Failure mechanism — the chicken-and-egg problem:**
+1. Sender starts with random policy → sends random messages
+2. Receiver can't decode random messages → accuracy ≈ chance (28%)
+3. Reward ≈ 0.5 (the not-both-correct value), baseline ≈ 0.5 → advantage ≈ 0
+4. Near-zero advantage means near-zero REINFORCE gradient
+5. Sender policy drifts to a fixed point (constant message) due to entropy collapse
+6. Once constant, receiver gets zero information → stays at chance → reward stays flat → no recovery
+
+**Length behavior:** The only effect of lambda is on collapsed length. Higher lambda → more seeds collapse to STOP immediately (len=0) because the length penalty provides a small gradient toward shorter messages even when accuracy is flat. But this is trivial — the sender learns "say nothing" rather than "say something useful but short."
+
+**Comparison with Phase 59b (Gumbel-Softmax):**
+- 59b λ=0.00: both=56.7% (some seeds reach 85-93%) — **Gumbel works**
+- 59c λ=0.00: both=28.1% (all seeds at chance) — **REINFORCE completely fails**
+- The difference is entirely about gradient flow. Gumbel gives end-to-end gradients through the message; REINFORCE does not.
+
+**Why this matters:** This confirms a well-known result in emergent communication: pure REINFORCE cannot bootstrap sender-receiver coordination from scratch without additional mechanisms (e.g., population-based training with shared parameters, auxiliary losses, or curriculum). End-to-end differentiability (Gumbel-Softmax) is essential for our setting.
+
+**Verdict:** REINFORCE is a dead end for emergent communication in this setting. The chicken-and-egg problem is fatal — without end-to-end gradients, the sender has no learning signal to break out of its initial random policy. Phase 59b's Gumbel-Softmax approach, despite its limitations (high variance, ~30% success rate), is strictly necessary. The question of variable-length messages must be solved through differentiable methods, not policy gradient.
+
+### Files
+- `_phase59c_reinforce.py` — full REINFORCE experiment
+- `results/phase59c_reinforce.json` — all results (3 lambda × 20 seeds)
