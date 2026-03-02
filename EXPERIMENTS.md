@@ -4425,3 +4425,62 @@ Factored ablation: all positions used roughly equally (+4.9% to +6.6%) — no se
 ### Files
 - `_phase59_emergent_structure.py` — full experiment pipeline
 - `results/phase59_emergent_structure.json` — all results (4 conditions × 20 seeds)
+
+---
+
+## Phase 59b: Variable-Length Messages — Cost Pressure on Message Length
+
+**Date:** Mar 2 | **Duration:** ~120 min
+
+**Goal:** Give agents *real* structural freedom: autoregressive variable-length messages with a per-token cost. Unlike Phase 59 which forced fixed structures, here agents choose how many tokens to send via a STOP token. If agents converge to length 2 with each token specializing, that's genuine emergent structure.
+
+**Architecture:**
+- Autoregressive sender: GRU cell generates tokens sequentially (max 6, vocab 5 + STOP)
+- Running continue probability: `rc = rc * (1 - p_stop)` — differentiable masking after STOP
+- Message representation: 6 × 6 = 36 dim (one-hot per position, zero-padded after STOP)
+- Per-token cost: `lambda * n_tokens_soft` where n_tokens_soft = Σ running_continue
+- Lambda warmup: ramp from 0 to target over first 50 epochs
+- Manual GRU cell (nn.GRUCell crashes on MPS)
+- Same IL recipe: 400 epochs, 3 receivers, reset every 40 epochs, 20 seeds
+
+**Three conditions:**
+
+| Lambda | Cost pressure | Expected behavior |
+|--------|--------------|-------------------|
+| 0.00 | None | Use all capacity |
+| 0.01 | Mild | Shorten if possible |
+| 0.05 | Strong | Minimize length |
+
+**Results (20 seeds):**
+
+| Condition | Both holdout | Mean length | Active pos | Unique msgs | PosDis | TopSim |
+|-----------|-------------|-------------|------------|-------------|--------|--------|
+| lam=0.00 | 56.7% ± 17.0% | 4.37 | 4.4 | 40.9 | 0.780 | 0.539 |
+| lam=0.01 | 57.8% ± 16.3% | 3.11 | 3.2 | 29.1 | 0.745 | 0.551 |
+| lam=0.05 | 44.9% ± 8.1% | 0.95 | 0.9 | 4.4 | 0.050 | 0.308 |
+
+**Key findings:**
+
+1. **Autoregressive sender is much harder to train than parallel heads.** Phase 59's fixed 2×5 achieved 76.4% both; here, the best autoregressive condition (lam=0.01) only reaches 57.8%. Most seeds fail to establish communication at all — many end at 28-48% (one-property chance level). The GRU sender + Gumbel-Softmax + STOP token creates an optimization landscape that's very hard to navigate.
+
+2. **Mild cost (lam=0.01) does shorten messages.** Length drops from 4.37 → 3.11 tokens with maintained performance (56.7% → 57.8%). Active positions drop from 4.4 → 3.2. This shows agents CAN learn shorter messages when incentivized, but they don't converge to the optimal 2.
+
+3. **Strong cost (lam=0.05) kills communication.** Agents collapse to ~1 token (mean 0.95), performance drops to near-chance (44.9%). The cost pressure overwhelms the communication signal — agents learn to stay silent rather than communicate efficiently. The 50-epoch warmup is insufficient since communication takes 200-300 epochs to develop.
+
+4. **No condition discovers the optimal length 2.** Even with cost pressure, agents settle around 3-4 tokens (lam=0.01) or 4-5 tokens (lam=0.00), never the minimal 2. The autoregressive architecture doesn't naturally converge to the information-theoretically optimal message length.
+
+5. **Enormous variance across seeds.** When it works (e.g., seeds 0, 1, 10 for lam=0.00), agents achieve 85-93% both with 5-6 tokens. But most seeds fail entirely. The best individual seed hits 93.1% (seed 10, lam=0.00) using 5.7 tokens — comparable to Phase 59's fixed structure but requiring more tokens.
+
+6. **High PosDis in working seeds.** For lam=0.00 and lam=0.01, seeds that converge show PosDis ~0.97-0.99 — near-perfect position specialization. But this is artificially inflated because many failed seeds encode only one property (e.g., e=98% but f=49%), giving PD=1.0 trivially. The "real" specialization in working seeds is moderate.
+
+**Answers to key questions:**
+
+1. *Do agents converge to length 2 with each token specializing?* **No** — no condition approaches length 2. Working seeds use 4-6 tokens.
+2. *Does cost pressure create more efficient messages?* **Slightly** — lam=0.01 shortens by ~1 token without hurting performance. But lam=0.05 destroys communication entirely.
+3. *Is this genuine emergent structure?* **Partially** — agents can learn shorter messages under mild pressure, but the autoregressive architecture is too unstable for reliable structure emergence. The training failure rate is too high.
+
+**Verdict:** Variable-length autoregressive messages with cost pressure is the wrong tool for emergent structure discovery in this setting. The GRU sender + Gumbel-Softmax + STOP token creates a fragile optimization landscape where most seeds fail. When agents do communicate, they use MORE tokens than necessary (4-6 vs optimal 2), even with cost pressure. The Phase 59 result stands: structure must be architecturally imposed (parallel heads with moderate vocabulary) rather than emergently discovered. The right question isn't "can agents find the right length?" but "what fixed structure works best?" — and Phase 59 already showed 4×5 is the sweet spot.
+
+### Files
+- `_phase59b_variable_length.py` — full experiment pipeline (autoregressive GRU sender)
+- `results/phase59b_variable_length.json` — all results (3 lambda × 20 seeds)
