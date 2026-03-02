@@ -4372,3 +4372,56 @@ Factored ablation: all positions used roughly equally (+4.9% to +6.6%) — no se
 ### Files
 - `_phase58b_cross_property.py` — full experiment pipeline
 - `results/phase58b_cross_property.json` — all results (20 seeds × 3 conditions + ablation)
+
+---
+
+## Phase 59: Emergent Vocabulary Structure — Agents Discover Factorization
+
+**Date:** Mar 1-2 | **Duration:** 114 min
+
+**Goal:** Do agents discover the right vocabulary factorization when given overcomplete capacity? Give agents more structure than needed and observe what they actually use. All conditions on the 2-property ramp task (e + f comparison) with population IL, 400 epochs, 20 seeds.
+
+**Four conditions:**
+
+| Condition | Heads × Vocab | Capacity | Need |
+|-----------|--------------|----------|------|
+| 2×5 | 2 heads, 5 symbols | 25 | 25 |
+| 4×5 | 4 heads, 5 symbols | 625 | 25 |
+| 2×10 | 2 heads, 10 symbols | 100 | 25 |
+| 6×3 | 6 heads, 3 symbols | 729 | 25 |
+
+**Results (20 seeds):**
+
+| Condition | Both holdout | PosDis | Active pos | Unique msgs | TopSim |
+|-----------|-------------|--------|------------|-------------|--------|
+| 2×5 | 76.4% ± 10.4% | 0.442 | 2.0/2 | 11.7 | 0.637 |
+| **4×5** | **82.4% ± 12.1%** | 0.447 | 4.0/4 | 29.8 | **0.730** |
+| 2×10 | 70.1% ± 14.6% | 0.578 | 2.0/2 | 14.8 | 0.575 |
+| 6×3 | 76.8% ± 17.9% | 0.633 | 6.0/6 | 26.8 | 0.767 |
+
+**Key findings:**
+
+1. **More positions HELP, bigger vocab HURTS.** 4×5 (82.4%) beats 2×5 baseline (76.4%) by +6pp. But 2×10 (70.1%) is worst — 10 symbols per position is too many for Gumbel-Softmax to handle cleanly (high NaN rate, frequent collapse on one property). The bottleneck is per-position vocabulary size, not total capacity.
+
+2. **Agents do NOT discover the minimal factorization.** In 4×5, all 4 positions stay active (4.0/4) with similar entropy (0.84-0.87 normalized). In 6×3, all 6 positions stay active. No position collapses to encode nothing. Agents USE available capacity redundantly rather than discovering that 2 positions suffice.
+
+3. **No position specialization emerges.** Per-position MI analysis shows almost all positions encode "both" properties (MI(e) ≈ MI(f) for each position). The 2×10 condition partially specializes toward elasticity (MI(e)=0.85-0.88 > MI(f)=0.52-0.53), explaining its lopsided accuracy (e=90.5% but f=78.3%).
+
+4. **Redundant encoding improves TopSim.** 6×3 has highest TopSim (0.767) and 4×5 is second (0.730). More positions, even redundant ones, help maintain topographic similarity — nearby meanings get nearby messages. But redundancy doesn't help PosDis, which measures position specialization.
+
+5. **4×5 uses ~30 unique messages** out of 625 possible (4.8%), close to the 25 needed. 6×3 uses ~27. 2×5 only uses ~12 of 25 (48%). The overcomplete conditions develop richer message inventories.
+
+6. **All conditions have high variance** (10-18% std). The training dynamics (Gumbel-Softmax + population IL + receiver reset) introduce substantial stochasticity. 2×10 is worst with frequent single-property collapse.
+
+**Answers to key questions:**
+
+1. *In 4×5: do agents collapse to ~2 positions?* **No** — all 4 remain active with high entropy and MI.
+2. *In 2×10: do agents cluster to ~5 symbols?* **Partially** — effective vocab 5.2-5.5, but condition is unstable.
+3. *In 6×3: do agents pair positions?* **No** — all 6 encode both properties redundantly, no clear pairing.
+4. *Does overcomplete capacity help compositionality?* **More positions help performance** (+6pp) via redundancy, but don't improve PosDis. **Bigger vocab hurts** (NaN issues, collapse).
+
+**Verdict:** Agents exploit overcomplete positional capacity rather than discovering minimal factorization. 4×5 is the sweet spot — redundant positions with moderate vocabulary improve both accuracy and TopSim. The finding that agents don't collapse to 2 positions suggests that the "right" factorization (1 position per property) is not a natural attractor of the training dynamics. Instead, agents distribute information redundantly across all available positions, which is robust and performant.
+
+### Files
+- `_phase59_emergent_structure.py` — full experiment pipeline
+- `results/phase59_emergent_structure.json` — all results (4 conditions × 20 seeds)
