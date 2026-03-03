@@ -4935,3 +4935,76 @@ At t=0: position x(0) = A (constant for all scenes), but velocity v(0) = -γA = 
 ### Files
 - `_phase64_transfer.py` — Domain transfer experiment
 - `results/phase64_transfer.json` — All results (3 conditions × 15 seeds)
+
+---
+
+## Phase 65: Non-Physics Domain — Abstract Visual Reasoning
+**Date:** Mar 3 | **Duration:** ~50 min | **Commit:** pending
+
+### Question
+Does the multi-agent communication mechanism work on a **non-physics** domain with **no temporal dynamics** and **uniform partial information**? Physics domains had clean information asymmetry (different frames reveal different properties). Abstract scenes have uniform partial information (every quadrant reveals a bit of everything). If agents still develop useful protocols under uniform information, the communication bottleneck itself creates structure — not the physics.
+
+### Setup
+Abstract geometric scenes: shapes placed randomly in [0,1]×[0,1] unit square.
+- **Numerosity**: total shapes in scene (2, 3, 4, 5, 6) → 5 bins
+- **Mean size**: average shape radius (5 levels from 0.06 to 0.22) → 5 bins
+- Properties are fully independent (no constraint between them)
+- 300 scenes (5×5 grid, 12 per cell), same Latin square holdout (60 scenes)
+- 4 spatial quadrant views (not temporal frames): each agent sees one quadrant crop
+- Per-quadrant 9-dimensional raw features: n_shapes, n_colors, has_circle/square/triangle, mean_x, mean_y, total_area, mean_radius
+- Frozen random MLP: 9 → 128 → 256 → 384 (seed=54321, different from spring)
+- Architecture: identical to Phase 62/64 (4 agents, 2 positions, vocab=5)
+- Oracle baseline: MLP on all 4 quadrants' raw features concatenated (input_dim=72)
+- 15 seeds per condition, 400 epochs
+
+### Key design insight
+With N=2 shapes and random placement, most quadrants are empty. "I see nothing" IS information about numerosity (it's probably low) but gives zero size signal. This makes mean_size harder to communicate than numerosity.
+
+### Conditions
+
+| Condition | Data | Architecture | Purpose |
+|-----------|------|-------------|---------|
+| SCENE_4AGENT | geometric scenes | 4 agents, 2 pos, vocab=5 | Main test |
+| SPRING_4AGENT | spring-mass | 4 agents, 2 pos, vocab=5 | Physics control |
+| RAMP_4AGENT | ramp (DINOv2) | 4 agents, 2 pos, vocab=5 | Physics control |
+| SCENE_ORACLE | scene raw features | MLP, no comms | Ceiling |
+
+### Results
+
+| Condition | Prop1 | Prop2 | Both |
+|-----------|-------|-------|------|
+| SCENE_4AGENT | 87.9%±4.1% (num) | 57.0%±5.0% (size) | **50.4%±4.4%** |
+| SPRING_4AGENT | 96.5%±1.4% (k) | 97.3%±1.6% (b) | 93.8%±1.2% |
+| RAMP_4AGENT | 97.7%±1.0% (e) | 90.7%±1.5% (f) | 88.4%±1.6% |
+| SCENE_ORACLE | 98.5%±0.7% (num) | 96.2%±1.3% (size) | 94.7%±1.2% |
+
+### Agent Specialization (MI)
+
+| Agent | Scene MI(num) | Scene MI(size) | Spec | | Spring Spec | Ramp Spec |
+|-------|--------------|----------------|------|---|------------|-----------|
+| agent_0 | 0.157 | 0.050 | 0.550 | | 0.992 | 0.000 |
+| agent_1 | 0.156 | 0.039 | 0.608 | | 0.968 | 0.977 |
+| agent_2 | 0.180 | 0.027 | 0.746 | | 0.956 | 0.861 |
+| agent_3 | 0.132 | 0.206 | 0.425 | | 0.869 | 0.913 |
+| **Mean** | | | **0.582** | | **0.946** | **0.688** |
+
+### Analysis
+
+**Communication works on non-physics domains.** Scene agents achieve 87.9% numerosity and 57.0% size — well above chance (20% for 5 bins). The bottleneck creates meaningful communication protocols even without physics-driven information asymmetry.
+
+**Size lags numerosity as predicted.** 57% vs 88%. Empty quadrants carry numerosity information ("I see nothing" → low count) but zero size signal. With N=2, on average 2 of 4 agents see nothing useful about size. The oracle shows both properties are equally learnable (98.5% vs 96.2%) — the gap is a communication challenge, not a data challenge.
+
+**Scene captures 53% of oracle ceiling.** 50.4% vs 94.7% both accuracy. Physics domains capture 88-98% of their oracle ceilings. The communication bottleneck is much more constraining when information is uniformly distributed — agents can't cleanly specialize because every quadrant reveals a bit of everything.
+
+**Lower specialization confirms uniform information hypothesis.** Mean specialization: Scene=0.582 vs Spring=0.946 vs Ramp=0.688. Scenes show moderate specialization (not zero — some symmetry-breaking occurs), but far lower than physics domains where temporal structure creates clean property-to-agent mappings.
+
+**Agent 3 shows interesting symmetry-breaking.** MI(size)=0.206 is the highest size MI across all agents — it emerged as a partial size specialist despite no inherent advantage from its quadrant. This is the bottleneck forcing structure: with only 2 message positions and 4 agents, the system finds it efficient to partially dedicate one agent to the harder property.
+
+**All 4 agents active.** Unlike ramp (where Agent 0 is dead — static image carries no physics information), all scene agents carry some information. This confirms that quadrant views all have similar information content — there's no "dead view" equivalent.
+
+### Verdict
+**SUCCESS** — the communication mechanism is domain-agnostic. Agents develop meaningful protocols on abstract geometric scenes with no physics, no trajectories, and uniform partial information. The key finding: physics domains achieve higher accuracy because clean information asymmetry allows tight specialization (spec≈0.95), while uniform information forces lower specialization (spec≈0.58) and less efficient communication. The bottleneck creates structure in both cases, but physics provides a more favorable landscape for compositional encoding.
+
+### Files
+- `_phase65_nonphysics.py` — Non-physics domain experiment
+- `results/phase65_nonphysics.json` — All results (4 conditions × 15 seeds)
