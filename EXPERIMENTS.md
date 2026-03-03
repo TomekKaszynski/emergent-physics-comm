@@ -4863,3 +4863,75 @@ Config: 4 agents, 2 positions each, vocab=5, τ 2.0→0.5, batch=64, population 
 ### Files
 - `_phase63_adaptation.py` — Novel property introduction experiment
 - `results/phase63_adaptation.json` — All results (4 conditions × 15 seeds)
+
+---
+
+## Phase 64: Domain Transfer — Spring-Mass Oscillation (2025-03-03)
+
+### Question
+Does the same multi-agent communication architecture produce compositional encoding on a **structurally different** physics domain? Zero architecture changes — if specialization emerges on spring-mass oscillation, the mechanism generalizes.
+
+### Setup
+Spring-mass oscillation: x(t) = A·exp(-γt)·cos(ωt), where ω = √(k/m - γ²), γ = b/(2m).
+- **k** (spring constant): 5 bins over [1.0, 10.0]
+- **b** (damping): 5 bins over [0.1, 2.0]
+- 300 scenes (5×5 grid, 12 per cell), same Latin square holdout (60 scenes)
+- 4 frames at t = [0.0, 0.5, 1.0, 1.5], each → (position, velocity)
+- Frozen random MLP: (pos, vel) → 384-dim features (simulates DINOv2 role)
+- Architecture: identical to Phase 62 four_agents_2pos (4 agents, 2 positions, vocab=5)
+- 15 seeds per condition, 400 epochs
+
+### Key physics insight
+At t=0: position x(0) = A (constant for all scenes), but velocity v(0) = -γA = -bA/(2m). So Agent 0 (frame 0) directly observes damping through initial velocity, while later agents observe oscillation frequency (→ k) and amplitude decay (→ b).
+
+### Conditions
+
+| Condition | Data | Architecture | Purpose |
+|-----------|------|-------------|---------|
+| SPRING_4AGENT | spring-mass | 4 agents, 2 pos, vocab=5 | Main test |
+| RAMP_4AGENT | ramp (DINOv2) | 4 agents, 2 pos, vocab=5 | Control |
+| SPRING_ORACLE | spring raw features | MLP, no comms | Ceiling |
+
+### Results
+
+| Condition | Prop1 | Prop2 | Both |
+|-----------|-------|-------|------|
+| SPRING_4AGENT | 96.5%±1.4% | 97.3%±1.6% | **93.8%±1.2%** |
+| RAMP_4AGENT | 97.7%±1.0% | 90.7%±1.5% | 88.4%±1.6% |
+| SPRING_ORACLE | 98.1%±0.8% | 97.7%±1.0% | 95.7%±1.0% |
+
+### Agent Specialization (MI)
+
+| Agent | Spring MI(k) | Spring MI(b) | Spec | | Ramp MI(e) | Ramp MI(f) | Spec |
+|-------|-------------|-------------|------|---|-----------|-----------|------|
+| agent_0 | 0.008 | **1.917** | 0.992 | | 0.000 | 0.000 | 0.000 |
+| agent_1 | **1.123** | 0.019 | 0.968 | | 0.017 | **1.433** | 0.977 |
+| agent_2 | **1.404** | 0.031 | 0.956 | | **1.488** | 0.113 | 0.861 |
+| agent_3 | **1.610** | 0.116 | 0.869 | | **1.649** | 0.076 | 0.913 |
+
+### Analysis
+
+**Communication works across domains.** Spring 4-agent achieves 93.8% both accuracy — 98% of oracle ceiling (95.7%). The architecture that was designed for ramp physics works equally well on spring-mass oscillation with zero modifications.
+
+**Spring beats ramp.** 93.8% vs 88.4% both accuracy (+5.4%). The frozen random MLP produces cleaner features than DINOv2-on-video, making the communication task easier. This suggests DINOv2 features are the bottleneck on ramp, not the communication architecture.
+
+**Different specialization patterns prove information-driven mechanism.** Agent 0 is dead on ramp (MI≈0 for both properties — static image carries no temporal information) but is a strong damping specialist on spring (MI(b)=1.917 — initial velocity v(0)=-b/(2m) directly encodes damping). Same architecture, different specialization, because the physics determines what each temporal frame carries.
+
+**Specialization pattern on spring:**
+- Agent 0 (t=0.0): **damping specialist** — v(0)=-b/(2m) gives b directly
+- Agent 1 (t=0.5): **k specialist** — first half-oscillation reveals frequency
+- Agents 2-3 (t=1.0, 1.5): **k specialists** — oscillation frequency more visible over longer time
+
+**Specialization pattern on ramp:**
+- Agent 0 (frame 0): **dead** — static image before motion
+- Agent 1 (frame 1): **friction specialist** — sliding phase reveals friction
+- Agents 2-3 (frames 2-3): **elasticity specialists** — bounce dynamics reveal elasticity
+
+**This is a key result for the paper.** The architecture doesn't impose specialization by position — it emerges from the information structure of the physics domain. When the physics changes, specialization reorganizes to match the new information landscape.
+
+### Verdict
+**SUCCESS** — same architecture, different physics, different specialization patterns, but equal (or better) communication accuracy. The compositional communication mechanism generalizes across physics domains. Agent specialization is driven by the information content of each temporal frame, not by architectural bias.
+
+### Files
+- `_phase64_transfer.py` — Domain transfer experiment
+- `results/phase64_transfer.json` — All results (3 conditions × 15 seeds)
