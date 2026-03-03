@@ -4711,3 +4711,73 @@ Hard-concrete gates at λ=0.1 are too weak to prune in two-sender setups (contra
 ### Files
 - `_phase61_growing.py` — capacity pruning experiment (final version: pruning from open)
 - `results/phase61_growing.json` — all results (3 conditions × 15 seeds)
+
+---
+
+## Phase 62: N-Agent Scaling
+**Date:** Mar 3 | **Duration:** ~43 min
+
+### Setup
+Tests whether splitting observations across more agents (each seeing less) preserves or improves communication. Builds on Phase 60's two-sender architecture, dropping all gating machinery from Phase 61.
+
+Same task: ramp comparison (predict which ball has higher e, higher f). Same data: 300 scenes, 240/60 train/holdout, cached DINOv2 features. Same training: 400 epochs, population IL (3 receivers, reset every 40), sender_lr=1e-3, receiver_lr=3e-3, batch=64, vocab=5, tau 2.0→0.5.
+
+**Three conditions (15 seeds each):**
+- `two_agents_2pos`: Agent A sees frames [0,1], Agent B sees [2,3], 2 positions each. Receiver dim=40. (Phase 60 replication)
+- `four_agents_2pos`: 4 independent agents, each sees 1 frame, 2 positions each. Receiver dim=80.
+- `four_agents_1pos`: 4 independent agents, each sees 1 frame, 1 position each. Receiver dim=40. Maximum compression: 1 frame → 1 symbol.
+
+### Results
+
+| Condition | Both Acc | E Acc | F Acc |
+|-----------|----------|-------|-------|
+| two_agents_2pos | 83.6% ± 16.5% | 97.6% ± 1.5% | 85.5% ± 17.2% |
+| four_agents_2pos | 88.4% ± 1.6% | 97.7% ± 1.0% | 90.7% ± 1.5% |
+| four_agents_1pos | 86.8% ± 2.2% | 96.4% ± 2.2% | 90.1% ± 1.7% |
+
+**Per-agent specialization (4-agent 2pos):**
+
+| Agent | Frames | MI(e) | MI(f) | Spec Ratio |
+|-------|--------|-------|-------|------------|
+| 0 | [0] | 0.000 | 0.000 | 0.000 |
+| 1 | [1] | 0.017 | 1.433 | 0.977 |
+| 2 | [2] | 1.488 | 0.113 | 0.861 |
+| 3 | [3] | 1.649 | 0.076 | 0.913 |
+
+**Per-agent specialization (4-agent 1pos):**
+
+| Agent | Frames | MI(e) | MI(f) | Spec Ratio |
+|-------|--------|-------|-------|------------|
+| 0 | [0] | 0.000 | 0.000 | 0.024 |
+| 1 | [1] | 0.011 | 0.771 | 0.972 |
+| 2 | [2] | 0.720 | 0.072 | 0.814 |
+| 3 | [3] | 0.878 | 0.032 | 0.932 |
+
+### Analysis
+
+**More agents eliminate bimodal failure.** Two-agent has ±16.5% std (3 of 15 seeds collapse to ~50% both). Four-agent conditions have ±1.6% and ±2.2% std — zero seed failures across 30 runs. Distributing observation across 4 independent senders removes the winner-take-all instability that plagued Phase 60/61.
+
+**4 agents beat 2 agents.** four_agents_2pos: +4.9% both accuracy; four_agents_1pos: +3.2%. The improvement comes from eliminating seed failures (all 2-agent successes also reach ~90%).
+
+**Frame 0 carries no information.** Agent 0 (frame 0) has MI=0.000 for both properties in both 4-agent conditions. This is the very first frame of the trajectory — the ball has barely moved, so there's nothing to distinguish between different friction/elasticity values. The system correctly discovers this and the receiver learns to ignore agent 0's messages.
+
+**Clean specialization hierarchy.** Agent 1 (frame 1, late pre-bounce) → friction specialist. Agents 2+3 (frames 2+3, bounce event) → elasticity specialists. Matches the physics: friction affects sliding speed (visible by frame 1), elasticity affects bounce height (visible at frames 2+3).
+
+**Maximum compression works.** 4-agent 1pos (1 symbol per frame, 4 total) achieves 86.8% — only 1.7% below 4-agent 2pos (2 symbols per frame, 8 total) and 3.2% above 2-agent baseline. A single vocab-5 symbol per frame is sufficient to encode the relevant physics property.
+
+### Key Comparisons
+
+| Message Budget | Both Acc |
+|----------------|----------|
+| 4 symbols (2 agents × 2) | 83.6% ± 16.5% |
+| 8 symbols (4 agents × 2) | 88.4% ± 1.6% |
+| 4 symbols (4 agents × 1) | 86.8% ± 2.2% |
+
+At equal message budget (4 symbols), distributing across 4 agents beats concentrating in 2 agents by +3.2% — and more importantly, eliminates bimodal failure entirely.
+
+### Verdict
+**SUCCESS** — communication scales cleanly with agent count. More agents with narrower observations produce more stable and slightly more accurate protocols. The key benefit is eliminating bimodal seed failure, not raw accuracy improvement. Maximum compression (1 symbol per frame) is viable.
+
+### Files
+- `_phase62_scaling.py` — N-agent scaling experiment
+- `results/phase62_scaling.json` — all results (3 conditions × 15 seeds)
