@@ -4656,3 +4656,58 @@ Phase 59b showed agents can communicate with variable-length messages using a di
 ### Files
 - `_phase59d_gated.py` — full experiment with hard-concrete gates + impatient listener
 - `results/phase59d_gated.json` — all results (4 lambda × 20 seeds)
+
+---
+
+## Phase 61: Capacity Pruning Under Information Asymmetry
+**Date:** Mar 2 | **Duration:** ~72 min
+
+### Setup
+Combines Phase 59d's hard-concrete gates with Phase 60's two-sender partial observability. Tests whether information asymmetry drives differentiated capacity usage when agents can prune unnecessary message positions.
+
+**Original hypothesis:** Start gates CLOSED (log_alpha=-2.0) and let agents "grow" capacity as needed. Information-specialized senders should open fewer positions than full-observability senders.
+
+**Problem discovered:** Growing from closed doesn't work with hard-concrete gates in multi-sender setups:
+1. Closed gates → no signal → receiver can't learn → no task gradient → gates stay closed
+2. Even with log_alpha=-0.5 (small gap), gradients on log_alpha are tiny (1e-4 to 1e-2)
+3. With separate gate LR (0.01-0.1), winner-take-all dynamics emerge — one sender opens all positions while the other atrophies entirely
+4. Clamping position 0 ON for both senders still leads to one-sided dominance
+
+**Pivot:** Reversed to pruning from OPEN (log_alpha=+2.0, same as Phase 59d) with closing penalty. Both senders participate from the start, avoiding the chicken-and-egg problem. Tests the same hypothesis: under partial observability, specialized senders should need fewer positions.
+
+**Architecture:** Same as Phase 60 but with GatedSender (hard-concrete gates, β=0.66, γ=-0.1, ζ=1.1). Closing penalty: λ·Σ(p_active - 0.1).clamp(min=0) per sender. λ=0.1, warmup=50 epochs, 400 epochs, 15 seeds.
+
+**Three conditions:**
+- `partial_pruning`: A sees [0,1], B sees [2,3], gated
+- `full_pruning`: Both see all [0,1,2,3], gated
+- `partial_fixed`: A sees [0,1], B sees [2,3], no gates (control = Phase 60 partial)
+
+### Results
+
+| Condition | Both Acc | E Acc | F Acc | Active A | Active B | Spec A | Spec B |
+|-----------|----------|-------|-------|----------|----------|--------|--------|
+| partial_pruning | 79.1% ± 18.8% | 97.4% ± 1.5% | 80.9% ± 19.8% | 3.2 ± 1.6 | 4.0 ± 0.0 | 0.656 | 0.983 |
+| full_pruning | 86.0% ± 3.8% | 96.6% ± 1.2% | 89.3% ± 3.9% | 4.0 ± 0.0 | 4.0 ± 0.0 | 0.758 | 0.772 |
+| partial_fixed | 83.1% ± 16.7% | 97.8% ± 1.2% | 85.1% ± 17.6% | — | — | — | — |
+
+### Analysis
+
+**Gates did NOT prune.** λ=0.1 was too weak — all gate probabilities stayed at p_active≈0.97-0.98 across all conditions. Active positions are 4.0/4.0 everywhere except partial_pruning sender A, where the lower count (3.2) is due to seed collapse (sender A dies entirely in ~25% of seeds), not gradual pruning.
+
+**Specialization emerges from partial observability, not from gating.** Partial_pruning sender B shows near-perfect specialization (0.983) because it only sees elasticity frames. Full_pruning senders show moderate specialization (0.758/0.772) — both encode both properties since both see everything.
+
+**Winner-take-all instability persists.** Partial_pruning has ±18.8% variance due to bimodal outcomes (some seeds: sender A collapses). This matches Phase 60's partial condition (±16.7%). The gate mechanism doesn't help or hurt this instability.
+
+**Best seeds show the potential:**
+- partial_pruning best: both=94.4%, all positions specialized (spec≥0.96)
+- full_pruning best: both=91.3%, moderate specialization (0.82-0.95)
+
+### Key Finding
+Hard-concrete gates at λ=0.1 are too weak to prune in two-sender setups (contrast with Phase 59d where λ=0.10 reduced from 6→4.9 positions in single-sender). The two-sender setup distributes information across more positions, requiring stronger penalty to trigger pruning. Specialization is primarily driven by input structure (which frames each sender sees), not by the gating mechanism.
+
+### Verdict
+**PARTIAL SUCCESS** — the experiment revealed that (1) growing from closed fails due to winner-take-all dynamics in multi-sender setups, (2) pruning from open at λ=0.1 doesn't actually prune, and (3) specialization comes from partial observability structure, not adaptive capacity. The gating mechanism works mechanically but doesn't add value over fixed-length messages in this regime.
+
+### Files
+- `_phase61_growing.py` — capacity pruning experiment (final version: pruning from open)
+- `results/phase61_growing.json` — all results (3 conditions × 15 seeds)
