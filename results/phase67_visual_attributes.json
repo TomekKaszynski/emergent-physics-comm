@@ -1,0 +1,1173 @@
+{
+  "comp_2pos": {
+    "train_brightness_mean": 0.8877691645133505,
+    "train_brightness_std": 0.010234392281467079,
+    "train_saturation_mean": 0.8974661424202709,
+    "train_saturation_std": 0.007801070957540041,
+    "train_both_mean": 0.8023466666666668,
+    "train_both_std": 0.00781911049217805,
+    "holdout_brightness_mean": 0.8692742285962625,
+    "holdout_brightness_std": 0.009307409341668044,
+    "holdout_saturation_mean": 0.8591154261057173,
+    "holdout_saturation_std": 0.011169920089553835,
+    "holdout_both_mean": 0.7585425101214576,
+    "holdout_both_std": 0.010040485829959518,
+    "sender_specs": {
+      "sender_0": {
+        "mi_brightness_mean": 0.622093529767303,
+        "mi_saturation_mean": 0.7379595179889928,
+        "spec_ratio_mean": 0.5007475356122286,
+        "spec_ratio_std": 0.16431909485210044
+      },
+      "sender_1": {
+        "mi_brightness_mean": 0.8023486556031095,
+        "mi_saturation_mean": 0.6000208953792178,
+        "spec_ratio_mean": 0.5200189030670066,
+        "spec_ratio_std": 0.20300939291341386
+      }
+    },
+    "seeds": [
+      {
+        "train_brightness": 0.9011627906976745,
+        "train_saturation": 0.8938401048492791,
+        "train_both": 0.8104,
+        "holdout_brightness": 0.8898305084745762,
+        "holdout_saturation": 0.8491909385113269,
+        "holdout_both": 0.7724696356275303,
+        "nan_count": 1,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 1.0086953894498847,
+            "total_mi_saturation": 0.41430675174901144,
+            "spec_ratio": 0.4177004520879314
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.5066776392873142,
+            "total_mi_saturation": 0.909196730188422,
+            "spec_ratio": 0.2842901175265647
+          }
+        }
+      },
+      {
+        "train_brightness": 0.9095607235142119,
+        "train_saturation": 0.891218872870249,
+        "train_both": 0.8152,
+        "holdout_brightness": 0.8676662320730117,
+        "holdout_saturation": 0.86084142394822,
+        "holdout_both": 0.7554655870445344,
+        "nan_count": 1,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.2806892265454064,
+            "total_mi_saturation": 1.0505248916070538,
+            "spec_ratio": 0.5782958988821965
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.1503419438217541,
+            "total_mi_saturation": 0.19640419716745727,
+            "spec_ratio": 0.7083278114712925
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8863049095607235,
+        "train_saturation": 0.8964613368283093,
+        "train_both": 0.8,
+        "holdout_brightness": 0.8709256844850065,
+        "holdout_saturation": 0.8453074433656957,
+        "holdout_both": 0.7481781376518218,
+        "nan_count": 4,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 1.0745986581703328,
+            "total_mi_saturation": 0.29378856776791584,
+            "spec_ratio": 0.5706060942413771
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.30966505881815176,
+            "total_mi_saturation": 1.0667098146191187,
+            "spec_ratio": 0.5500280268197368
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8934108527131783,
+        "train_saturation": 0.8990825688073395,
+        "train_both": 0.8064,
+        "holdout_brightness": 0.8670143415906127,
+        "holdout_saturation": 0.8511326860841424,
+        "holdout_both": 0.7530364372469636,
+        "nan_count": 2,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.31079200282669156,
+            "total_mi_saturation": 1.1437293994167717,
+            "spec_ratio": 0.5726539295367893
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.082901945450672,
+            "total_mi_saturation": 0.2950555883375737,
+            "spec_ratio": 0.5717493738338736
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8979328165374677,
+        "train_saturation": 0.9056356487549148,
+        "train_both": 0.8088,
+        "holdout_brightness": 0.8878748370273793,
+        "holdout_saturation": 0.8647249190938512,
+        "holdout_both": 0.7781376518218623,
+        "nan_count": 2,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 1.1153344131124239,
+            "total_mi_saturation": 0.20871448990054164,
+            "spec_ratio": 0.6847329589932859
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.33117203166557263,
+            "total_mi_saturation": 1.156819825775352,
+            "spec_ratio": 0.5548738657278296
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8850129198966409,
+        "train_saturation": 0.901048492791612,
+        "train_both": 0.8112,
+        "holdout_brightness": 0.8513689700130378,
+        "holdout_saturation": 0.8679611650485437,
+        "holdout_both": 0.751417004048583,
+        "nan_count": 2,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.25178764535634596,
+            "total_mi_saturation": 1.124389688919405,
+            "spec_ratio": 0.6340767442026566
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.1585963756949371,
+            "total_mi_saturation": 0.18442390557677707,
+            "spec_ratio": 0.7253594630720767
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8953488372093024,
+        "train_saturation": 0.8971166448230669,
+        "train_both": 0.8032,
+        "holdout_brightness": 0.8702737940026075,
+        "holdout_saturation": 0.8517799352750809,
+        "holdout_both": 0.7506072874493928,
+        "nan_count": 2,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.3527551526422418,
+            "total_mi_saturation": 1.070601611849222,
+            "spec_ratio": 0.5043334721941284
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.098505740658593,
+            "total_mi_saturation": 0.34411858361856595,
+            "spec_ratio": 0.5229269632743925
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8804909560723514,
+        "train_saturation": 0.8859764089121888,
+        "train_both": 0.7872,
+        "holdout_brightness": 0.8604954367666232,
+        "holdout_saturation": 0.8394822006472492,
+        "holdout_both": 0.7465587044534413,
+        "nan_count": 1,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.3656327761830048,
+            "total_mi_saturation": 0.8112586315611079,
+            "spec_ratio": 0.37864653649930796
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.0880578308694904,
+            "total_mi_saturation": 0.41186043581116605,
+            "spec_ratio": 0.4508228282030062
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8875968992248062,
+        "train_saturation": 0.8997378768020969,
+        "train_both": 0.8024,
+        "holdout_brightness": 0.8722294654498044,
+        "holdout_saturation": 0.8653721682847897,
+        "holdout_both": 0.7668016194331984,
+        "nan_count": 2,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.7658949921623555,
+            "total_mi_saturation": 0.6320956173387315,
+            "spec_ratio": 0.09570835019512332
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.724439421221438,
+            "total_mi_saturation": 0.7124318771638385,
+            "spec_ratio": 0.008356729006344078
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8785529715762274,
+        "train_saturation": 0.8964613368283093,
+        "train_both": 0.7936,
+        "holdout_brightness": 0.8683181225554107,
+        "holdout_saturation": 0.8640776699029126,
+        "holdout_both": 0.7635627530364373,
+        "nan_count": 1,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.33662282618706113,
+            "total_mi_saturation": 0.972543832327871,
+            "spec_ratio": 0.48574488359043144
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.128291815434625,
+            "total_mi_saturation": 0.20072978842464367,
+            "spec_ratio": 0.6979284793539005
+          }
+        }
+      },
+      {
+        "train_brightness": 0.875968992248062,
+        "train_saturation": 0.9141546526867628,
+        "train_both": 0.8,
+        "holdout_brightness": 0.8650586701434159,
+        "holdout_saturation": 0.8770226537216829,
+        "holdout_both": 0.7635627530364373,
+        "nan_count": 1,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 1.1184186782000665,
+            "total_mi_saturation": 0.16743850882364156,
+            "spec_ratio": 0.7395690431046998
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.18833300593796937,
+            "total_mi_saturation": 1.1609591835128765,
+            "spec_ratio": 0.7208417755466001
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8695090439276486,
+        "train_saturation": 0.9023591087811271,
+        "train_both": 0.7992,
+        "holdout_brightness": 0.863102998696219,
+        "holdout_saturation": 0.8770226537216829,
+        "holdout_both": 0.7692307692307693,
+        "nan_count": 1,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.487993076669133,
+            "total_mi_saturation": 0.935508667622634,
+            "spec_ratio": 0.3143765666238455
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.031272457446629,
+            "total_mi_saturation": 0.41494591315297313,
+            "spec_ratio": 0.42616423413161797
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8921188630490956,
+        "train_saturation": 0.8990825688073395,
+        "train_both": 0.8064,
+        "holdout_brightness": 0.8722294654498044,
+        "holdout_saturation": 0.8627831715210356,
+        "holdout_both": 0.7635627530364373,
+        "nan_count": 1,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.28372807280467593,
+            "total_mi_saturation": 1.1127477420111451,
+            "spec_ratio": 0.5936512902057005
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.062668739409154,
+            "total_mi_saturation": 0.1875044146708017,
+            "spec_ratio": 0.7000344887284154
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8843669250645995,
+        "train_saturation": 0.8794233289646134,
+        "train_both": 0.788,
+        "holdout_brightness": 0.8702737940026075,
+        "holdout_saturation": 0.8446601941747572,
+        "holdout_both": 0.7433198380566801,
+        "nan_count": 0,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.4565655937403734,
+            "total_mi_saturation": 0.8746077859342465,
+            "spec_ratio": 0.3140403786440317
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.9220596203650806,
+            "total_mi_saturation": 0.5769012987017081,
+            "spec_ratio": 0.2302650571292135
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8791989664082688,
+        "train_saturation": 0.9003931847968545,
+        "train_both": 0.8032,
+        "holdout_brightness": 0.8624511082138201,
+        "holdout_saturation": 0.8653721682847897,
+        "holdout_both": 0.7522267206477733,
+        "nan_count": 0,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 1.1218944424595465,
+            "total_mi_saturation": 0.25713658300559505,
+            "spec_ratio": 0.6270764351819221
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.252246207965259,
+            "total_mi_saturation": 1.1822518739669925,
+            "spec_ratio": 0.6483143321802335
+          }
+        }
+      }
+    ]
+  },
+  "comp_4pos": {
+    "train_brightness_mean": 0.8847975882859606,
+    "train_brightness_std": 0.013568283835372114,
+    "train_saturation_mean": 0.899301004805592,
+    "train_saturation_std": 0.010393514419720676,
+    "train_both_mean": 0.8002666666666666,
+    "train_both_std": 0.01777768888866667,
+    "holdout_brightness_mean": 0.8707953063885268,
+    "holdout_brightness_std": 0.011228675579719533,
+    "holdout_saturation_mean": 0.8636893203883496,
+    "holdout_saturation_std": 0.008744014775570465,
+    "holdout_both_mean": 0.7656140350877192,
+    "holdout_both_std": 0.013049143996038974,
+    "sender_specs": {
+      "sender_0": {
+        "mi_brightness_mean": 1.199490656076879,
+        "mi_saturation_mean": 1.4454099365547555,
+        "spec_ratio_mean": 0.28229925686219626,
+        "spec_ratio_std": 0.1340557413924082
+      },
+      "sender_1": {
+        "mi_brightness_mean": 1.49550673638776,
+        "mi_saturation_mean": 1.1788409888066496,
+        "spec_ratio_mean": 0.2617714227972305,
+        "spec_ratio_std": 0.14721752420910314
+      }
+    },
+    "seeds": [
+      {
+        "train_brightness": 0.9082687338501292,
+        "train_saturation": 0.9056356487549148,
+        "train_both": 0.824,
+        "holdout_brightness": 0.8754889178617992,
+        "holdout_saturation": 0.8634304207119741,
+        "holdout_both": 0.7724696356275303,
+        "nan_count": 3,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.9060465148856865,
+            "total_mi_saturation": 1.9294845404384895,
+            "spec_ratio": 0.3609334567615226
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.7525425703108835,
+            "total_mi_saturation": 1.0234999282044692,
+            "spec_ratio": 0.26261940964387664
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8901808785529716,
+        "train_saturation": 0.916775884665793,
+        "train_both": 0.82,
+        "holdout_brightness": 0.8767926988265972,
+        "holdout_saturation": 0.8686084142394822,
+        "holdout_both": 0.7757085020242915,
+        "nan_count": 4,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.9800173439312896,
+            "total_mi_saturation": 1.6134384875762597,
+            "spec_ratio": 0.24423826153105097
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.6915811919709216,
+            "total_mi_saturation": 1.0651608327074717,
+            "spec_ratio": 0.2272321289608262
+          }
+        }
+      },
+      {
+        "train_brightness": 0.9037467700258398,
+        "train_saturation": 0.90956749672346,
+        "train_both": 0.8216,
+        "holdout_brightness": 0.878748370273794,
+        "holdout_saturation": 0.8679611650485437,
+        "holdout_both": 0.7757085020242915,
+        "nan_count": 5,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 1.0105692318627875,
+            "total_mi_saturation": 1.620793731250838,
+            "spec_ratio": 0.231904343088415
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.7934156311274148,
+            "total_mi_saturation": 1.128321866789875,
+            "spec_ratio": 0.22763638581893153
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8791989664082688,
+        "train_saturation": 0.8918741808650066,
+        "train_both": 0.7792,
+        "holdout_brightness": 0.8663624511082139,
+        "holdout_saturation": 0.8653721682847897,
+        "holdout_both": 0.7562753036437248,
+        "nan_count": 4,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 1.5943249262999963,
+            "total_mi_saturation": 0.89866913544721,
+            "spec_ratio": 0.2790443032043319
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.8867902488129387,
+            "total_mi_saturation": 1.429003117789295,
+            "spec_ratio": 0.23413698164784844
+          }
+        }
+      },
+      {
+        "train_brightness": 0.877906976744186,
+        "train_saturation": 0.9043250327653998,
+        "train_both": 0.7984,
+        "holdout_brightness": 0.878096479791395,
+        "holdout_saturation": 0.8614886731391586,
+        "holdout_both": 0.7619433198380566,
+        "nan_count": 5,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 1.296177826444508,
+            "total_mi_saturation": 1.2391804615226192,
+            "spec_ratio": 0.022480990238105514
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.4795115658907754,
+            "total_mi_saturation": 1.4556207930274028,
+            "spec_ratio": 0.008139589613661643
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8791989664082688,
+        "train_saturation": 0.9030144167758847,
+        "train_both": 0.7968,
+        "holdout_brightness": 0.8624511082138201,
+        "holdout_saturation": 0.8711974110032362,
+        "holdout_both": 0.7619433198380566,
+        "nan_count": 4,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.8274793176763594,
+            "total_mi_saturation": 1.7402550786207867,
+            "spec_ratio": 0.3554790410802279
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.9162431908557094,
+            "total_mi_saturation": 0.8182599263344442,
+            "spec_ratio": 0.401529351939266
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8856589147286822,
+        "train_saturation": 0.9049803407601573,
+        "train_both": 0.8056,
+        "holdout_brightness": 0.8754889178617992,
+        "holdout_saturation": 0.8711974110032362,
+        "holdout_both": 0.7797570850202429,
+        "nan_count": 3,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.5971250644151561,
+            "total_mi_saturation": 1.974277459902319,
+            "spec_ratio": 0.5355646898778319
+          },
+          "sender_1": {
+            "total_mi_brightness": 2.0897198979897444,
+            "total_mi_saturation": 0.6076483295952747,
+            "spec_ratio": 0.5494509623261127
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8540051679586563,
+        "train_saturation": 0.8990825688073395,
+        "train_both": 0.7704,
+        "holdout_brightness": 0.8383311603650587,
+        "holdout_saturation": 0.8731391585760517,
+        "holdout_both": 0.745748987854251,
+        "nan_count": 1,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 1.612941252726877,
+            "total_mi_saturation": 1.039696004821266,
+            "spec_ratio": 0.2161038967067313
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.070811620791221,
+            "total_mi_saturation": 1.4005495077309396,
+            "spec_ratio": 0.13342359525452968
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8901808785529716,
+        "train_saturation": 0.9043250327653998,
+        "train_both": 0.8152,
+        "holdout_brightness": 0.8865710560625815,
+        "holdout_saturation": 0.8666666666666667,
+        "holdout_both": 0.7838056680161943,
+        "nan_count": 5,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 1.6542010562999117,
+            "total_mi_saturation": 1.176689563585298,
+            "spec_ratio": 0.16867889185134827
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.2620690278677709,
+            "total_mi_saturation": 1.5313940376942494,
+            "spec_ratio": 0.09641259021704399
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8798449612403101,
+        "train_saturation": 0.8958060288335518,
+        "train_both": 0.7968,
+        "holdout_brightness": 0.8761408083441982,
+        "holdout_saturation": 0.8601941747572815,
+        "holdout_both": 0.7781376518218623,
+        "nan_count": 6,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 1.230959517561544,
+            "total_mi_saturation": 1.6601918036679322,
+            "spec_ratio": 0.14846413709119005
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.4308179440851125,
+            "total_mi_saturation": 1.0799622443854542,
+            "spec_ratio": 0.1397397117082483
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8947028423772609,
+        "train_saturation": 0.8748361730013107,
+        "train_both": 0.7928,
+        "holdout_brightness": 0.8761408083441982,
+        "holdout_saturation": 0.8401294498381877,
+        "holdout_both": 0.7473684210526316,
+        "nan_count": 3,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 1.0821556170573987,
+            "total_mi_saturation": 1.6552278157903602,
+            "spec_ratio": 0.20935035693438903
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.549279049442894,
+            "total_mi_saturation": 1.111292151535892,
+            "spec_ratio": 0.16462137820099418
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8979328165374677,
+        "train_saturation": 0.9003931847968545,
+        "train_both": 0.8088,
+        "holdout_brightness": 0.8670143415906127,
+        "holdout_saturation": 0.8627831715210356,
+        "holdout_both": 0.7635627530364373,
+        "nan_count": 5,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 1.9119128953470752,
+            "total_mi_saturation": 0.7938479558090872,
+            "spec_ratio": 0.41321646702820863
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.761872460413958,
+            "total_mi_saturation": 1.8675701984711361,
+            "spec_ratio": 0.42050650327777195
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8649870801033591,
+        "train_saturation": 0.8800786369593709,
+        "train_both": 0.7664,
+        "holdout_brightness": 0.8565840938722294,
+        "holdout_saturation": 0.8550161812297734,
+        "holdout_both": 0.7417004048582996,
+        "nan_count": 5,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.5834908920588944,
+            "total_mi_saturation": 1.8961785002854072,
+            "spec_ratio": 0.5293800908618251
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.8754428244457924,
+            "total_mi_saturation": 0.6309065259877106,
+            "spec_ratio": 0.4965534027580092
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8785529715762274,
+        "train_saturation": 0.8951507208387942,
+        "train_both": 0.7896,
+        "holdout_brightness": 0.8761408083441982,
+        "holdout_saturation": 0.8530744336569579,
+        "holdout_both": 0.7611336032388664,
+        "nan_count": 3,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.9440926460123606,
+            "total_mi_saturation": 1.4872360679514662,
+            "spec_ratio": 0.22339366076650813
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.8569029148131786,
+            "total_mi_saturation": 0.920278324150105,
+            "spec_ratio": 0.3372572799795788
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8875968992248062,
+        "train_saturation": 0.9036697247706422,
+        "train_both": 0.8184,
+        "holdout_brightness": 0.8715775749674055,
+        "holdout_saturation": 0.8750809061488674,
+        "holdout_both": 0.7789473684210526,
+        "nan_count": 3,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 1.7608657385733415,
+            "total_mi_saturation": 0.9559824416519884,
+            "spec_ratio": 0.29625626591125814
+          },
+          "sender_1": {
+            "total_mi_brightness": 1.0156009069980838,
+            "total_mi_saturation": 1.6131470476960263,
+            "spec_ratio": 0.2273120706117582
+          }
+        }
+      }
+    ]
+  },
+  "holistic": {
+    "train_brightness_mean": 0.8757536606373815,
+    "train_brightness_std": 0.010726021796896324,
+    "train_saturation_mean": 0.889384010484928,
+    "train_saturation_std": 0.007761827441544798,
+    "train_both_mean": 0.7839999999999999,
+    "train_both_std": 0.011215227743266436,
+    "holdout_brightness_mean": 0.8612342459800088,
+    "holdout_brightness_std": 0.007108762009767016,
+    "holdout_saturation_mean": 0.8521251348435814,
+    "holdout_saturation_std": 0.009435542575082863,
+    "holdout_both_mean": 0.7488259109311741,
+    "holdout_both_std": 0.01088037378606695,
+    "sender_specs": {
+      "sender_0": {
+        "mi_brightness_mean": 0.4786475106965692,
+        "mi_saturation_mean": 0.42839978418351216,
+        "spec_ratio_mean": 0.3013410578792269,
+        "spec_ratio_std": 0.19685834604190738
+      },
+      "sender_1": {
+        "mi_brightness_mean": 0.43666312755784426,
+        "mi_saturation_mean": 0.465362645808621,
+        "spec_ratio_mean": 0.3077410263145432,
+        "spec_ratio_std": 0.20534952871393863
+      }
+    },
+    "seeds": [
+      {
+        "train_brightness": 0.8901808785529716,
+        "train_saturation": 0.8899082568807339,
+        "train_both": 0.8048,
+        "holdout_brightness": 0.8696219035202086,
+        "holdout_saturation": 0.8724919093851132,
+        "holdout_both": 0.7700404858299595,
+        "nan_count": 4,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.6272243886506914,
+            "total_mi_saturation": 0.20889212081201347,
+            "spec_ratio": 0.5003277212017995
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.2471347286382098,
+            "total_mi_saturation": 0.5844005816300161,
+            "spec_ratio": 0.40559414474295197
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8837209302325582,
+        "train_saturation": 0.8794233289646134,
+        "train_both": 0.7736,
+        "holdout_brightness": 0.8624511082138201,
+        "holdout_saturation": 0.8381877022653722,
+        "holdout_both": 0.7473684210526316,
+        "nan_count": 4,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.5876909760303385,
+            "total_mi_saturation": 0.43834086022409685,
+            "spec_ratio": 0.14556089833571773
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.3880397013874237,
+            "total_mi_saturation": 0.5644374492586637,
+            "spec_ratio": 0.18519892865837806
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8798449612403101,
+        "train_saturation": 0.8931847968545217,
+        "train_both": 0.784,
+        "holdout_brightness": 0.8617992177314211,
+        "holdout_saturation": 0.8543689320388349,
+        "holdout_both": 0.7449392712550608,
+        "nan_count": 6,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.687156121668613,
+            "total_mi_saturation": 0.13567842998749524,
+            "spec_ratio": 0.6702169841691332
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.09298589844416531,
+            "total_mi_saturation": 0.6419649494207808,
+            "spec_ratio": 0.7469602253965907
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8804909560723514,
+        "train_saturation": 0.8944954128440367,
+        "train_both": 0.7936,
+        "holdout_brightness": 0.8696219035202086,
+        "holdout_saturation": 0.8517799352750809,
+        "holdout_both": 0.7562753036437248,
+        "nan_count": 5,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.1374996836914838,
+            "total_mi_saturation": 0.6280152619121178,
+            "spec_ratio": 0.6407655148180901
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.6723157553154039,
+            "total_mi_saturation": 0.14366602723069616,
+            "spec_ratio": 0.6478695228160207
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8901808785529716,
+        "train_saturation": 0.8846657929226737,
+        "train_both": 0.7928,
+        "holdout_brightness": 0.8650586701434159,
+        "holdout_saturation": 0.8440129449838187,
+        "holdout_both": 0.7433198380566801,
+        "nan_count": 6,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.37863774230459335,
+            "total_mi_saturation": 0.5834347995219519,
+            "spec_ratio": 0.2128707018584488
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.5917221622597586,
+            "total_mi_saturation": 0.3504717783059263,
+            "spec_ratio": 0.2560517251989412
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8456072351421189,
+        "train_saturation": 0.891218872870249,
+        "train_both": 0.756,
+        "holdout_brightness": 0.8526727509778357,
+        "holdout_saturation": 0.8440129449838187,
+        "holdout_both": 0.7352226720647773,
+        "nan_count": 6,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.5361699481483481,
+            "total_mi_saturation": 0.32372876498844805,
+            "spec_ratio": 0.24705372843848417
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.3982471743579461,
+            "total_mi_saturation": 0.5706815176903921,
+            "spec_ratio": 0.1779639149377605
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8682170542635659,
+        "train_saturation": 0.9003931847968545,
+        "train_both": 0.7888,
+        "holdout_brightness": 0.8657105606258149,
+        "holdout_saturation": 0.86084142394822,
+        "holdout_both": 0.762753036437247,
+        "nan_count": 4,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.2683552307839995,
+            "total_mi_saturation": 0.6206070991290054,
+            "spec_ratio": 0.39625061320593613
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.622374963387133,
+            "total_mi_saturation": 0.22379099833243596,
+            "spec_ratio": 0.4710470322449501
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8824289405684754,
+        "train_saturation": 0.882699868938401,
+        "train_both": 0.7824,
+        "holdout_brightness": 0.8533246414602347,
+        "holdout_saturation": 0.8466019417475729,
+        "holdout_both": 0.7336032388663968,
+        "nan_count": 1,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.3909316913662216,
+            "total_mi_saturation": 0.4828378236192372,
+            "spec_ratio": 0.10518349596408744
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.48788790451519154,
+            "total_mi_saturation": 0.41535172194343,
+            "spec_ratio": 0.08030668766842959
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8746770025839793,
+        "train_saturation": 0.8787680209698558,
+        "train_both": 0.7784,
+        "holdout_brightness": 0.8578878748370273,
+        "holdout_saturation": 0.8381877022653722,
+        "holdout_both": 0.7368421052631579,
+        "nan_count": 5,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.441404706432086,
+            "total_mi_saturation": 0.5352635773924508,
+            "spec_ratio": 0.09610107394173042
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.5742766424009952,
+            "total_mi_saturation": 0.4458032077550985,
+            "spec_ratio": 0.12594448819495604
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8804909560723514,
+        "train_saturation": 0.8925294888597641,
+        "train_both": 0.784,
+        "holdout_brightness": 0.8702737940026075,
+        "holdout_saturation": 0.86084142394822,
+        "holdout_both": 0.7643724696356275,
+        "nan_count": 6,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.5204252046299968,
+            "total_mi_saturation": 0.46958878976707374,
+            "spec_ratio": 0.051349188143429175
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.47094863578377905,
+            "total_mi_saturation": 0.5154575464342601,
+            "spec_ratio": 0.04512229490532799
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8695090439276486,
+        "train_saturation": 0.8748361730013107,
+        "train_both": 0.7736,
+        "holdout_brightness": 0.863102998696219,
+        "holdout_saturation": 0.8524271844660194,
+        "holdout_both": 0.7554655870445344,
+        "nan_count": 4,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.5690793876165039,
+            "total_mi_saturation": 0.3875197424452749,
+            "spec_ratio": 0.18979700008665448
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.3853156380654206,
+            "total_mi_saturation": 0.5748037440175886,
+            "spec_ratio": 0.19735890087029348
+          }
+        }
+      },
+      {
+        "train_brightness": 0.872093023255814,
+        "train_saturation": 0.8931847968545217,
+        "train_both": 0.7784,
+        "holdout_brightness": 0.8663624511082139,
+        "holdout_saturation": 0.8491909385113269,
+        "holdout_both": 0.7473684210526316,
+        "nan_count": 6,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.6280276198057713,
+            "total_mi_saturation": 0.18814696605244166,
+            "spec_ratio": 0.5389541176301051
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.17066854898161252,
+            "total_mi_saturation": 0.6106473645644965,
+            "spec_ratio": 0.56312537343055
+          }
+        }
+      },
+      {
+        "train_brightness": 0.875968992248062,
+        "train_saturation": 0.8872870249017037,
+        "train_both": 0.7832,
+        "holdout_brightness": 0.8624511082138201,
+        "holdout_saturation": 0.8466019417475729,
+        "holdout_both": 0.7376518218623481,
+        "nan_count": 6,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.6155234784886189,
+            "total_mi_saturation": 0.2855765005326454,
+            "spec_ratio": 0.3661602326462682
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.3232324987531989,
+            "total_mi_saturation": 0.5995563281107122,
+            "spec_ratio": 0.29944427296177517
+          }
+        }
+      },
+      {
+        "train_brightness": 0.877906976744186,
+        "train_saturation": 0.8951507208387942,
+        "train_both": 0.7968,
+        "holdout_brightness": 0.8455019556714471,
+        "holdout_saturation": 0.8588996763754045,
+        "holdout_both": 0.7433198380566801,
+        "nan_count": 3,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.4060237379816399,
+            "total_mi_saturation": 0.5633333846075455,
+            "spec_ratio": 0.16228244777912834
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.569341290699228,
+            "total_mi_saturation": 0.35201659625991,
+            "spec_ratio": 0.23587435188358713
+          }
+        }
+      },
+      {
+        "train_brightness": 0.8649870801033591,
+        "train_saturation": 0.9030144167758847,
+        "train_both": 0.7896,
+        "holdout_brightness": 0.8526727509778357,
+        "holdout_saturation": 0.8634304207119741,
+        "holdout_both": 0.7538461538461538,
+        "nan_count": 3,
+        "msg_analysis": {
+          "sender_0": {
+            "total_mi_brightness": 0.385562742849633,
+            "total_mi_saturation": 0.5750326417608842,
+            "spec_ratio": 0.1972421499693897
+          },
+          "sender_1": {
+            "total_mi_brightness": 0.5554553703781978,
+            "total_mi_saturation": 0.3873898761749101,
+            "spec_ratio": 0.17825353080763615
+          }
+        }
+      }
+    ]
+  },
+  "oracle": {
+    "train_brightness_mean": 0.872609819121447,
+    "train_brightness_std": 0.010685829824024625,
+    "train_saturation_mean": 0.8840541721275665,
+    "train_saturation_std": 0.006916388790620629,
+    "train_both_mean": 0.7762666666666665,
+    "train_both_std": 0.00872289452469126,
+    "holdout_brightness_mean": 0.8704476314645805,
+    "holdout_brightness_std": 0.00891753987218122,
+    "holdout_saturation_mean": 0.8577777777777779,
+    "holdout_saturation_std": 0.009794562525003974,
+    "holdout_both_mean": 0.7571929824561405,
+    "holdout_both_std": 0.010095477227583036,
+    "seeds": [
+      {
+        "train_brightness": 0.8856589147286822,
+        "train_saturation": 0.8853211009174312,
+        "train_both": 0.7896,
+        "holdout_brightness": 0.877444589308996,
+        "holdout_saturation": 0.8427184466019417,
+        "holdout_both": 0.7497975708502024
+      },
+      {
+        "train_brightness": 0.8591731266149871,
+        "train_saturation": 0.8925294888597641,
+        "train_both": 0.7744,
+        "holdout_brightness": 0.8663624511082139,
+        "holdout_saturation": 0.8705501618122977,
+        "holdout_both": 0.7643724696356275
+      },
+      {
+        "train_brightness": 0.8947028423772609,
+        "train_saturation": 0.8774574049803407,
+        "train_both": 0.7872,
+        "holdout_brightness": 0.877444589308996,
+        "holdout_saturation": 0.8485436893203884,
+        "holdout_both": 0.7562753036437248
+      },
+      {
+        "train_brightness": 0.8772609819121447,
+        "train_saturation": 0.8885976408912188,
+        "train_both": 0.7792,
+        "holdout_brightness": 0.8657105606258149,
+        "holdout_saturation": 0.8627831715210356,
+        "holdout_both": 0.7587044534412956
+      },
+      {
+        "train_brightness": 0.8662790697674418,
+        "train_saturation": 0.8768020969855832,
+        "train_both": 0.7688,
+        "holdout_brightness": 0.8741851368970013,
+        "holdout_saturation": 0.8517799352750809,
+        "holdout_both": 0.7595141700404858
+      },
+      {
+        "train_brightness": 0.8649870801033591,
+        "train_saturation": 0.8833551769331586,
+        "train_both": 0.7784,
+        "holdout_brightness": 0.8422425032594524,
+        "holdout_saturation": 0.8711974110032362,
+        "holdout_both": 0.7465587044534413
+      },
+      {
+        "train_brightness": 0.877906976744186,
+        "train_saturation": 0.8787680209698558,
+        "train_both": 0.7776,
+        "holdout_brightness": 0.878096479791395,
+        "holdout_saturation": 0.8504854368932039,
+        "holdout_both": 0.7546558704453441
+      },
+      {
+        "train_brightness": 0.875968992248062,
+        "train_saturation": 0.8682830930537353,
+        "train_both": 0.7608,
+        "holdout_brightness": 0.8715775749674055,
+        "holdout_saturation": 0.8401294498381877,
+        "holdout_both": 0.7303643724696356
+      },
+      {
+        "train_brightness": 0.8882428940568475,
+        "train_saturation": 0.8800786369593709,
+        "train_both": 0.7832,
+        "holdout_brightness": 0.878748370273794,
+        "holdout_saturation": 0.8485436893203884,
+        "holdout_both": 0.757085020242915
+      },
+      {
+        "train_brightness": 0.8695090439276486,
+        "train_saturation": 0.8938401048492791,
+        "train_both": 0.776,
+        "holdout_brightness": 0.8689700130378096,
+        "holdout_saturation": 0.8634304207119741,
+        "holdout_both": 0.762753036437247
+      },
+      {
+        "train_brightness": 0.8559431524547804,
+        "train_saturation": 0.8846657929226737,
+        "train_both": 0.7752,
+        "holdout_brightness": 0.8676662320730117,
+        "holdout_saturation": 0.8614886731391586,
+        "holdout_both": 0.7578947368421053
+      },
+      {
+        "train_brightness": 0.8656330749354005,
+        "train_saturation": 0.8951507208387942,
+        "train_both": 0.7816,
+        "holdout_brightness": 0.878748370273794,
+        "holdout_saturation": 0.8614886731391586,
+        "holdout_both": 0.7692307692307693
+      },
+      {
+        "train_brightness": 0.8766149870801033,
+        "train_saturation": 0.8866317169069463,
+        "train_both": 0.7784,
+        "holdout_brightness": 0.8748370273794003,
+        "holdout_saturation": 0.8634304207119741,
+        "holdout_both": 0.7643724696356275
+      },
+      {
+        "train_brightness": 0.8624031007751938,
+        "train_saturation": 0.882699868938401,
+        "train_both": 0.7552,
+        "holdout_brightness": 0.8676662320730117,
+        "holdout_saturation": 0.8588996763754045,
+        "holdout_both": 0.751417004048583
+      },
+      {
+        "train_brightness": 0.8688630490956072,
+        "train_saturation": 0.8866317169069463,
+        "train_both": 0.7784,
+        "holdout_brightness": 0.8670143415906127,
+        "holdout_saturation": 0.8711974110032362,
+        "holdout_both": 0.7748987854251013
+      }
+    ]
+  }
+}

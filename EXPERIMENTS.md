@@ -5066,3 +5066,60 @@ With N=2 shapes and random placement, most quadrants are empty. "I see nothing" 
 - `_phase66_oneshot.py` — Full experiment
 - `results/phase66_oneshot.json` — All results (4 conditions × 10 seeds)
 - `results/phase66_dino_cifar100.pt` — Cached DINOv2 features (60K images × 384-dim)
+
+---
+
+## Phase 67: Continuous Visual Attributes — Property Comparison on Natural Images
+
+**Date:** 2026-03-04
+**Hypothesis:** Continuous visual properties (brightness, saturation) on CIFAR-100 images should enable compositional communication, unlike Phase 66's categorical task which incentivized memorization.
+
+### Setup
+- **Dataset:** CIFAR-100 (60K images), DINOv2 ViT-S/14 features (384-dim, cached from Phase 66)
+- **Properties:** Brightness (mean grayscale) and Saturation (mean HSV S), each binned into 5 quintiles
+- **Task:** Property comparison — 2 agents, each sees one image's DINOv2 features, receiver predicts which image is brighter/more saturated (two BCE heads)
+- **Split:** 80/20 image-level (48K train, 12K holdout), not class-based
+- **Architecture:** ImageSender (MLP + Gumbel-Softmax), PropertyReceiver (shared trunk + 2 heads)
+- **Training:** 200 epochs, 32 batches/epoch, Population IL (3 receivers, reset every 30 epochs), entropy reg
+- **Conditions:** 4 × 15 seeds
+
+### Results
+
+| Condition | Train Both | Holdout Both | Spec Ratio (s0/s1) |
+|-----------|-----------|-------------|-------------------|
+| COMP_2POS (2×5) | 80.2% | 75.9% ± 1.0% | 0.50 / 0.52 |
+| COMP_4POS (4×5) | 80.0% | 76.6% ± 1.3% | 0.28 / 0.26 |
+| HOLISTIC (1×25) | 78.4% | 74.9% | 0.30 / 0.31 |
+| ORACLE (raw) | 77.6% | 75.7% | — |
+
+### Analysis
+
+**Communication works on natural images.** All conditions achieve ~75-77% holdout both-correct, well above 50% chance. Agents successfully extract brightness and saturation information from DINOv2 features through a discrete communication bottleneck.
+
+**Small compositional advantage.** COMP_4POS (76.6%) beats HOLISTIC (74.9%) by only +1.7%. This is much weaker than the ~10-15% advantage seen in physics/abstract domains (Phases 62-65).
+
+**Compositional exceeds oracle ceiling.** COMP_4POS (76.6%) slightly exceeds ORACLE (75.7%), suggesting the communication structure may provide mild regularization. The oracle ceiling being lower than physics domains (~92-95%) indicates the property comparison task on natural images is inherently harder.
+
+**COMP_2POS shows clear specialization.** spec_ratio ~0.50/0.52 means the two message positions carry roughly equal but distinct information about brightness vs saturation. COMP_4POS has lower spec_ratio (~0.28) — with 4 positions, information is more distributed.
+
+**Holistic shows non-zero specialization.** spec_ratio ~0.30 for holistic (1 position) comes from using different symbol ranges for different property combinations, not true position-level specialization.
+
+**Brightness and saturation are individually well-predicted.** Per-property accuracy is 86-89% for all conditions. The bottleneck is correctly predicting both simultaneously.
+
+### Cross-Domain Comparison
+
+| Domain | Holdout Both (best comp) | Spec Ratio | Oracle |
+|--------|------------------------|-----------|--------|
+| Phase 62: ramp physics | ~92% | high | ~95% |
+| Phase 64: abstract scenes | ~87% | ~0.40 | ~90% |
+| Phase 65: temporal physics | ~88% | ~0.35 | ~91% |
+| Phase 67: natural images | 76.6% | ~0.40 | 75.7% |
+
+Natural images are harder: lower absolute performance but communication still works. The small comp-holistic gap may reflect that DINOv2 features already encode brightness/saturation relatively directly, reducing the need for compositional structure.
+
+### Verdict
+**WEAK POSITIVE** — Communication works on natural images (76% vs 50% chance), with mild compositional advantage (+1.7% over holistic). Specialization is present in COMP_2POS. However, the effect is weaker than physics/abstract domains, likely because DINOv2 features make brightness/saturation relatively easy to extract even through a holistic bottleneck. The mechanism generalizes to vision but shines most when the underlying properties require more complex encoding.
+
+### Files
+- `_phase67_visual_attributes.py` — Full experiment
+- `results/phase67_visual_attributes.json` — All results (4 conditions × 15 seeds)
