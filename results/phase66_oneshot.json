@@ -1,0 +1,786 @@
+{
+  "nearest_neighbor": {
+    "train_easy": {
+      "mean": 0.7781754032258065,
+      "std": 0.010357709607609053
+    },
+    "test_easy": {
+      "mean": 0.722429435483871,
+      "std": 0.00924744674839839
+    },
+    "train_hard": {
+      "mean": 0.5668346774193548,
+      "std": 0.010784877055439073
+    },
+    "test_hard": {
+      "mean": 0.5018145161290322,
+      "std": 0.007273449196591715
+    }
+  },
+  "compositional_hard": {
+    "train_easy_mean": 0.6865423387096774,
+    "train_easy_std": 0.012654020700427074,
+    "train_hard_mean": 0.7881552419354838,
+    "train_hard_std": 0.009219933531762838,
+    "test_easy_mean": 0.3169354838709677,
+    "test_easy_std": 0.013009110661290825,
+    "test_hard_mean": 0.27545362903225806,
+    "test_hard_std": 0.01394858619625479,
+    "topsim_mean": 0.07329684958466695,
+    "topsim_std": 0.02537544311956202,
+    "n_unique_mean": 1376.3,
+    "consistency_mean": 0.5429883333333334
+  },
+  "compositional_easy": {
+    "train_easy_mean": 0.8551915322580645,
+    "train_easy_std": 0.006958749015282869,
+    "train_hard_mean": 0.4799395161290322,
+    "train_hard_std": 0.020492243335971955,
+    "test_easy_mean": 0.4996975806451613,
+    "test_easy_std": 0.017903010115672528,
+    "test_hard_mean": 0.30589717741935485,
+    "test_hard_std": 0.012260422795486683,
+    "topsim_mean": 0.23935476091841057,
+    "topsim_std": 0.032421304812586295,
+    "n_unique_mean": 1208.3,
+    "consistency_mean": 0.5891300000000002
+  },
+  "holistic_hard": {
+    "train_easy_mean": 0.621320564516129,
+    "train_easy_std": 0.02659843700481507,
+    "train_hard_mean": 0.7252520161290323,
+    "train_hard_std": 0.015779430002150516,
+    "test_easy_mean": 0.3094254032258064,
+    "test_easy_std": 0.02653953604280952,
+    "test_hard_mean": 0.26970766129032253,
+    "test_hard_std": 0.012914345164842096,
+    "topsim_mean": 0.09145941008766977,
+    "topsim_std": 0.028582940612434157,
+    "n_unique_mean": 33.5,
+    "consistency_mean": 0.6565766666666667
+  },
+  "holistic_easy": {
+    "train_easy_mean": 0.8262096774193548,
+    "train_easy_std": 0.006880732639750609,
+    "train_hard_mean": 0.3928427419354838,
+    "train_hard_std": 0.012295081522975256,
+    "test_easy_mean": 0.4822076612903225,
+    "test_easy_std": 0.016040663286614992,
+    "test_hard_mean": 0.2882056451612903,
+    "test_hard_std": 0.012415574021278103,
+    "topsim_mean": 0.17780470297011144,
+    "topsim_std": 0.013500848701348607,
+    "n_unique_mean": 51.0,
+    "consistency_mean": 0.7173866666666666
+  },
+  "seeds_detail": {
+    "compositional_hard": [
+      {
+        "train_easy": 0.6900201612903226,
+        "train_hard": 0.7837701612903226,
+        "test_easy": 0.3019153225806452,
+        "test_hard": 0.2530241935483871,
+        "analysis": {
+          "topsim": 0.10309582766217977,
+          "entropies": [
+            0.9502535565561356,
+            0.8909266659562595,
+            0.9270703429067807,
+            0.9108846162753942
+          ],
+          "mean_entropy": 0.9197837954236425,
+          "n_unique_messages": 1367,
+          "mean_consistency": 0.541
+        },
+        "nan_count": 1
+      },
+      {
+        "train_easy": 0.6617943548387096,
+        "train_hard": 0.7872983870967742,
+        "test_easy": 0.3079637096774194,
+        "test_hard": 0.27923387096774194,
+        "analysis": {
+          "topsim": 0.04299720529533174,
+          "entropies": [
+            0.9135104458583971,
+            0.8141498572735844,
+            0.9101804363091625,
+            0.9121480193859453
+          ],
+          "mean_entropy": 0.8874971897067723,
+          "n_unique_messages": 1191,
+          "mean_consistency": 0.5553833333333333
+        },
+        "nan_count": 3
+      },
+      {
+        "train_easy": 0.6925403225806451,
+        "train_hard": 0.7847782258064516,
+        "test_easy": 0.29838709677419356,
+        "test_hard": 0.2626008064516129,
+        "analysis": {
+          "topsim": 0.07253098818367487,
+          "entropies": [
+            0.9598427199849412,
+            0.9622891471965784,
+            0.8864930198516505,
+            0.9319557219990855
+          ],
+          "mean_entropy": 0.935145152258064,
+          "n_unique_messages": 1495,
+          "mean_consistency": 0.5411333333333334
+        },
+        "nan_count": 1
+      },
+      {
+        "train_easy": 0.6658266129032258,
+        "train_hard": 0.7867943548387096,
+        "test_easy": 0.3346774193548387,
+        "test_hard": 0.2686491935483871,
+        "analysis": {
+          "topsim": 0.07308517092394744,
+          "entropies": [
+            0.8785302502246451,
+            0.9579948773018914,
+            0.9010154239235973,
+            0.9464946718767954
+          ],
+          "mean_entropy": 0.9210088058317323,
+          "n_unique_messages": 1426,
+          "mean_consistency": 0.4994833333333333
+        },
+        "nan_count": 2
+      },
+      {
+        "train_easy": 0.6920362903225806,
+        "train_hard": 0.7852822580645161,
+        "test_easy": 0.3009072580645161,
+        "test_hard": 0.2752016129032258,
+        "analysis": {
+          "topsim": 0.08824579594929344,
+          "entropies": [
+            0.9458114774696046,
+            0.9800680931545178,
+            0.7949240055676576,
+            0.9083744337989818
+          ],
+          "mean_entropy": 0.9072945024976904,
+          "n_unique_messages": 1377,
+          "mean_consistency": 0.5379166666666666
+        },
+        "nan_count": 2
+      },
+      {
+        "train_easy": 0.6985887096774194,
+        "train_hard": 0.7867943548387096,
+        "test_easy": 0.32106854838709675,
+        "test_hard": 0.2807459677419355,
+        "analysis": {
+          "topsim": 0.08284925202073418,
+          "entropies": [
+            0.9469550791213861,
+            0.8873315188241675,
+            0.8333706914230607,
+            0.9506333540985793
+          ],
+          "mean_entropy": 0.9045726608667984,
+          "n_unique_messages": 1347,
+          "mean_consistency": 0.5550999999999999
+        },
+        "nan_count": 3
+      },
+      {
+        "train_easy": 0.7046370967741935,
+        "train_hard": 0.8014112903225806,
+        "test_easy": 0.3175403225806452,
+        "test_hard": 0.3079637096774194,
+        "analysis": {
+          "topsim": 0.034590500703624565,
+          "entropies": [
+            0.9143812925480387,
+            0.9322475427310775,
+            0.9608460945779868,
+            0.9548880144561968
+          ],
+          "mean_entropy": 0.9405907360783249,
+          "n_unique_messages": 1646,
+          "mean_consistency": 0.54305
+        },
+        "nan_count": 4
+      },
+      {
+        "train_easy": 0.6849798387096774,
+        "train_hard": 0.7696572580645161,
+        "test_easy": 0.3316532258064516,
+        "test_hard": 0.2767137096774194,
+        "analysis": {
+          "topsim": 0.11806805263222457,
+          "entropies": [
+            0.855883895356894,
+            0.9530851771810602,
+            0.7798898724059291,
+            0.9068177924319325
+          ],
+          "mean_entropy": 0.873919184343954,
+          "n_unique_messages": 1306,
+          "mean_consistency": 0.5699833333333334
+        },
+        "nan_count": 1
+      },
+      {
+        "train_easy": 0.6890120967741935,
+        "train_hard": 0.7908266129032258,
+        "test_easy": 0.32963709677419356,
+        "test_hard": 0.26713709677419356,
+        "analysis": {
+          "topsim": 0.04475222601052766,
+          "entropies": [
+            0.9158477760794583,
+            0.9526572440702211,
+            0.9229696771746237,
+            0.8837987770893481
+          ],
+          "mean_entropy": 0.9188183686034128,
+          "n_unique_messages": 1595,
+          "mean_consistency": 0.5675333333333333
+        },
+        "nan_count": 3
+      },
+      {
+        "train_easy": 0.6859879032258065,
+        "train_hard": 0.8049395161290323,
+        "test_easy": 0.32560483870967744,
+        "test_hard": 0.28326612903225806,
+        "analysis": {
+          "topsim": 0.07275347646513133,
+          "entropies": [
+            0.8626946949709313,
+            0.8441643301750689,
+            0.873779793976913,
+            0.825948333687968
+          ],
+          "mean_entropy": 0.8516467882027203,
+          "n_unique_messages": 1013,
+          "mean_consistency": 0.5193000000000001
+        },
+        "nan_count": 4
+      }
+    ],
+    "compositional_easy": [
+      {
+        "train_easy": 0.8634072580645161,
+        "train_hard": 0.5020161290322581,
+        "test_easy": 0.4778225806451613,
+        "test_hard": 0.3130040322580645,
+        "analysis": {
+          "topsim": 0.23119947693175233,
+          "entropies": [
+            0.9446108023161599,
+            0.9446603165127985,
+            0.9490395609051188,
+            0.807885563474686
+          ],
+          "mean_entropy": 0.9115490608021908,
+          "n_unique_messages": 1076,
+          "mean_consistency": 0.5912833333333334
+        },
+        "nan_count": 1
+      },
+      {
+        "train_easy": 0.8477822580645161,
+        "train_hard": 0.4964717741935484,
+        "test_easy": 0.4873991935483871,
+        "test_hard": 0.3079637096774194,
+        "analysis": {
+          "topsim": 0.24669883402582823,
+          "entropies": [
+            0.908525662384791,
+            0.817866493535148,
+            0.9571279761829139,
+            0.8755779992094931
+          ],
+          "mean_entropy": 0.8897745328280865,
+          "n_unique_messages": 1301,
+          "mean_consistency": 0.5770833333333334
+        },
+        "nan_count": 3
+      },
+      {
+        "train_easy": 0.859375,
+        "train_hard": 0.48588709677419356,
+        "test_easy": 0.516633064516129,
+        "test_hard": 0.30544354838709675,
+        "analysis": {
+          "topsim": 0.2206986660852278,
+          "entropies": [
+            0.8716785866573801,
+            0.9328777574642295,
+            0.9412630848627414,
+            0.8865881246409465
+          ],
+          "mean_entropy": 0.9081018884063244,
+          "n_unique_messages": 1233,
+          "mean_consistency": 0.5873666666666666
+        },
+        "nan_count": 1
+      },
+      {
+        "train_easy": 0.8477822580645161,
+        "train_hard": 0.4581653225806452,
+        "test_easy": 0.5085685483870968,
+        "test_hard": 0.29586693548387094,
+        "analysis": {
+          "topsim": 0.19718615886924226,
+          "entropies": [
+            0.9207511543871559,
+            0.8711571807173822,
+            0.8803576634107787,
+            0.8536784394176775
+          ],
+          "mean_entropy": 0.8814861094832487,
+          "n_unique_messages": 1081,
+          "mean_consistency": 0.5888
+        },
+        "nan_count": 2
+      },
+      {
+        "train_easy": 0.844758064516129,
+        "train_hard": 0.4369959677419355,
+        "test_easy": 0.5080645161290323,
+        "test_hard": 0.3009072580645161,
+        "analysis": {
+          "topsim": 0.30024125881235597,
+          "entropies": [
+            0.9306672470741574,
+            0.9261242697606736,
+            0.8911549925478189,
+            0.883564800773196
+          ],
+          "mean_entropy": 0.9078778275389615,
+          "n_unique_messages": 1114,
+          "mean_consistency": 0.6012166666666667
+        },
+        "nan_count": 2
+      },
+      {
+        "train_easy": 0.8608870967741935,
+        "train_hard": 0.5025201612903226,
+        "test_easy": 0.5161290322580645,
+        "test_hard": 0.3225806451612903,
+        "analysis": {
+          "topsim": 0.1869309972844721,
+          "entropies": [
+            0.94550658638905,
+            0.9083165730418469,
+            0.9422526760028919,
+            0.947719096081872
+          ],
+          "mean_entropy": 0.9359487328789152,
+          "n_unique_messages": 1382,
+          "mean_consistency": 0.5816499999999999
+        },
+        "nan_count": 3
+      },
+      {
+        "train_easy": 0.8629032258064516,
+        "train_hard": 0.4753024193548387,
+        "test_easy": 0.5020161290322581,
+        "test_hard": 0.31048387096774194,
+        "analysis": {
+          "topsim": 0.24232689235658067,
+          "entropies": [
+            0.9339520460096848,
+            0.931284783922416,
+            0.9610412116675356,
+            0.9191959078409536
+          ],
+          "mean_entropy": 0.9363684873601476,
+          "n_unique_messages": 1360,
+          "mean_consistency": 0.5938500000000001
+        },
+        "nan_count": 4
+      },
+      {
+        "train_easy": 0.8608870967741935,
+        "train_hard": 0.4627016129032258,
+        "test_easy": 0.46169354838709675,
+        "test_hard": 0.2963709677419355,
+        "analysis": {
+          "topsim": 0.24051764064853765,
+          "entropies": [
+            0.9205873233475718,
+            0.942249583985368,
+            0.9191430410329102,
+            0.7946021774903078
+          ],
+          "mean_entropy": 0.8941455314640394,
+          "n_unique_messages": 1154,
+          "mean_consistency": 0.59885
+        },
+        "nan_count": 1
+      },
+      {
+        "train_easy": 0.8563508064516129,
+        "train_hard": 0.4954637096774194,
+        "test_easy": 0.49848790322580644,
+        "test_hard": 0.2817540322580645,
+        "analysis": {
+          "topsim": 0.2811474051394512,
+          "entropies": [
+            0.9172977301277917,
+            0.8854904029442582,
+            0.9544931601885898,
+            0.949327318075238
+          ],
+          "mean_entropy": 0.9266521528339694,
+          "n_unique_messages": 1288,
+          "mean_consistency": 0.5974
+        },
+        "nan_count": 3
+      },
+      {
+        "train_easy": 0.8477822580645161,
+        "train_hard": 0.4838709677419355,
+        "test_easy": 0.5201612903225806,
+        "test_hard": 0.3245967741935484,
+        "analysis": {
+          "topsim": 0.24660027903065732,
+          "entropies": [
+            0.9213971307888194,
+            0.9137446182192476,
+            0.9131573637608619,
+            0.8907480469507374
+          ],
+          "mean_entropy": 0.9097617899299165,
+          "n_unique_messages": 1094,
+          "mean_consistency": 0.5738000000000001
+        },
+        "nan_count": 4
+      }
+    ],
+    "holistic_hard": [
+      {
+        "train_easy": 0.5871975806451613,
+        "train_hard": 0.7147177419354839,
+        "test_easy": 0.2862903225806452,
+        "test_hard": 0.25806451612903225,
+        "analysis": {
+          "topsim": 0.07196868431820384,
+          "entropies": [
+            0.5614730348539348
+          ],
+          "mean_entropy": 0.5614730348539348,
+          "n_unique_messages": 31,
+          "mean_consistency": 0.6858333333333333
+        },
+        "nan_count": 3
+      },
+      {
+        "train_easy": 0.5967741935483871,
+        "train_hard": 0.7429435483870968,
+        "test_easy": 0.26814516129032256,
+        "test_hard": 0.27318548387096775,
+        "analysis": {
+          "topsim": 0.06449105983754226,
+          "entropies": [
+            0.6027278558606114
+          ],
+          "mean_entropy": 0.6027278558606114,
+          "n_unique_messages": 33,
+          "mean_consistency": 0.6103999999999999
+        },
+        "nan_count": 6
+      },
+      {
+        "train_easy": 0.6607862903225806,
+        "train_hard": 0.748991935483871,
+        "test_easy": 0.3482862903225806,
+        "test_hard": 0.26764112903225806,
+        "analysis": {
+          "topsim": 0.07918897783185586,
+          "entropies": [
+            0.6712449654981595
+          ],
+          "mean_entropy": 0.6712449654981595,
+          "n_unique_messages": 36,
+          "mean_consistency": 0.6572666666666668
+        },
+        "nan_count": 8
+      },
+      {
+        "train_easy": 0.6169354838709677,
+        "train_hard": 0.7182459677419355,
+        "test_easy": 0.27872983870967744,
+        "test_hard": 0.26360887096774194,
+        "analysis": {
+          "topsim": 0.09253180539057138,
+          "entropies": [
+            0.6125978014897528
+          ],
+          "mean_entropy": 0.6125978014897528,
+          "n_unique_messages": 33,
+          "mean_consistency": 0.6670166666666666
+        },
+        "nan_count": 7
+      },
+      {
+        "train_easy": 0.5912298387096774,
+        "train_hard": 0.7101814516129032,
+        "test_easy": 0.3019153225806452,
+        "test_hard": 0.26411290322580644,
+        "analysis": {
+          "topsim": 0.08484916829313671,
+          "entropies": [
+            0.5967920066724112
+          ],
+          "mean_entropy": 0.5967920066724112,
+          "n_unique_messages": 31,
+          "mean_consistency": 0.6332833333333333
+        },
+        "nan_count": 5
+      },
+      {
+        "train_easy": 0.6502016129032258,
+        "train_hard": 0.7373991935483871,
+        "test_easy": 0.3215725806451613,
+        "test_hard": 0.28377016129032256,
+        "analysis": {
+          "topsim": 0.11289316350504763,
+          "entropies": [
+            0.6343451764293717
+          ],
+          "mean_entropy": 0.6343451764293717,
+          "n_unique_messages": 35,
+          "mean_consistency": 0.6581833333333332
+        },
+        "nan_count": 4
+      },
+      {
+        "train_easy": 0.6436491935483871,
+        "train_hard": 0.71875,
+        "test_easy": 0.3024193548387097,
+        "test_hard": 0.25756048387096775,
+        "analysis": {
+          "topsim": 0.08891230718739304,
+          "entropies": [
+            0.6454601838501807
+          ],
+          "mean_entropy": 0.6454601838501807,
+          "n_unique_messages": 41,
+          "mean_consistency": 0.6622833333333332
+        },
+        "nan_count": 6
+      },
+      {
+        "train_easy": 0.6401209677419355,
+        "train_hard": 0.7414314516129032,
+        "test_easy": 0.34627016129032256,
+        "test_hard": 0.2903225806451613,
+        "analysis": {
+          "topsim": 0.05824811054980625,
+          "entropies": [
+            0.6615510438297232
+          ],
+          "mean_entropy": 0.6615510438297232,
+          "n_unique_messages": 32,
+          "mean_consistency": 0.6451833333333333
+        },
+        "nan_count": 4
+      },
+      {
+        "train_easy": 0.6355846774193549,
+        "train_hard": 0.7222782258064516,
+        "test_easy": 0.30443548387096775,
+        "test_hard": 0.2878024193548387,
+        "analysis": {
+          "topsim": 0.09751371878712858,
+          "entropies": [
+            0.6107857148185771
+          ],
+          "mean_entropy": 0.6107857148185771,
+          "n_unique_messages": 31,
+          "mean_consistency": 0.67525
+        },
+        "nan_count": 6
+      },
+      {
+        "train_easy": 0.5907258064516129,
+        "train_hard": 0.6975806451612904,
+        "test_easy": 0.33618951612903225,
+        "test_hard": 0.25100806451612906,
+        "analysis": {
+          "topsim": 0.16399710517601204,
+          "entropies": [
+            0.5771767749884318
+          ],
+          "mean_entropy": 0.5771767749884318,
+          "n_unique_messages": 32,
+          "mean_consistency": 0.6710666666666667
+        },
+        "nan_count": 9
+      }
+    ],
+    "holistic_easy": [
+      {
+        "train_easy": 0.8377016129032258,
+        "train_hard": 0.4188508064516129,
+        "test_easy": 0.4642137096774194,
+        "test_hard": 0.2867943548387097,
+        "analysis": {
+          "topsim": 0.1467505926345442,
+          "entropies": [
+            0.7667995248730206
+          ],
+          "mean_entropy": 0.7667995248730206,
+          "n_unique_messages": 55,
+          "mean_consistency": 0.7078666666666666
+        },
+        "nan_count": 3
+      },
+      {
+        "train_easy": 0.8256048387096774,
+        "train_hard": 0.3941532258064516,
+        "test_easy": 0.46774193548387094,
+        "test_hard": 0.27368951612903225,
+        "analysis": {
+          "topsim": 0.18778597853932782,
+          "entropies": [
+            0.7458994472384027
+          ],
+          "mean_entropy": 0.7458994472384027,
+          "n_unique_messages": 47,
+          "mean_consistency": 0.7016833333333333
+        },
+        "nan_count": 6
+      },
+      {
+        "train_easy": 0.8215725806451613,
+        "train_hard": 0.4007056451612903,
+        "test_easy": 0.48336693548387094,
+        "test_hard": 0.31955645161290325,
+        "analysis": {
+          "topsim": 0.17745354388417986,
+          "entropies": [
+            0.7382527877697337
+          ],
+          "mean_entropy": 0.7382527877697337,
+          "n_unique_messages": 47,
+          "mean_consistency": 0.7101666666666668
+        },
+        "nan_count": 8
+      },
+      {
+        "train_easy": 0.8301411290322581,
+        "train_hard": 0.3840725806451613,
+        "test_easy": 0.4747983870967742,
+        "test_hard": 0.2847782258064516,
+        "analysis": {
+          "topsim": 0.17201811457809169,
+          "entropies": [
+            0.7477980508474594
+          ],
+          "mean_entropy": 0.7477980508474594,
+          "n_unique_messages": 56,
+          "mean_consistency": 0.7042166666666665
+        },
+        "nan_count": 7
+      },
+      {
+        "train_easy": 0.8321572580645161,
+        "train_hard": 0.39213709677419356,
+        "test_easy": 0.48538306451612906,
+        "test_hard": 0.29939516129032256,
+        "analysis": {
+          "topsim": 0.1779977525891576,
+          "entropies": [
+            0.7505522051013095
+          ],
+          "mean_entropy": 0.7505522051013095,
+          "n_unique_messages": 53,
+          "mean_consistency": 0.7076166666666667
+        },
+        "nan_count": 5
+      },
+      {
+        "train_easy": 0.8230846774193549,
+        "train_hard": 0.37752016129032256,
+        "test_easy": 0.46774193548387094,
+        "test_hard": 0.28881048387096775,
+        "analysis": {
+          "topsim": 0.18401545357962876,
+          "entropies": [
+            0.7370848370794256
+          ],
+          "mean_entropy": 0.7370848370794256,
+          "n_unique_messages": 49,
+          "mean_consistency": 0.7195833333333336
+        },
+        "nan_count": 4
+      },
+      {
+        "train_easy": 0.8180443548387096,
+        "train_hard": 0.3795362903225806,
+        "test_easy": 0.5065524193548387,
+        "test_hard": 0.2872983870967742,
+        "analysis": {
+          "topsim": 0.16589819657122365,
+          "entropies": [
+            0.7221709297222054
+          ],
+          "mean_entropy": 0.7221709297222054,
+          "n_unique_messages": 46,
+          "mean_consistency": 0.7237000000000002
+        },
+        "nan_count": 6
+      },
+      {
+        "train_easy": 0.8356854838709677,
+        "train_hard": 0.4032258064516129,
+        "test_easy": 0.515625,
+        "test_hard": 0.2842741935483871,
+        "analysis": {
+          "topsim": 0.17965776955532606,
+          "entropies": [
+            0.7383330291880495
+          ],
+          "mean_entropy": 0.7383330291880495,
+          "n_unique_messages": 59,
+          "mean_consistency": 0.7346
+        },
+        "nan_count": 4
+      },
+      {
+        "train_easy": 0.8190524193548387,
+        "train_hard": 0.3805443548387097,
+        "test_easy": 0.48185483870967744,
+        "test_hard": 0.28125,
+        "analysis": {
+          "topsim": 0.18752729601111445,
+          "entropies": [
+            0.7391508075917795
+          ],
+          "mean_entropy": 0.7391508075917795,
+          "n_unique_messages": 50,
+          "mean_consistency": 0.7055333333333335
+        },
+        "nan_count": 6
+      },
+      {
+        "train_easy": 0.8190524193548387,
+        "train_hard": 0.39768145161290325,
+        "test_easy": 0.4747983870967742,
+        "test_hard": 0.2762096774193548,
+        "analysis": {
+          "topsim": 0.19894233175852016,
+          "entropies": [
+            0.7204265642121906
+          ],
+          "mean_entropy": 0.7204265642121906,
+          "n_unique_messages": 48,
+          "mean_consistency": 0.7588999999999999
+        },
+        "nan_count": 9
+      }
+    ]
+  }
+}

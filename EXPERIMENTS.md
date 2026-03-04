@@ -5008,3 +5008,61 @@ With N=2 shapes and random placement, most quadrants are empty. "I see nothing" 
 ### Files
 - `_phase65_nonphysics.py` — Non-physics domain experiment
 - `results/phase65_nonphysics.json` — All results (4 conditions × 15 seeds)
+
+
+## Phase 66: One-Shot Visual Concept Learning — Referential Game
+**Date:** Mar 3 | **Duration:** ~90 min
+
+**Question:** Does compositional communication enable one-shot generalization to novel visual categories? Agents trained on 80 CIFAR-100 classes should generalize to 20 held-out classes if protocols are compositional (visual components recombine).
+
+### Setup
+- **Dataset:** CIFAR-100, DINOv2 ViT-S/14 features (384-dim CLS tokens)
+- **Split:** 80 train classes (16 superclasses), 20 test classes (4 holdout superclasses: large_carnivores, vehicles_1, insects, people)
+- **Task:** Referential game — sender sees reference image, sends discrete message, receiver selects match from K=5 candidates
+- **Hard distractors:** Same superclass (e.g., lion vs tiger vs bear)
+- **Easy distractors:** Random other classes
+- **Training:** 200 epochs, Population IL (3 receivers, reset every 30), Gumbel-Softmax, 10 seeds per condition
+
+### Conditions
+
+| Condition | n_positions | vocab | distractors | msg_dim |
+|-----------|------------|-------|-------------|---------|
+| COMPOSITIONAL_HARD | 4 | 10 | same superclass | 40 |
+| COMPOSITIONAL_EASY | 4 | 10 | random | 40 |
+| HOLISTIC_HARD | 1 | 100 | same superclass | 100 |
+| HOLISTIC_EASY | 1 | 100 | random | 100 |
+| NEAREST_NEIGHBOR | — | — | both | — |
+
+### Results
+
+| Condition | Train Easy | Train Hard | Test Easy | Test Hard | TopSim | Unique Msgs |
+|-----------|-----------|-----------|----------|----------|--------|------------|
+| **NN Baseline** | 77.8% | 56.7% | **72.2%** | **50.2%** | — | — |
+| Comp. Hard | 68.7±1.3% | **78.8±0.9%** | 31.7±1.3% | 27.5±1.4% | 0.073 | 1376 |
+| Comp. Easy | **85.5±0.7%** | 48.0±2.0% | 50.0±1.8% | 30.6±1.2% | **0.239** | 1208 |
+| Hol. Hard | 62.1±2.7% | 72.5±1.6% | 30.9±2.7% | 27.0±1.3% | 0.091 | 34 |
+| Hol. Easy | 82.6±0.7% | 39.3±1.2% | 48.2±1.6% | 28.8±1.2% | 0.178 | 51 |
+
+### Analysis
+
+**No generalization advantage for compositionality.** All conditions collapse to ~27-31% on test_hard — barely above 20% chance and far below NN baseline (50.2%). The predicted "compositional advantage on novel classes" did not materialize.
+
+**Massive memorization across the board.** Compositional_hard: train 78.8% → test 27.5% (gap +51.3%). Holistic_hard: train 72.5% → test 27.0% (gap +45.5%). Both conditions learn class-specific codes that don't transfer.
+
+**Compositional beats holistic on train.** Compositional (78.8% hard) significantly outperforms holistic (72.5% hard), confirming the 4×10 encoding has higher capacity than 1×100. But this advantage vanishes on test.
+
+**Holistic collapses vocabulary.** Only uses 34-51 of 100 available symbols. The bottleneck is too narrow for 80-class discrimination with 1 symbol — many classes share symbols.
+
+**TopSim is moderate but insufficient.** Compositional_easy achieves TopSim=0.239 (the highest), but this doesn't translate to generalization. The 0.3 threshold was not reached for hard mode (0.073).
+
+**NN baseline dominates generalization.** Direct cosine similarity on DINOv2 features (50.2% test_hard) massively outperforms all communication methods. The communication bottleneck destroys too much information for fine-grained within-superclass discrimination on novel classes.
+
+**Why it fails.** The referential game incentivizes class-level codes: "if tiger → message [3,7,2,1]". This is inherently class-specific. True compositionality would require encoding visual primitives (has_stripes, is_large, has_fur), but the game provides no pressure for this — class identity is the only signal. 100-class CIFAR-100 with only 600 images/class doesn't provide enough visual diversity within classes to learn compositional visual descriptions.
+
+### Verdict
+**NEGATIVE RESULT** — compositional message structure alone does not enable one-shot generalization to novel visual categories. The referential game incentivizes class-specific codes rather than visual-primitive descriptions. This contrasts with our physics experiments (Phases 54-65) where continuous property variation forces compositional structure. Visual category generalization may require different inductive biases (e.g., disentangled visual encoding, attribute-level contrastive objectives).
+
+### Files
+- `_phase66_oneshot.py` — Full experiment
+- `results/phase66_oneshot.json` — All results (4 conditions × 10 seeds)
+- `results/phase66_dino_cifar100.pt` — Cached DINOv2 features (60K images × 384-dim)
