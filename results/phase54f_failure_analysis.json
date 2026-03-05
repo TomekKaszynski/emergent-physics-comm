@@ -1,0 +1,206 @@
+{
+  "failed_seeds": [
+    1,
+    9,
+    15,
+    18
+  ],
+  "compositional_seeds": [
+    0,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    10,
+    11,
+    12,
+    13,
+    14,
+    16,
+    17,
+    19
+  ],
+  "failure_characterizations": [
+    {
+      "seed": 1,
+      "pos_dis": 0.1802611393342035,
+      "characterization": "HOLISTIC",
+      "detail": "both positions encode both properties (avg spec=0.11)",
+      "pos0_spec": 0.008453282357075913,
+      "pos1_spec": 0.2075525883502965,
+      "mi_total_ratio": 0.9918196950459027,
+      "avg_spec": 0.1080029353536862
+    },
+    {
+      "seed": 9,
+      "pos_dis": 0.2078351716539911,
+      "characterization": "HOLISTIC",
+      "detail": "both positions encode both properties (avg spec=0.12)",
+      "pos0_spec": 0.13461645397459923,
+      "pos1_spec": 0.09792415536127233,
+      "mi_total_ratio": 0.9825416048304355,
+      "avg_spec": 0.11627030466793578
+    },
+    {
+      "seed": 15,
+      "pos_dis": 0.3507458968899404,
+      "characterization": "HOLISTIC (partial)",
+      "detail": "weak specialization (avg spec=0.21, MI ratio=0.93)",
+      "pos0_spec": 0.19241115547759627,
+      "pos1_spec": 0.23362790893478957,
+      "mi_total_ratio": 0.9270604732301,
+      "avg_spec": 0.2130195322061929
+    },
+    {
+      "seed": 18,
+      "pos_dis": 0.06508495583805192,
+      "characterization": "HOLISTIC",
+      "detail": "both positions encode both properties (avg spec=0.03)",
+      "pos0_spec": 0.035983143648907444,
+      "pos1_spec": 0.031301683576549194,
+      "mi_total_ratio": 0.9126384493369963,
+      "avg_spec": 0.03364241361272832
+    }
+  ],
+  "per_seed_detail": {
+    "1": {
+      "pos_dis": 0.1802611393342035,
+      "topsim": 0.7042838086439512,
+      "entropies": [
+        0.9690375575305507,
+        0.9882829367857461
+      ],
+      "mi_matrix": [
+        [
+          0.6842222169217527,
+          0.6727513363250727
+        ],
+        [
+          0.5420996302648436,
+          0.8260659345296956
+        ]
+      ],
+      "holdout_both": 0.7186046511627907,
+      "holdout_e": 0.8294573643410853,
+      "holdout_f": 0.8891472868217054
+    },
+    "9": {
+      "pos_dis": 0.2078351716539911,
+      "topsim": 0.6952608417643605,
+      "entropies": [
+        0.9559561147601067,
+        0.9699622698906027
+      ],
+      "mi_matrix": [
+        [
+          0.5666975204156142,
+          0.7430050340606884
+        ],
+        [
+          0.731752255491539,
+          0.6012218883385613
+        ]
+      ],
+      "holdout_both": 0.703875968992248,
+      "holdout_e": 0.8418604651162791,
+      "holdout_f": 0.862015503875969
+    },
+    "15": {
+      "pos_dis": 0.3507458968899404,
+      "topsim": 0.7028004573027375,
+      "entropies": [
+        0.9568804818774046,
+        0.9313322655915581
+      ],
+      "mi_matrix": [
+        [
+          0.8197451146341357,
+          0.5551918957560485
+        ],
+        [
+          0.4884279992544746,
+          0.7862217562594286
+        ]
+      ],
+      "holdout_both": 0.8038759689922481,
+      "holdout_e": 0.8937984496124031,
+      "holdout_f": 0.9100775193798449
+    },
+    "18": {
+      "pos_dis": 0.06508495583805192,
+      "topsim": 0.6699957230160234,
+      "entropies": [
+        0.9813920821048598,
+        0.9786720778663032
+      ],
+      "mi_matrix": [
+        [
+          0.6619108760543126,
+          0.6159301392404939
+        ],
+        [
+          0.6781669351494924,
+          0.7219943403513576
+        ]
+      ],
+      "holdout_both": 0.7736434108527132,
+      "holdout_e": 0.8503875968992248,
+      "holdout_f": 0.9108527131782945
+    }
+  },
+  "comparisons": {
+    "seed_posdis_correlation": {
+      "r": -0.06645553761886328,
+      "p": 0.7807288927666356
+    },
+    "entropy": {
+      "failed_mean": 0.9664394733008914,
+      "failed_std": 0.014534321123351141,
+      "comp_mean": 0.9617008940363458,
+      "comp_std": 0.015417054947578158,
+      "t": 0.5275072346838796,
+      "p": 0.6042834281581987,
+      "vocab_collapse": false
+    },
+    "holdout_both": {
+      "failed_mean": 0.7499999999999999,
+      "failed_std": 0.04054233921660786,
+      "comp_mean": 0.7707848837209302,
+      "comp_std": 0.06862146618155428,
+      "t": -0.5511518271280197,
+      "p": 0.5883063618706025
+    },
+    "holdout_e": {
+      "failed_mean": 0.853875968992248,
+      "comp_mean": 0.8531492248062016,
+      "p": 0.9841165700269763
+    },
+    "holdout_f": {
+      "failed_mean": 0.8930232558139535,
+      "comp_mean": 0.9169089147286822,
+      "p": 0.22476972763548148
+    },
+    "topsim": {
+      "failed_mean": 0.6930852076817682,
+      "comp_mean": 0.6456456380550879,
+      "t": 2.9072759891905573,
+      "p": 0.00939652741300289
+    },
+    "total_mi": {
+      "failed_mean": 2.673851218261878,
+      "comp_mean": 2.6550724290199392,
+      "t": 0.36068740227746415,
+      "p": 0.7225312901254712
+    },
+    "off_diagonal_mi": {
+      "failed_mean": 1.2568313063856633,
+      "comp_mean": 1.2380048377078754,
+      "t": 0.06219851494771287,
+      "p": 0.9510902074486005
+    }
+  },
+  "summary": "Of 20 seeds, 4 (20%) produced non-compositional protocols (PosDis < 0.4). All 4 failed seeds show HOLISTIC failure: both message positions encode both properties roughly equally (avg specialization ratio 0.12), rather than one position going dead. Failed seeds have HIGHER TopSim (0.693 vs 0.646), suggesting they find structured but non-compositional mappings. Entropy is comparable (failed=0.966, comp=0.962, p=0.604), ruling out vocabulary collapse as a failure cause. Holdout accuracy is comparable for failed seeds (both=75.0% vs 77.1%, p=0.588). Off-diagonal MI (redundancy) is higher but not significant in failed seeds (1.257 vs 1.238, p=0.951), confirming that both positions encode both properties rather than specializing. Seed index shows no systematic correlation with PosDis (r=-0.066, p=0.781), indicating failure is stochastic."
+}
