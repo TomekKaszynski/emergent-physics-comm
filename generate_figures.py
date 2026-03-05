@@ -1,9 +1,8 @@
 """
-Generate publication-quality figures for the paper.
-Loads results from Phase 54f, 54g, and 55.
+Generate all paper figures from existing experiment results.
+No training — just load JSONs and plot.
 
-Usage:
-  python3 generate_figures.py
+Run: python3 generate_figures.py
 """
 
 import json
@@ -11,254 +10,363 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
+from pathlib import Path
 
-# ── Style ──────────────────────────────────────────────────────────
+FIGURES_DIR = Path("figures")
+FIGURES_DIR.mkdir(exist_ok=True)
+
+# Style
+plt.style.use('seaborn-v0_8-paper')
 plt.rcParams.update({
     'font.size': 9,
-    'axes.labelsize': 9,
-    'axes.titlesize': 10,
+    'axes.labelsize': 10,
+    'axes.titlesize': 11,
     'xtick.labelsize': 8,
     'ytick.labelsize': 8,
     'legend.fontsize': 8,
-    'figure.dpi': 300,
+    'figure.dpi': 150,
+    'savefig.dpi': 300,
     'savefig.bbox': 'tight',
     'savefig.pad_inches': 0.05,
-    'axes.spines.top': False,
-    'axes.spines.right': False,
-    'font.family': 'serif',
 })
 
-# Colorblind-friendly palette (Okabe-Ito)
-C_BLUE = '#0072B2'
-C_ORANGE = '#E69F00'
-C_GREEN = '#009E73'
-C_RED = '#D55E00'
-C_PURPLE = '#CC79A7'
-C_GREY = '#999999'
-C_CYAN = '#56B4E9'
-
-# ── Load data ──────────────────────────────────────────────────────
-with open('results/phase54f_extended.json') as f:
-    d54f = json.load(f)
-with open('results/phase54g_control.json') as f:
-    d54g = json.load(f)
-with open('results/phase55_results.json') as f:
-    d55 = json.load(f)
+# Colorblind-friendly palette
+CB_BLUE = '#0072B2'
+CB_ORANGE = '#E69F00'
+CB_GREEN = '#009E73'
+CB_RED = '#D55E00'
+CB_PURPLE = '#CC79A7'
+CB_GRAY = '#999999'
+CB_CYAN = '#56B4E9'
 
 
 # ══════════════════════════════════════════════════════════════════
-# Figure 1: Compositionality (7 x 2.5 in, 3 panels)
+# FIGURE 1: MI Heatmap (compositional vs holistic)
 # ══════════════════════════════════════════════════════════════════
 
-def fig1():
-    fig, axes = plt.subplots(1, 3, figsize=(7, 2.5),
-                             gridspec_kw={'width_ratios': [1, 0.8, 1.2]})
+def figure1():
+    print("Generating Figure 1: MI Heatmap...", flush=True)
+    d = json.load(open('results/phase54f_extended.json'))
+    dh = json.load(open('results/phase54g_control.json'))
 
-    # ── Panel (a): PosDis histogram ────────────────────────────────
+    # Best compositional seed
+    best = max(d['per_seed'], key=lambda x: x['pos_dis'])
+    mi = np.array(best['mi_matrix'])  # (2, 2): rows=positions, cols=[elasticity, friction]
+    posdis = best['pos_dis']
+
+    # Average holistic MI (1 position, 2 properties)
+    hol_mis = np.array([s['mi_matrix'] for s in dh['per_seed']])  # (20, 1, 2)
+    hol_avg = hol_mis.mean(axis=0)  # (1, 2)
+
+    fig, axes = plt.subplots(1, 2, figsize=(7, 2.5),
+                              gridspec_kw={'width_ratios': [1, 0.6]})
+
+    # Panel A: Compositional 2×2
     ax = axes[0]
-    pd_2x5 = [s['pos_dis'] for s in d54f['per_seed']]
-    pd_1x25 = [s['pos_dis'] for s in d54g['per_seed']]
-
-    bins = np.arange(0, 0.85, 0.1)
-    ax.hist(pd_2x5, bins=bins, alpha=0.75, color=C_BLUE, label='2$\\times$5',
-            edgecolor='white', linewidth=0.5)
-    ax.hist(pd_1x25, bins=bins, alpha=0.75, color=C_ORANGE, label='1$\\times$25',
-            edgecolor='white', linewidth=0.5)
-    ax.axvline(0.4, color=C_RED, linestyle='--', linewidth=1, label='Threshold')
-    ax.set_xlabel('PosDis')
-    ax.set_ylabel('Seeds')
-    ax.set_title('(a) Compositionality')
-    ax.legend(loc='upper left', frameon=False)
-    ax.set_xlim(-0.05, 0.85)
-    ax.set_ylim(0, 12)
-    ax.yaxis.set_major_locator(mticker.MaxNLocator(integer=True))
-
-    # ── Panel (b): MI matrix heatmap for best compositional seed ──
-    ax = axes[1]
-    # Find best compositional 2x5 seed (highest PosDis)
-    best_seed = max(d54f['per_seed'], key=lambda s: s['pos_dis'])
-    mi = np.array(best_seed['mi_matrix'])  # (2, 2)
-
-    im = ax.imshow(mi, cmap='Blues', vmin=0, aspect='auto')
-    ax.set_xticks([0, 1])
-    ax.set_xticklabels(['Elast.', 'Frict.'])
-    ax.set_yticks([0, 1])
-    ax.set_yticklabels(['Pos 0', 'Pos 1'])
-    ax.set_title(f'(b) MI matrix (seed {best_seed["seed"]})')
-    ax.set_xlabel('Property')
-    ax.set_ylabel('Position')
+    im = ax.imshow(mi, cmap='Blues', aspect='auto', vmin=0, vmax=1.4)
     for i in range(2):
         for j in range(2):
+            color = 'white' if mi[i, j] > 0.7 else 'black'
             ax.text(j, i, f'{mi[i, j]:.2f}', ha='center', va='center',
-                    fontsize=9, fontweight='bold',
-                    color='white' if mi[i, j] > mi.max() * 0.6 else 'black')
+                    fontsize=12, fontweight='bold', color=color)
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels(['Elasticity', 'Friction'])
+    ax.set_yticks([0, 1])
+    ax.set_yticklabels(['Position 0', 'Position 1'])
+    ax.set_title(f'Compositional (PosDis = {posdis:.2f})', fontweight='bold')
+    plt.colorbar(im, ax=ax, label='Mutual Information (nats)', shrink=0.8)
 
-    # ── Panel (c): Grouped bar chart ──────────────────────────────
-    ax = axes[2]
-    # 54f: 2x5 compositional
-    train_e_2x5 = np.mean([s['train_e'] for s in d54f['per_seed']])
-    train_f_2x5 = np.mean([s['train_f'] for s in d54f['per_seed']])
-    hold_e_2x5 = np.mean([s['holdout_e'] for s in d54f['per_seed']])
-    hold_f_2x5 = np.mean([s['holdout_f'] for s in d54f['per_seed']])
-    train_both_2x5 = np.mean([s['train_both'] for s in d54f['per_seed']])
-    hold_both_2x5 = np.mean([s['holdout_both'] for s in d54f['per_seed']])
-
-    # 54g: 1x25 control
-    train_e_1x25 = np.mean([s['train_e'] for s in d54g['per_seed']])
-    train_f_1x25 = np.mean([s['train_f'] for s in d54g['per_seed']])
-    hold_e_1x25 = np.mean([s['holdout_e'] for s in d54g['per_seed']])
-    hold_f_1x25 = np.mean([s['holdout_f'] for s in d54g['per_seed']])
-    train_both_1x25 = np.mean([s['train_both'] for s in d54g['per_seed']])
-    hold_both_1x25 = np.mean([s['holdout_both'] for s in d54g['per_seed']])
-
-    labels = ['Elast.', 'Frict.', 'Both']
-    x = np.arange(len(labels))
-    w = 0.18
-
-    bars_train_2x5 = [train_e_2x5, train_f_2x5, train_both_2x5]
-    bars_hold_2x5 = [hold_e_2x5, hold_f_2x5, hold_both_2x5]
-    bars_train_1x25 = [train_e_1x25, train_f_1x25, train_both_1x25]
-    bars_hold_1x25 = [hold_e_1x25, hold_f_1x25, hold_both_1x25]
-
-    ax.bar(x - 1.5*w, bars_train_2x5, w, label='2$\\times$5 train', color=C_BLUE, alpha=0.6)
-    ax.bar(x - 0.5*w, bars_hold_2x5, w, label='2$\\times$5 holdout', color=C_BLUE)
-    ax.bar(x + 0.5*w, bars_train_1x25, w, label='1$\\times$25 train', color=C_ORANGE, alpha=0.6)
-    ax.bar(x + 1.5*w, bars_hold_1x25, w, label='1$\\times$25 holdout', color=C_ORANGE)
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels)
-    ax.set_ylabel('Accuracy')
-    ax.set_title('(c) Train vs. holdout')
-    ax.set_ylim(0.5, 1.0)
-    ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0, 0))
-    ax.legend(loc='lower left', frameon=False, ncol=2, fontsize=7)
-
-    fig.tight_layout(w_pad=1.5)
-    fig.savefig('figures/fig1_compositionality.pdf')
-    plt.close()
-    print('Saved figures/fig1_compositionality.pdf', flush=True)
-
-
-# ══════════════════════════════════════════════════════════════════
-# Figure 2: Ablation (5 x 3 in)
-# ══════════════════════════════════════════════════════════════════
-
-def fig2():
-    fig, ax1 = plt.subplots(figsize=(5, 3))
-
-    conditions = [
-        'No IL',
-        'IL only',
-        'IL+pop\nstaggered',
-        'IL+pop\nsimult. 200ep',
-        'IL+pop\nextended 400ep',
-    ]
-    holdout = [0.829, 0.771, 0.806, 0.745, 0.767]
-    posdis = [0.048, 0.291, 0.272, 0.295, 0.486]
-
-    x = np.arange(len(conditions))
-
-    # Left axis: holdout bars
-    bars = ax1.bar(x, holdout, 0.55, color=C_BLUE, alpha=0.75,
-                   edgecolor='white', linewidth=0.5, label='Holdout accuracy')
-    ax1.set_ylabel('Holdout accuracy', color=C_BLUE)
-    ax1.set_ylim(0.6, 0.9)
-    ax1.yaxis.set_major_formatter(mticker.PercentFormatter(1.0, 0))
-    ax1.tick_params(axis='y', colors=C_BLUE)
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(conditions, fontsize=7.5)
-
-    # Bar value labels
-    for bar, val in zip(bars, holdout):
-        ax1.text(bar.get_x() + bar.get_width() / 2, val + 0.008,
-                 f'{val:.1%}', ha='center', va='bottom', fontsize=7, color=C_BLUE)
-
-    # Right axis: PosDis line
-    ax2 = ax1.twinx()
-    ax2.plot(x, posdis, 'o-', color=C_RED, linewidth=2, markersize=6,
-             label='PosDis', zorder=5)
-    ax2.set_ylabel('PosDis', color=C_RED)
-    ax2.set_ylim(0, 0.6)
-    ax2.tick_params(axis='y', colors=C_RED)
-    ax2.axhline(0.4, color=C_RED, linestyle=':', linewidth=0.8, alpha=0.5)
-    ax2.spines['right'].set_visible(True)
-    ax2.spines['right'].set_color(C_RED)
-
-    # PosDis value labels
-    for xi, val in zip(x, posdis):
-        offset = -0.035 if val > 0.4 else 0.025
-        ax2.text(xi, val + offset, f'{val:.3f}', ha='center', va='bottom',
-                 fontsize=7, color=C_RED)
-
-    # Combined legend
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left',
-               frameon=False, fontsize=8)
+    # Panel B: Holistic 1×2
+    ax = axes[1]
+    im2 = ax.imshow(hol_avg, cmap='Blues', aspect='auto', vmin=0, vmax=1.4)
+    for j in range(2):
+        color = 'white' if hol_avg[0, j] > 0.7 else 'black'
+        ax.text(j, 0, f'{hol_avg[0, j]:.2f}', ha='center', va='center',
+                fontsize=12, fontweight='bold', color=color)
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels(['Elasticity', 'Friction'])
+    ax.set_yticks([0])
+    ax.set_yticklabels(['Position 0'])
+    ax.set_title('Holistic (1×25)', fontweight='bold')
 
     fig.tight_layout()
-    fig.savefig('figures/fig2_ablation.pdf')
-    plt.close()
-    print('Saved figures/fig2_ablation.pdf', flush=True)
+    fig.savefig(FIGURES_DIR / 'fig1_mi_heatmap.pdf')
+    plt.close(fig)
+    print("  Saved fig1_mi_heatmap.pdf", flush=True)
 
 
 # ══════════════════════════════════════════════════════════════════
-# Figure 3: Three-property (6 x 2.5 in, 2 panels)
+# FIGURE 2: PosDis Distribution
 # ══════════════════════════════════════════════════════════════════
 
-def fig3():
-    fig, axes = plt.subplots(1, 2, figsize=(6, 2.5))
+def figure2():
+    print("Generating Figure 2: PosDis Distribution...", flush=True)
+    d = json.load(open('results/phase54f_extended.json'))
 
-    # ── Panel (a): Average 3x3 MI matrix ──────────────────────────
+    posdis_vals = [s['pos_dis'] for s in d['per_seed']]
+
+    fig, ax = plt.subplots(figsize=(5, 3))
+
+    bins = np.arange(0, 1.0, 0.1)
+    n, bins_out, patches = ax.hist(posdis_vals, bins=bins, edgecolor='black',
+                                    linewidth=0.8, color=CB_BLUE, alpha=0.8)
+
+    # Threshold line
+    ax.axvline(x=0.4, color=CB_RED, linestyle='--', linewidth=1.5, label='Threshold')
+
+    # Count compositional vs holistic
+    n_comp = sum(1 for v in posdis_vals if v >= 0.4)
+    n_hol = sum(1 for v in posdis_vals if v < 0.4)
+
+    ax.annotate(f'{n_comp}/20 compositional',
+                xy=(0.65, max(n) * 0.85), fontsize=9, color=CB_BLUE, fontweight='bold')
+    ax.annotate(f'{n_hol}/20 holistic',
+                xy=(0.05, max(n) * 0.85), fontsize=9, color=CB_GRAY, fontweight='bold')
+
+    ax.set_xlabel('Positional Disentanglement (PosDis)')
+    ax.set_ylabel('Number of Seeds')
+    ax.set_title('PosDis Distribution Across 20 Seeds')
+    ax.set_xlim(0, 0.9)
+
+    fig.tight_layout()
+    fig.savefig(FIGURES_DIR / 'fig2_posdis.pdf')
+    plt.close(fig)
+    print("  Saved fig2_posdis.pdf", flush=True)
+
+
+# ══════════════════════════════════════════════════════════════════
+# FIGURE 3: Surgical Ablation Bar Chart (THE MONEY PLOT)
+# ══════════════════════════════════════════════════════════════════
+
+def figure3():
+    print("Generating Figure 3: Surgical Ablation...", flush=True)
+
+    # From Phase 58b ablation_summary.transfer (pre-trained compositional sender)
+    d = json.load(open('results/phase58b_cross_property.json'))
+    abl = d['ablation_summary']['transfer']
+
+    labels = [
+        'Agent A pos 0\n(elasticity)',
+        'Agent A pos 1\n(friction)',
+        'Agent B pos 0\n(elasticity)',
+        'Agent B pos 1\n(friction)',
+    ]
+    keys = ['A_pos0', 'A_pos1', 'B_pos0', 'B_pos1']
+    means = [abl[k]['mean'] * 100 for k in keys]  # convert to %
+    stds = [abl[k]['std'] * 100 for k in keys]
+
+    # Relevant = large drop (>5%), Irrelevant = small drop
+    colors = [CB_RED, CB_GRAY, CB_GRAY, CB_RED]
+
+    fig, ax = plt.subplots(figsize=(4.5, 3.2))
+
+    x = np.arange(len(labels))
+    bars = ax.bar(x, means, yerr=stds, capsize=5, color=colors,
+                  edgecolor='black', linewidth=0.8, width=0.6,
+                  error_kw={'linewidth': 1.2})
+
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=8)
+    ax.set_ylabel('Accuracy Drop (%)')
+    ax.set_title('Surgical Position Ablation', fontweight='bold')
+
+    # Annotate values
+    for i, (m, s) in enumerate(zip(means, stds)):
+        y_pos = m + s + 0.8
+        ax.text(i, y_pos, f'{m:.1f}%', ha='center', va='bottom', fontsize=8,
+                fontweight='bold')
+
+    ax.set_ylim(-2, max(means) + max(stds) + 4)
+
+    # Legend
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor=CB_RED, edgecolor='black', label='Relevant position'),
+        Patch(facecolor=CB_GRAY, edgecolor='black', label='Irrelevant position'),
+    ]
+    ax.legend(handles=legend_elements, loc='upper center', frameon=True)
+
+    fig.tight_layout()
+    fig.savefig(FIGURES_DIR / 'fig3_ablation.pdf')
+    plt.close(fig)
+    print("  Saved fig3_ablation.pdf", flush=True)
+
+
+# ══════════════════════════════════════════════════════════════════
+# FIGURE 4: Bandwidth Allocation Scatter
+# ══════════════════════════════════════════════════════════════════
+
+def figure4():
+    print("Generating Figure 4: Bandwidth Allocation...", flush=True)
+
+    # Vision (Phase 68): 6 properties
+    d68 = json.load(open('results/phase68_visual_multiattribute.json'))
+    prop_names = d68['properties']['names']
+    orc = d68['conditions']['oracle']
+    sp0 = d68['conditions']['comp_6pos']['sender_specs']['sender_0']
+    sp1 = d68['conditions']['comp_6pos']['sender_specs']['sender_1']
+    mi0 = np.array(sp0['avg_total_mi_per_prop'])
+    mi1 = np.array(sp1['avg_total_mi_per_prop'])
+    vision_mi = mi0 + mi1
+    vision_acc = np.array([orc[f'holdout_{p}_mean'] * 100 for p in prop_names])
+
+    # Physics (Phase 55): 3 properties
+    d55 = json.load(open('results/phase55_results.json'))
+    phys_props = ['elasticity', 'friction', 'damping']
+    phys_acc_keys = ['e', 'f', 'd']
+    phys_oracle_acc = np.array([
+        np.mean([s['oracle'][k] for s in d55['per_seed']]) * 100
+        for k in phys_acc_keys
+    ])
+    mi_mats = np.array([s['mi_matrix'] for s in d55['per_seed']])
+    avg_mi = mi_mats.mean(axis=0)
+    phys_mi = avg_mi.sum(axis=0)  # sum across 3 positions
+
+    fig, ax = plt.subplots(figsize=(4.5, 3.2))
+
+    # Vision points
+    ax.scatter(vision_acc, vision_mi, s=60, c=CB_BLUE, zorder=5,
+               label='Vision (6 properties)', edgecolors='black', linewidth=0.5)
+    short_names = {
+        'brightness': 'bright.', 'saturation': 'satur.',
+        'hue_conc': 'hue', 'edge_density': 'edge',
+        'spatial_freq': 'spat.freq', 'color_diversity': 'col.div',
+    }
+    for i, pname in enumerate(prop_names):
+        label = short_names.get(pname, pname)
+        offset = (2, 0.08)
+        if pname == 'saturation':
+            offset = (-2, 0.1)
+        elif pname == 'brightness':
+            offset = (2, -0.15)
+        ax.annotate(label, (vision_acc[i], vision_mi[i]),
+                    textcoords='offset points', xytext=offset,
+                    fontsize=7, color=CB_BLUE)
+
+    # Physics points
+    ax.scatter(phys_oracle_acc, phys_mi, s=60, c=CB_ORANGE, zorder=5,
+               marker='s', label='Physics (3 properties)',
+               edgecolors='black', linewidth=0.5)
+    phys_offsets = {'elasticity': (-45, -8), 'friction': (-38, 8), 'damping': (3, -8)}
+    for i, pname in enumerate(phys_props):
+        ax.annotate(pname, (phys_oracle_acc[i], phys_mi[i]),
+                    textcoords='offset points', xytext=phys_offsets[pname],
+                    fontsize=7, color=CB_ORANGE)
+
+    # Linear fits
+    # Vision
+    z_v = np.polyfit(vision_acc, vision_mi, 1)
+    x_fit_v = np.linspace(vision_acc.min() - 2, vision_acc.max() + 2, 100)
+    ax.plot(x_fit_v, np.polyval(z_v, x_fit_v), '--', color=CB_BLUE,
+            alpha=0.5, linewidth=1)
+    r_v = np.corrcoef(vision_acc, vision_mi)[0, 1]
+
+    # Physics
+    z_p = np.polyfit(phys_oracle_acc, phys_mi, 1)
+    x_fit_p = np.linspace(phys_oracle_acc.min() - 2, phys_oracle_acc.max() + 2, 100)
+    ax.plot(x_fit_p, np.polyval(z_p, x_fit_p), '--', color=CB_ORANGE,
+            alpha=0.5, linewidth=1)
+    r_p = np.corrcoef(phys_oracle_acc, phys_mi)[0, 1]
+
+    ax.set_xlabel('Oracle Per-Property Accuracy (%)')
+    ax.set_ylabel('Total MI Allocated (nats)')
+    ax.set_title('Bandwidth Allocation', fontweight='bold')
+
+    # Annotate r values
+    ax.text(0.05, 0.95, f'Vision r = {r_v:.3f}\nPhysics r = {r_p:.3f}',
+            transform=ax.transAxes, fontsize=8, verticalalignment='top',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                      edgecolor='gray', alpha=0.8))
+
+    ax.legend(loc='lower right', frameon=True)
+
+    fig.tight_layout()
+    fig.savefig(FIGURES_DIR / 'fig4_bandwidth.pdf')
+    plt.close(fig)
+    print("  Saved fig4_bandwidth.pdf", flush=True)
+
+
+# ══════════════════════════════════════════════════════════════════
+# FIGURE 5: Protocol Visualization (Symbol Semantics)
+# ══════════════════════════════════════════════════════════════════
+
+def figure5():
+    print("Generating Figure 5: Protocol Visualization...", flush=True)
+
+    d = json.load(open('results/phase54f_extended.json'))
+
+    # Use best seed (highest PosDis) to show clean specialization
+    best = max(d['per_seed'], key=lambda x: x['pos_dis'])
+    best_mi = np.array(best['mi_matrix'])  # (2, 2)
+
+    fig, axes = plt.subplots(1, 2, figsize=(6.5, 3))
+
+    # Panel A: Best seed - grouped bar showing MI per position
     ax = axes[0]
-    mean_mi = np.array(d55['summary']['mean_mi_matrix'])  # (3, 3)
+    positions = ['Position 0', 'Position 1']
+    x = np.arange(len(positions))
+    width = 0.35
 
-    im = ax.imshow(mean_mi, cmap='Blues', vmin=0, aspect='auto')
-    ax.set_xticks([0, 1, 2])
-    ax.set_xticklabels(['Elast.', 'Frict.', 'Damp.'])
-    ax.set_yticks([0, 1, 2])
-    ax.set_yticklabels(['Pos 0', 'Pos 1', 'Pos 2'])
-    ax.set_xlabel('Property')
-    ax.set_ylabel('Position')
-    ax.set_title('(a) Mean MI matrix (3$\\times$5)')
-    for i in range(3):
-        for j in range(3):
-            ax.text(j, i, f'{mean_mi[i, j]:.2f}', ha='center', va='center',
-                    fontsize=9, fontweight='bold',
-                    color='white' if mean_mi[i, j] > mean_mi.max() * 0.6 else 'black')
+    bars1 = ax.bar(x - width/2, best_mi[:, 0], width, label='Elasticity',
+                   color=CB_BLUE, edgecolor='black', linewidth=0.5)
+    bars2 = ax.bar(x + width/2, best_mi[:, 1], width, label='Friction',
+                   color=CB_ORANGE, edgecolor='black', linewidth=0.5)
 
-    cbar = fig.colorbar(im, ax=ax, shrink=0.8)
-    cbar.ax.tick_params(labelsize=7)
-    cbar.set_label('MI (nats)', fontsize=8)
+    for bar in bars1:
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
+                f'{bar.get_height():.2f}', ha='center', va='bottom', fontsize=8)
+    for bar in bars2:
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
+                f'{bar.get_height():.2f}', ha='center', va='bottom', fontsize=8)
 
-    # ── Panel (b): PosDis histogram for 3x5 ───────────────────────
+    ax.set_ylabel('Mutual Information (nats)')
+    ax.set_xticks(x)
+    ax.set_xticklabels(positions)
+    ax.set_title(f'Best Seed (PosDis = {best["pos_dis"]:.2f})', fontweight='bold')
+    ax.legend(frameon=True)
+    ax.set_ylim(0, 1.5)
+
+    # Panel B: Per-seed PosDis vs holdout accuracy scatter
     ax = axes[1]
-    pd_3x5 = [s['pos_dis'] for s in d55['per_seed']]
+    posdis = [s['pos_dis'] for s in d['per_seed']]
+    holdout = [s['holdout_both'] * 100 for s in d['per_seed']]
 
-    bins = np.arange(0, 0.75, 0.05)
-    ax.hist(pd_3x5, bins=bins, alpha=0.75, color=C_GREEN,
-            edgecolor='white', linewidth=0.5, label='3$\\times$5')
-    ax.axvline(0.4, color=C_RED, linestyle='--', linewidth=1, label='Threshold')
-    ax.axvline(0.486, color=C_BLUE, linestyle=':', linewidth=1.5,
-               label='2-prop mean (0.486)')
-    ax.set_xlabel('PosDis')
-    ax.set_ylabel('Seeds')
-    ax.set_title('(b) 3-property compositionality')
-    ax.set_xlim(0.15, 0.65)
-    ax.set_ylim(0, 8)
-    ax.yaxis.set_major_locator(mticker.MaxNLocator(integer=True))
-    ax.legend(loc='upper right', frameon=False, fontsize=7)
+    ax.scatter(posdis, holdout, s=40, c=CB_BLUE,
+               edgecolors='black', linewidth=0.5, zorder=5)
 
-    fig.tight_layout(w_pad=2)
-    fig.savefig('figures/fig3_three_property.pdf')
-    plt.close()
-    print('Saved figures/fig3_three_property.pdf', flush=True)
+    z = np.polyfit(posdis, holdout, 1)
+    x_fit = np.linspace(0, 0.9, 100)
+    ax.plot(x_fit, np.polyval(z, x_fit), '--', color=CB_GRAY, linewidth=1)
+
+    r = np.corrcoef(posdis, holdout)[0, 1]
+    ax.text(0.05, 0.05, f'r = {r:.2f}', transform=ax.transAxes,
+            fontsize=9, bbox=dict(boxstyle='round', facecolor='white',
+                                   edgecolor='gray', alpha=0.8))
+
+    ax.set_xlabel('Positional Disentanglement (PosDis)')
+    ax.set_ylabel('Holdout Both-Correct (%)')
+    ax.set_title('PosDis vs Accuracy', fontweight='bold')
+
+    fig.tight_layout()
+    fig.savefig(FIGURES_DIR / 'fig5_protocol.pdf')
+    plt.close(fig)
+    print("  Saved fig5_protocol.pdf", flush=True)
 
 
-# ── Main ───────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════
+# Main
+# ══════════════════════════════════════════════════════════════════
+
 if __name__ == '__main__':
-    fig1()
-    fig2()
-    fig3()
-    print('All figures generated.', flush=True)
+    print("=" * 60, flush=True)
+    print("Generating paper figures", flush=True)
+    print("=" * 60, flush=True)
+
+    figure1()
+    figure2()
+    figure3()
+    figure4()
+    figure5()
+
+    print("\nAll figures saved to figures/", flush=True)
