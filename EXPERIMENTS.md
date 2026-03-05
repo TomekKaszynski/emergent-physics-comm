@@ -5206,3 +5206,57 @@ Property difficulty ranking (oracle): saturation (87.1%) > brightness (86.4%) > 
 ### Files
 - `_phase68_visual_multiattribute.py` — Full experiment
 - `results/phase68_visual_multiattribute.json` — All results (5 conditions × 10 seeds)
+
+---
+
+## Phase 68b: Inverse Loss Weighting — Balanced Specialization
+**Date:** Mar 5 | **Duration:** ~218 min (~3.6 hours)
+
+- **Goal:** Test whether inverse loss weighting (hard properties weighted higher) forces clean position-to-property specialization in the MI matrix
+- **Change from Phase 68:** Each property's BCE loss weighted by 1/oracle_accuracy, normalized so weights sum to 6. Edge density gets 1.147 (highest), saturation gets 0.936 (lowest).
+- **Conditions:** 3 × 10 seeds (comp_6pos_bal, holistic_bal, oracle_bal)
+
+### Results
+
+| Condition | Holdout All-6 | Holdout Mean | Spec Ratio |
+|-----------|--------------|-------------|-----------|
+| 68 COMP_6POS | **40.5% ± 0.9%** | 82.0% | 0.20 |
+| 68b COMP_6POS_BAL | 40.0% ± 1.0% | 82.0% | 0.14 |
+| 68 HOLISTIC | 35.5% ± 0.7% | 79.8% | 0.14 |
+| 68b HOLISTIC_BAL | 36.4% ± 0.9% | 80.3% | 0.10 |
+| 68 ORACLE | 39.6% ± 0.8% | 81.9% | — |
+| 68b ORACLE_BAL | 39.4% ± 0.5% | 81.9% | — |
+
+### Per-Property Comparison (comp_6pos holdout)
+
+| Property | Phase 68 | Phase 68b | Delta |
+|----------|---------|----------|-------|
+| brightness | 86.2% | 85.6% | -0.6% |
+| saturation | 87.5% | 86.9% | -0.6% |
+| hue_conc | 83.1% | 83.4% | +0.3% |
+| edge_density | 71.1% | 71.9% | +0.8% |
+| spatial_freq | 84.6% | 84.5% | -0.1% |
+| color_diversity | 79.8% | 79.4% | -0.4% |
+
+### MI Analysis
+
+MI matrix remains distributed (no diagonal) with inverse weighting. Bandwidth allocation correlation r=0.953 (vs r=0.964 in Phase 68) — agents still allocate MI proportional to property difficulty despite the reweighting.
+
+Total MI per property shifted slightly: edge_density MI increased from 0.318 to 0.407 (+28%), but still the lowest by far.
+
+### Analysis
+
+**Inverse loss weighting is a null result.** Overall accuracy unchanged (40.0% vs 40.5%), within seed variance. The MI matrix did NOT become more diagonal — in fact, specialization *decreased* (0.14 vs 0.20). Agents resist forced equalization.
+
+**Edge density marginally improved** (+0.8%) at the cost of easy properties declining slightly (-0.6% brightness/saturation). Net effect is approximately zero — the system redistributes a tiny amount of bandwidth but the fundamental rate-distortion tradeoff is preserved.
+
+**The distributed encoding is optimal, not a failure mode.** Agents naturally allocate more bandwidth to properties they can predict better, matching the information-theoretic prediction. Trying to override this allocation doesn't improve overall performance and slightly reduces specialization. This confirms the bandwidth allocation pattern from Phase 55/68 reflects genuine rate-distortion optimization, not a training artifact.
+
+**Compositional advantage shrank** (+3.6% vs +5.1%) because holistic improved slightly with balanced weighting (+0.9%), while compositional was flat. The holistic bottleneck benefits more from loss rebalancing because it has no structural capacity to specialize — the weighting acts as implicit curriculum.
+
+### Verdict
+**NEGATIVE** — Inverse loss weighting does not force clean position-property specialization. The distributed MI pattern is a feature of optimal bandwidth allocation, not a failure mode. Agents naturally follow rate-distortion theory: allocate more bits to easier properties. Attempting to override this with loss weighting is neutral at best, slightly harmful at worst.
+
+### Files
+- `_phase68b_balanced.py` — Full experiment
+- `results/phase68b_balanced.json` — All results (3 conditions × 10 seeds)
