@@ -5330,3 +5330,86 @@ Tests whether a compositional protocol is a reusable interface for tasks the sen
 ### Files
 - `_phase71_protocol_reuse.py` — Full experiment
 - `results/phase71_protocol_reuse.json` — All results
+
+---
+
+## Phase 72: 4-Agent Compositionality at 80 Seeds
+**Date:** Mar 8-9 | **Duration:** 210 min | **Commit:** `8a9c5ba`
+
+Same task as Phase 69b but with 4 agents instead of 2. Each agent sees 2 consecutive frames (agent 0: [0,1], agent 1: [2,3], agent 2: [4,5], agent 3: [6,7]). 2 message heads per agent, vocab=5. Population IL with 3 receivers, simultaneous reset every 40 epochs. 80 seeds.
+
+### Config
+- N_AGENTS=4, FRAMES_PER_AGENT=2, N_HEADS=2/agent, VOCAB_SIZE=5
+- MultiAgentOracle (4 encoder pairs), MultiAgentSender (4 CompositionalSenders)
+- Total msg_dim = 4×2×5 = 40 (vs 10 for 2-agent)
+- PosDis computed per-agent (best-agent used for threshold)
+
+### Results
+| Metric | 4-Agent (Phase 72) | 2-Agent (Phase 69b) |
+|--------|-------------------|---------------------|
+| Comp rate | **100% (80/80)** | 54% (43/80) |
+| Holdout both | **98.3% ± 1.6%** | 77.7% ± 5.9% |
+| PosDis (mean) | 0.999 | 0.444 |
+| TopSim | 0.792 | 0.657 |
+
+- **Every single seed is compositional** (best-agent PosDis > 0.98 for all 80)
+- Per-agent PosDis pattern: agent 0 always ~0.0, agents 1-3 always ~1.0
+- Agent 0 (frames 0-1, initial conditions) sends no useful information
+- Agents 1-3 (later frames) develop perfect position-property specialization
+
+### Analysis
+**4-agent setup eliminates the compositionality lottery.** The 2-agent system has 54% compositionality (seed-dependent). The 4-agent system achieves 100% — multi-agent pressure forces compositional structure. This is the strongest result in the project.
+
+**Holdout accuracy jumps from 77.7% to 98.3%.** The 4 agents collectively provide much richer information about the scene, and the compositional protocol efficiently encodes it. The redundancy across 3 informative agents likely helps generalization.
+
+**Agent 0 is consistently uninformative** (PosDis ≈ 0.0). Frames [0,1] capture initial conditions before the physics plays out — they don't contain distinguishing information about elasticity/friction. This is a sensible finding: physics properties are revealed through dynamics, not statics.
+
+### Verdict
+**STRONG POSITIVE** — Multi-agent pressure is a powerful driver of compositionality. 100% vs 54% compositionality rate, 98.3% vs 77.7% holdout. This motivates the multi-agent architecture as more than a communication study — it's a practical way to ensure compositional representations emerge.
+
+### Files
+- `_phase72_4agent_80seeds.py` — Full experiment
+- `results/phase72_4agent_80seeds.json` — Per-seed results
+
+---
+
+## Phase 73: LazImpa Baseline Comparison
+**Date:** Mar 9 | **Duration:** 21 min | **Commit:** `8a9c5ba`
+
+LazImpa (Rita et al. 2020) baseline: lazy speaker (entropy penalty λ=0.01) + impatient listener (per-position prediction heads). No IL, no population. Single receiver with 2 heads. 20 seeds, 400 epochs.
+
+### Config
+- LAZY_COEF = 0.01 (penalize high entropy per position)
+- ImpatientReceiver: head 0 sees position 0 only, head 1 sees full message
+- No receiver resets, single receiver, no population
+- Same architecture/features as Phase 69b otherwise
+
+### Results
+| Metric | LazImpa | IL+Population (69b) |
+|--------|---------|---------------------|
+| Holdout both | 70.3% ± 14.9% | 77.7% ± 5.9% |
+| PosDis | 0.165 ± 0.095 | 0.444 ± 0.225 |
+| TopSim | 0.612 | 0.657 |
+| Comp rate | **0% (0/20)** | 54% (43/80) |
+
+Per-head accuracy (holdout):
+- Head 0 (position 0 only): 56.8% ± 10.2%
+- Head 1 (full message): 70.3% ± 14.9%
+
+Entropy: 0.88 normalized (both positions) — still very high despite lazy penalty.
+
+2 seeds (8, 16) completely collapsed (28.1% holdout, entropy=0.0).
+
+### Analysis
+**LazImpa fails to produce compositionality on this task.** 0/20 seeds reach PosDis > 0.4 (max PosDis = 0.309). The lazy speaker penalty (λ=0.01) reduces entropy marginally but doesn't force position-property specialization. The impatient listener adds pressure for position 0 to be informative (56.8% vs chance 50%), but this isn't enough to create compositional structure.
+
+**IL+Population is strictly superior.** Higher holdout (77.7% vs 70.3%), higher compositionality (54% vs 0%), lower variance (5.9% vs 14.9%). The population pressure from multiple receivers is more effective than the LazImpa regularization for inducing compositionality.
+
+**The high variance (14.9%) and 2 collapsed seeds suggest instability.** Without the population to provide diverse learning signals, the single receiver can get stuck in degenerate solutions.
+
+### Verdict
+**NEGATIVE for LazImpa** — LazImpa does not produce compositional communication on this task. IL+Population is the better method. This validates our choice of iterated learning with receiver population as the compositionality pressure mechanism.
+
+### Files
+- `_phase73_lazimpa.py` — Full experiment
+- `results/phase73_lazimpa.json` — Per-seed results
