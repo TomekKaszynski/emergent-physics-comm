@@ -5466,3 +5466,46 @@ E2E per-seed:
 ### Files
 - `_phase74_e2e_perception.py` — Full experiment
 - `results/phase74_e2e_perception.json` — Per-seed results
+
+---
+
+## Phase 75: PosDis Trajectory Analysis — When Does the Split Happen?
+**Date:** Mar 10 | **Duration:** 23 min
+
+### Goal
+Track PosDis at checkpoint epochs [0, 40, 80, 120, 200, 300, 400] for seeds 0-19. Determine when compositional vs holistic seeds diverge.
+
+### Config
+Same as Phase 69b. 20 seeds, 400 epochs, IL+population.
+
+### Results
+
+| Epoch | Comp mean (n=14) | Holistic mean (n=6) | Gap | p-value |
+|-------|-----------------|-------------------|------|---------|
+| 0 | 0.412 | 0.501 | -0.090 | 0.393 |
+| 40 | 0.385 | 0.258 | +0.127 | 0.098 |
+| 80 | 0.451 | 0.187 | +0.263 | **0.001** |
+| 120 | 0.486 | 0.197 | +0.289 | 0.002 |
+| 200 | 0.534 | 0.228 | +0.305 | 0.001 |
+| 300 | 0.562 | 0.227 | +0.335 | 0.001 |
+| 400 | 0.596 | 0.192 | +0.404 | **<0.0001** |
+
+- **Split significant at epoch 80** (p=0.001) — after 2 receiver generations
+- **Epoch-40 predicts final outcome at 80%** (threshold=0.27)
+- **Epoch-80 predicts at 85%** (threshold=0.28)
+- **16/20 seeds cross the 0.4 threshold** at least once during training
+- **Epoch 0 PosDis is higher for holistic seeds** (0.501 vs 0.412) — random init favors neither regime
+
+### Analysis
+The comp/holistic split is not a clean bifurcation from initialization. Seeds bounce around early (epoch 0-120), then stabilize. The receiver resets drive a ratchet effect: compositional seeds gain PosDis after each reset while holistic seeds stagnate. This is consistent with iterated learning filtering for learnable (compositional) protocols — each new receiver generation selects for structure that transfers.
+
+The high transition rate (16/20 seeds cross threshold at least once) suggests stochastic dynamics rather than deterministic basin selection. The outcome depends on the accumulated trajectory, not just initial conditions.
+
+### Verdict
+**POSITIVE.** The split emerges by epoch 80 (2 receiver generations) and is predictable from epoch 40 with 80% accuracy. Receiver resets are the key mechanism — they create a ratchet that selects for compositional protocols.
+
+### Files
+- `_phase75_posdis_trajectories.py` — Full experiment
+- `results/phase75_trajectories.json` — Per-seed data with trajectories
+- `figures/fig_posdis_trajectory.pdf` — Paper figure
+- `results/phase75_posdis_trajectory.png` — Quick-view PNG
