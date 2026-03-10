@@ -5509,3 +5509,55 @@ The high transition rate (16/20 seeds cross threshold at least once) suggests st
 - `results/phase75_trajectories.json` — Per-seed data with trajectories
 - `figures/fig_posdis_trajectory.pdf` — Paper figure
 - `results/phase75_posdis_trajectory.png` — Quick-view PNG
+
+---
+
+## Phase 76: Cross-Seed Zero-Shot Coordination
+**Date:** Mar 10 | **Duration:** 27 min
+
+### Goal
+Test whether independently trained compositional protocols converge to the same structure. Pair senders and receivers from different seeds and measure cross-seed holdout accuracy.
+
+### Config
+Same as Phase 69b. 20 seeds, 400 epochs, IL+population. After training, evaluate all 20×20 sender×receiver pairs on holdout set. 15/20 seeds compositional, 5/20 holistic.
+
+### Results
+
+| Condition | Mean | Std | N |
+|---|---|---|---|
+| Comp→Comp (cross-seed) | 24.5% | 15.1% | 210 |
+| Comp→Hol | 24.9% | 14.0% | 75 |
+| Hol→Comp | 26.8% | 15.9% | 75 |
+| Hol→Hol | 24.7% | 13.1% | 20 |
+| **Same-seed (diagonal)** | **76.9%** | **5.2%** | **20** |
+
+- Comp×Comp vs chance (25%): t=-0.46, **p=0.64** (not significant)
+- Comp×Comp vs Hol×Hol: t=-0.04, **p=0.97** (no difference)
+
+Position mapping:
+- ('e', 'f'): 9 comp seeds — pos0=elasticity, pos1=friction
+- ('f', 'e'): 6 comp seeds — swapped
+
+Symbol alignment (same-mapping seeds):
+- Token agreement at chance (~20% for vocab=5)
+- No consistent symbol-to-value mapping across seeds
+
+### Analysis
+**Protocols are seed-specific, not universal.** All cross-seed conditions are at chance (~25%). Same-seed pairs achieve 77%, proving the protocols work — they just don't transfer.
+
+Two levels of divergence:
+1. **Position mapping** — 60% of comp seeds use (elast, frict), 40% use (frict, elast). Even this coarse structural choice is stochastic.
+2. **Symbol assignment** — even seeds with the same position mapping use different symbols for the same property values. Token agreement is at chance.
+
+Compositionality is *structural* (position-property binding) but not *convergent* (no shared vocabulary). Seeds independently discover the same grammar but different alphabets.
+
+### Verdict
+**NEGATIVE for universality.** Cross-seed zero-shot coordination fails completely. Compositional protocols do not converge to a shared structure — they are as opaque to each other as holistic protocols. This rules out the "natural language" interpretation where compositionality implies mutual intelligibility.
+
+### Files
+- `_phase76_cross_seed.py` — Full experiment
+- `results/phase76_cross_seed.json` — Full cross-seed matrix and per-seed data
+- `figures/fig_cross_seed_heatmap.pdf` — Paper figure
+- `results/phase76_cross_seed_heatmap.png` — Quick-view PNG
+- `figures/fig_posdis_trajectory.pdf` — Paper figure
+- `results/phase75_posdis_trajectory.png` — Quick-view PNG
