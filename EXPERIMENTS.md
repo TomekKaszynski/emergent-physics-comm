@@ -5413,3 +5413,56 @@ Entropy: 0.88 normalized (both positions) — still very high despite lazy penal
 ### Files
 - `_phase73_lazimpa.py` — Full experiment
 - `results/phase73_lazimpa.json` — Per-seed results
+
+---
+
+## Phase 74: End-to-End Perception — Communication Drives Encoder Learning
+**Date:** Mar 9-10 | **Duration:** ~18h (including pauses)
+
+### Goal
+Test whether communication pressure reshapes DINOv2 representations. Unfreeze last 2 transformer blocks (10-11) of ViT-S/14 and train end-to-end through Gumbel-Softmax sender. Compare to frozen baseline.
+
+### Config
+- **E2E condition:** DINOv2 blocks 10-11 unfrozen (3.55M/22M params = 16.1% trainable), encoder LR=1e-5, sender/receiver LR=1e-3
+- **Frozen condition:** Pre-extracted CLS token features (same as Phase 69b)
+- **Both:** 2×5 vocab, IL+population (3 receivers, reset every 40 epochs), 400 epochs, Latin square holdout
+- **Seeds:** 20 frozen, 5 e2e (e2e very slow — ~3h per seed on MPS)
+- **Measurements:** Holdout accuracy, PosDis, linear probe R² (Ridge regression), feature cosine similarity to frozen DINOv2
+
+### Results
+
+| Metric | E2E (5 seeds) | Frozen (20 seeds) |
+|---|---|---|
+| Holdout both | 71.4% ± 3.8% | **78.0% ± 5.1%** |
+| PosDis | 0.425 ± 0.103 | 0.455 ± 0.233 |
+| Comp rate (PosDis>0.4) | 2/5 (40%) | 12/20 (60%) |
+| Linear probe R²(elast) | **0.986 ± 0.001** | 0.953 |
+| Linear probe R²(frict) | **0.991 ± 0.006** | 0.988 |
+| Feature cos sim to frozen | 0.118 ± 0.006 | 1.000 |
+
+Holdout accuracy t-test: t=-2.60, **p=0.016** (frozen significantly better).
+
+E2E per-seed:
+| Seed | Holdout | PosDis | R²(e) | R²(f) | CosSim |
+|------|---------|--------|-------|-------|--------|
+| 0 | 77.1% | 0.427* | 0.986 | 0.980 | 0.115 |
+| 1 | 68.1% | 0.342 | 0.984 | 0.991 | 0.127 |
+| 2 | 74.1% | 0.622* | 0.985 | 0.995 | 0.124 |
+| 3 | 70.8% | 0.382 | 0.987 | 0.996 | 0.110 |
+| 4 | 66.9% | 0.350 | 0.987 | 0.995 | 0.115 |
+
+### Analysis
+**Communication pressure massively reshapes DINOv2 representations.** Cosine similarity of 0.118 means e2e features are nearly orthogonal to frozen features — the encoder learns a completely different representation space.
+
+**E2E improves feature quality but hurts communication.** Linear probe R² increases from 0.953→0.986 for elasticity, showing the encoder learns more linearly separable features. But holdout accuracy drops significantly (71.4% vs 78.0%, p=0.016), suggesting the reshaped features are harder for the communication bottleneck to compress compositionally.
+
+**Possible explanation:** The e2e encoder overfits to the communication task's training distribution, learning features that are excellent for the training pairs but don't generalize as well through the discrete bottleneck to held-out combinations. The frozen features, being task-agnostic, may provide a better inductive bias for compositional generalization.
+
+**No oracle for e2e condition** — the e2e sender trains from scratch (no oracle pretraining), which may contribute to the lower holdout accuracy. The frozen condition gets oracle pretraining which provides a better initialization.
+
+### Verdict
+**MIXED.** Communication pressure drives dramatic perceptual reorganization (cos_sim=0.12) and improves linear separability (R² 0.953→0.986), but this doesn't translate to better communication — frozen features actually generalize better through the discrete bottleneck. The frozen DINOv2 features provide a better inductive bias for compositional communication than task-specific fine-tuned features.
+
+### Files
+- `_phase74_e2e_perception.py` — Full experiment
+- `results/phase74_e2e_perception.json` — Per-seed results

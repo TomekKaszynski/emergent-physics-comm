@@ -64,6 +64,8 @@ N_RECEIVERS = 3
 
 N_SEEDS = 20
 SEEDS = list(range(N_SEEDS))
+N_SEEDS_E2E = 5
+SEEDS_E2E = list(range(N_SEEDS_E2E))
 
 TOTAL_SCENES = 300
 SCENES_PER_CELL = 12
@@ -131,7 +133,7 @@ class DINOEncoder(nn.Module):
 
         # Extract DINOv2 features
         cls_tokens = self.extract_features(images_bt)  # (B*T, 384)
-        cls_tokens = cls_tokens.view(b, n_frames, DINO_DIM)  # (B, T, 384)
+        cls_tokens = cls_tokens.reshape(b, n_frames, DINO_DIM)  # (B, T, 384)
 
         # Temporal pooling
         x = cls_tokens.permute(0, 2, 1)  # (B, 384, T)
@@ -543,7 +545,7 @@ def extract_dino_features_from_model(dino_encoder, images, device):
             bt = batch.view(-1, 3, 224, 224).to(device)
             cls_tokens = dino_encoder.extract_features(bt)  # (B*T, 384)
             # Reshape to (B, T*384) for probe
-            cls_tokens = cls_tokens.view(batch.shape[0], -1)
+            cls_tokens = cls_tokens.reshape(batch.shape[0], -1)
             all_feats.append(cls_tokens.cpu())
     return torch.cat(all_feats, dim=0)
 
@@ -599,11 +601,7 @@ def train_oracle_frozen(data_t, e_bins, f_bins, train_ids, device, seed):
         if (epoch + 1) % 10 == 0 or epoch == 0:
             oracle.eval()
             with torch.no_grad():
-                _, _, acc_both = evaluate_accuracy_frozen(
-                    None, None, data_t, e_bins, f_bins, train_ids, device)
-            # Hack: evaluate_accuracy expects sender/receiver, but we need oracle
-            # Use direct eval instead
-            rng2 = np.random.RandomState(888)
+                rng2 = np.random.RandomState(888)
             correct = total = 0
             for _ in range(20):
                 iia, iib = sample_pairs(train_ids, BATCH_SIZE, rng2)
@@ -1053,7 +1051,8 @@ def main():
     print(f"  Condition A: End-to-end (DINOv2 blocks {UNFREEZE_BLOCKS} unfrozen)",
           flush=True)
     print(f"  Condition B: Frozen baseline (pre-extracted features)", flush=True)
-    print(f"  Seeds: {N_SEEDS} per condition, Epochs: {COMM_EPOCHS}", flush=True)
+    print(f"  Seeds: {N_SEEDS} frozen, {N_SEEDS_E2E} e2e, Epochs: {COMM_EPOCHS}",
+          flush=True)
 
     t_total = time.time()
 
@@ -1078,6 +1077,7 @@ def main():
         result = run_frozen_seed(seed, data_t, e_bins, f_bins,
                                   train_ids, holdout_ids, DEVICE)
         frozen_results.append(result)
+        torch.mps.empty_cache()
 
     # Linear probe on frozen features (same for all seeds)
     frozen_flat = data_t.view(len(data_t), -1)  # (300, 8*384=3072)
@@ -1118,22 +1118,24 @@ def main():
     # Condition A: End-to-end (slow — runs DINOv2 in forward pass)
     # ════════════════════════════════════════════════════════════
     print(f"\n{'='*70}", flush=True)
-    print(f"CONDITION A: End-to-end ({N_SEEDS} seeds)", flush=True)
+    print(f"CONDITION A: End-to-end ({N_SEEDS_E2E} seeds)", flush=True)
     print(f"{'='*70}", flush=True)
 
     e2e_results = []
-    for seed in SEEDS:
-        total_elapsed = time.time() - t_total
-        done_e2e = seed
-        if done_e2e > 0:
-            remaining = total_elapsed / (N_SEEDS + done_e2e) * (N_SEEDS - done_e2e)
-            print(f"\n  [E2E Progress: {done_e2e}/{N_SEEDS}, "
+    t_e2e_start = time.time()
+    for i, seed in enumerate(SEEDS_E2E):
+        if i > 0:
+            elapsed_e2e = time.time() - t_e2e_start
+            per_seed = elapsed_e2e / i
+            remaining = per_seed * (N_SEEDS_E2E - i)
+            print(f"\n  [E2E Progress: {i}/{N_SEEDS_E2E}, "
                   f"ETA {remaining/60:.0f}min]", flush=True)
 
         print(f"\n  --- E2E seed {seed} ---", flush=True)
         result = run_e2e_seed(seed, images, e_bins, f_bins,
                                train_ids, holdout_ids, DEVICE, frozen_features)
         e2e_results.append(result)
+        torch.mps.empty_cache()
 
     # ════════════════════════════════════════════════════════════
     # Analysis
@@ -1158,7 +1160,7 @@ def main():
           f"{e2e_pd.mean():>5.3f}±{e2e_pd.std():>4.3f}  | "
           f"{frozen_pd.mean():>5.3f}±{frozen_pd.std():>4.3f} ", flush=True)
     print(f"  {'Comp rate (PosDis>0.4)':<30} | "
-          f"{e2e_comp_count:>5}/{N_SEEDS:<8} | "
+          f"{e2e_comp_count:>5}/{N_SEEDS_E2E:<8} | "
           f"{frozen_comp_count:>5}/{N_SEEDS:<8}", flush=True)
     print(f"  {'Linear probe R²(elast)':<30} | "
           f"{e2e_r2e.mean():>5.3f}±{e2e_r2e.std():>4.3f}  | "
@@ -1205,7 +1207,8 @@ def main():
             'sender_lr': SENDER_LR,
             'receiver_lr': RECEIVER_LR,
             'comm_epochs': COMM_EPOCHS,
-            'n_seeds': N_SEEDS,
+            'n_seeds_frozen': N_SEEDS,
+            'n_seeds_e2e': N_SEEDS_E2E,
             'n_receivers': N_RECEIVERS,
             'receiver_reset_interval': RECEIVER_RESET_INTERVAL,
         },
