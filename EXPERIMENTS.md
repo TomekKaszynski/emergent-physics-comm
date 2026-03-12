@@ -5561,3 +5561,45 @@ Compositionality is *structural* (position-property binding) but not *convergent
 - `results/phase76_cross_seed_heatmap.png` — Quick-view PNG
 - `figures/fig_posdis_trajectory.pdf` — Paper figure
 - `results/phase75_posdis_trajectory.png` — Quick-view PNG
+
+---
+
+## Phase 77: E2E Perception Scaled to 20 Seeds
+**Date:** Mar 10-13 | **Duration:** 54 hours
+
+### Goal
+Scale E2E perception experiment to 20 seeds (reusing 5 from Phase 74, running 15 new seeds 5-19) for proper statistical comparison against 20 frozen seeds.
+
+### Config
+Same as Phase 74. DINOv2 ViT-S/14 with blocks 10-11 unfrozen. Differential LR: encoder 1e-5, comm modules 1e-3. 400 epochs, IL+population with simultaneous receiver reset every 40 epochs.
+
+### Results
+
+| Metric | E2E (n=20) | Frozen (n=20) |
+|---|---|---|
+| Holdout both | 67.8% ± 9.3% | 78.0% ± 5.1% |
+| PosDis | 0.415 ± 0.153 | 0.455 ± 0.233 |
+| Comp rate (PosDis>0.4) | 8/20 | 12/20 |
+| Linear probe R²(elast) | 0.988 ± 0.002 | 0.953 |
+| Linear probe R²(frict) | 0.991 ± 0.005 | 0.988 |
+| Feature cos sim | 0.123 ± 0.022 | 1.000 |
+
+Statistical tests:
+- Holdout: t=-4.16, **p=0.0002**, Cohen's d=1.35 (frozen advantage)
+- PosDis: t=-0.62, p=0.54 (no significant difference)
+- 95% CI E2E holdout: [63.8%, 71.9%]
+- 95% CI Frozen holdout: [75.7%, 80.2%]
+
+Notable: Seed 9 degenerate (33.7% holdout, PosDis=0.993) — high compositionality but poor accuracy.
+
+### Analysis
+**Frozen DINOv2 significantly outperforms E2E fine-tuning** for emergent communication. Despite E2E producing better linear probe features (R²=0.988 vs 0.953), the extra encoder capacity hurts generalization through the communication bottleneck. Fine-tuning causes feature drift (cos_sim≈0.12) without improving downstream task performance.
+
+With 20 seeds, the result is highly significant (p=0.0002, d=1.35). The frozen encoder acts as an information bottleneck that complements the communication bottleneck, forcing more efficient use of discrete messages.
+
+### Verdict
+**CONFIRMED: Frozen features are better for emergent communication.** The 10.2 percentage point gap (78.0% vs 67.8%) is robust across 20 seeds. Pre-trained representations should be used as-is, not fine-tuned end-to-end.
+
+### Files
+- `_phase77_e2e_15seeds.py` — 15 new seeds (merged with Phase 74)
+- `results/phase77_e2e_15seeds.json` — Full per-seed results and statistics

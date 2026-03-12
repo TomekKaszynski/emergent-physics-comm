@@ -180,39 +180,54 @@ def sample_pairs(scene_ids, batch_size, rng):
     return idx_a, idx_b
 
 
+RESTITUTION_LEVELS = [0.1, 0.3, 0.5, 0.7, 0.9]
+FRICTION_LEVELS = [0.1, 0.3, 0.5, 0.7, 0.9]
+SCENES_PER_CELL = 12
+
+
+def get_grid_cell(scene_id):
+    cell_idx = scene_id // SCENES_PER_CELL
+    e_bin = cell_idx // len(FRICTION_LEVELS)
+    f_bin = cell_idx % len(FRICTION_LEVELS)
+    return (RESTITUTION_LEVELS[e_bin], FRICTION_LEVELS[f_bin], e_bin, f_bin)
+
+
 def load_raw_images(dataset_dir, device):
-    """Load raw images for e2e condition. Returns (N, T, 3, 224, 224)."""
-    from torchvision import transforms
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                             std=[0.229, 0.224, 0.225]),
-    ])
+    """Load all scene images as tensors. Returns (N, T, 3, 224, 224), e_bins, f_bins."""
+    dino_mean = torch.tensor([0.485, 0.456, 0.406]).reshape(1, 1, 3, 1, 1)
+    dino_std = torch.tensor([0.229, 0.224, 0.225]).reshape(1, 1, 3, 1, 1)
     frame_indices = np.linspace(0, 23, N_FRAMES, dtype=int)
 
     all_images = []
-    e_list, f_list = [], []
-    scene_dirs = sorted([d for d in dataset_dir.iterdir() if d.is_dir()])[:TOTAL_SCENES]
+    e_bins = []
+    f_bins = []
 
-    for si, scene_dir in enumerate(scene_dirs):
-        with open(scene_dir / "metadata.json") as f:
-            meta = json.load(f)
-        e_list.append(meta['restitution_level'])
-        f_list.append(meta['friction_level'])
+    for sid in range(TOTAL_SCENES):
+        scene_dir = dataset_dir / f"scene_{sid:04d}"
+        _, _, e_bin, f_bin = get_grid_cell(sid)
+
         frames = []
         for fi in frame_indices:
-            img_path = scene_dir / f"rgba_{fi:05d}.png"
-            img = Image.open(img_path).convert('RGB')
-            frames.append(transform(img))
-        all_images.append(torch.stack(frames))
-        if (si + 1) % 100 == 0:
-            print(f"    Loaded {si+1}/{len(scene_dirs)} scenes", flush=True)
+            fpath = scene_dir / f"rgba_{fi:05d}.png"
+            img = Image.open(fpath).convert('RGB')
+            img = img.resize((224, 224), Image.BILINEAR)
+            img_np = np.array(img, dtype=np.float32) / 255.0
+            frames.append(img_np)
+
+        scene_t = torch.tensor(np.stack(frames)).permute(0, 3, 1, 2)
+        all_images.append(scene_t)
+        e_bins.append(e_bin)
+        f_bins.append(f_bin)
+
+        if (sid + 1) % 100 == 0:
+            print(f"    Loaded {sid+1}/{TOTAL_SCENES} scenes", flush=True)
 
     images = torch.stack(all_images)
-    print(f"  Images: {images.shape} ({images.element_size() * images.nelement() / 1e9:.2f} GB)",
-          flush=True)
-    return images, np.array(e_list), np.array(f_list)
+    images = (images - dino_mean) / dino_std
+    e_bins = np.array(e_bins, dtype=int)
+    f_bins = np.array(f_bins, dtype=int)
+    print(f"  Images: {images.shape} ({images.numel() * 4 / 1e9:.2f} GB)", flush=True)
+    return images, e_bins, f_bins
 
 
 # ══════════════════════════════════════════════════════════════════
