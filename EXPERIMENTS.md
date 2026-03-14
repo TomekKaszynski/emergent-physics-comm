@@ -5603,3 +5603,46 @@ With 20 seeds, the result is highly significant (p=0.0002, d=1.35). The frozen e
 ### Files
 - `_phase77_e2e_15seeds.py` — 15 new seeds (merged with Phase 74)
 - `results/phase77_e2e_15seeds.json` — Full per-seed results and statistics
+
+---
+
+## Phase 78: V-JEPA 2 Backbone Comparison
+**Date:** Mar 14 | **Duration:** 30 min
+
+### Goal
+First emergent communication experiment over a JEPA backbone. Compare V-JEPA 2 ViT-L (1024-dim, mean-pooled) vs DINOv2 ViT-S/14 (384-dim × 8 frames) using the same Phase 54f protocol.
+
+### Config
+Same as Phase 54f: 2×5 vocabulary, population IL (3 receivers, simultaneous reset every 40 epochs), 400 epochs, 20 seeds, Latin square holdout, oracle pretraining 100 epochs, asymmetric LR (sender 1e-3, receiver 3e-3), Gumbel tau 3.0→1.0. Only difference: MLP encoder (1024→256→128) instead of temporal Conv1D since V-JEPA 2 features are already temporally pooled.
+
+### Results
+
+| Metric | V-JEPA 2 (n=20) | DINOv2 (n=20) |
+|---|---|---|
+| Holdout both | 70.1% ± 4.6% | 76.7% ± 6.5% |
+| PosDis | 0.377 ± 0.223 | 0.486 ± 0.193 |
+| TopSim | 0.636 ± 0.027 | 0.655 ± 0.034 |
+| Comp rate (PosDis>0.4) | 8/20 (40%) | 16/20 (80%) |
+
+Statistical tests:
+- Holdout: t=-3.62, **p=0.0009**, Cohen's d=-1.17 (DINOv2 advantage)
+- PosDis: t=-1.62, p=0.11 (not significant)
+- 95% CI V-JEPA 2 holdout: [67.9%, 72.3%]
+- 95% CI DINOv2 holdout: [73.6%, 79.8%]
+
+Best V-JEPA 2 compositional seed (13): PosDis=0.807, holdout=70.2%, clean MI separation (pos0→friction 0.837, pos1→elasticity 0.856).
+
+### Analysis
+**DINOv2 ViT-S/14 significantly outperforms V-JEPA 2 ViT-L** for emergent communication despite V-JEPA 2 being a larger model (ViT-L vs ViT-S) with native temporal encoding. DINOv2 achieves 6.6 pp higher holdout accuracy and 2× higher compositionality rate.
+
+Possible explanations:
+1. **Feature dimensionality**: V-JEPA 2's 1024-dim features may provide too much capacity relative to the 2×5 communication bottleneck, making it harder to learn efficient discrete encodings
+2. **Temporal pooling**: Mean-pooling V-JEPA 2 may lose discriminative temporal structure that DINOv2's per-frame features + Conv1D encoder preserves
+3. **Representation structure**: DINOv2's CLS tokens may have more naturally separable physics-relevant dimensions than V-JEPA 2's video-level representations
+
+### Verdict
+**DINOv2 wins.** Frozen DINOv2 ViT-S/14 remains the best backbone for our emergent communication setup. V-JEPA 2's video understanding capabilities don't translate to better discrete communication protocols for physics property inference.
+
+### Files
+- `_phase78_vjepa2_comparison.py` — Full experiment
+- `results/phase78_vjepa2.json` — Per-seed results and comparison statistics
