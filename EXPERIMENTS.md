@@ -5646,3 +5646,108 @@ Possible explanations:
 ### Files
 - `_phase78_vjepa2_comparison.py` — Full experiment
 - `results/phase78_vjepa2.json` — Per-seed results and comparison statistics
+
+---
+
+## Phase 79: Collision Dynamics Dataset + DINOv2 Communication
+**Date:** Mar 14-15 | **Duration:** ~14 hours (10h render + 4h pipeline)
+
+### Goal
+Move beyond single-object ramp physics to a **two-body collision** scenario requiring inference of mass ratio and restitution from pre/post-collision trajectories. Generate Kubric dataset, extract DINOv2 features, and run the full 2-agent and 4-agent communication pipeline.
+
+### Dataset
+- **Kubric collision scenes**: Two identical-looking spheres, sphere_a launched at stationary sphere_b
+- **Property grid 5×5**: mass_ratio_bin (sphere_b_mass ∈ {1,2,3,4,5}) × restitution_bin (∈ {0.1,0.3,0.5,0.7,0.9})
+- **24 scenes/cell = 600 total**, 48 frames each at 256×256, 12 fps
+- Physics signal verified: mass ratio separates post-collision velocities (1.309→0.423 m/s), restitution separates (0.570→1.047 m/s)
+- Rendering: 600 scenes, 0 errors, 604.6 min (60.5s/scene)
+
+### Config
+DINOv2 ViT-S/14, CLS tokens (384-dim), 24 evenly-spaced frames from 48. Same communication protocol as Phase 54f: 2×5 vocabulary, population IL (3 receivers, reset every 40 epochs), 400 epochs, 20 seeds, Latin square holdout. 4-agent uses temporal splits: Agent 0 frames 0-5 (pre-collision), Agent 1 frames 6-11 (collision), Agent 2 frames 12-17 (early aftermath), Agent 3 frames 18-23 (late aftermath).
+
+### Results
+
+| Condition | Oracle | Holdout | PosDis | Comp% |
+|---|---|---|---|---|
+| DINOv2 oracle (collision) | — | 78.9% ± 1.6% | — | — |
+| DINOv2 2-agent (collision) | 78.9% | 73.4% ± 3.3% | 0.439 ± 0.236 | 9/20 |
+| DINOv2 4-agent (collision) | — | 77.7% ± 3.9% | 0.904 ± 0.079 | 20/20 |
+
+Comparison to ramp dataset:
+- 2-agent collision (73.4%) vs 2-agent ramp (76.7%): t=-1.96, p=0.057 (borderline)
+- 4-agent collision (77.7%) vs 4-agent ramp (98.3%): significant gap
+
+### Analysis
+**Collision is harder than ramp.** Oracle drops from ~90% (ramp) to 78.9% (collision), meaning DINOv2 features encode collision dynamics less cleanly than single-object ramp dynamics. Mass ratio is especially hard (84% oracle) since both spheres look identical — the only signal is velocity changes.
+
+The **4-agent temporal split** again achieves 20/20 compositionality (vs 9/20 for 2-agent), confirming that structured temporal decomposition robustly drives compositional protocols even when the underlying task is harder.
+
+### Verdict
+**Collision dataset works** as a harder benchmark. DINOv2 2-agent still achieves >70% with compositional protocols, but the oracle ceiling limits performance. Need a stronger backbone for collision dynamics.
+
+### Files
+- `kubric/generate_collision_dataset.py` — Kubric scene generator
+- `_phase79_collision_pipeline.py` — Full DINOv2 pipeline (extraction + probes + communication)
+- `results/collision_dinov2_features.pt` — (600, 24, 384) DINOv2 features
+- `results/phase79_dinov2_oracle_probe.json` — Oracle probe results
+- `results/phase79_dinov2_collision.json` — 2-agent communication results
+- `results/phase79_dinov2_4agent_collision.json` — 4-agent communication results
+
+---
+
+## Phase 79b: V-JEPA 2 Collision Communication
+**Date:** Mar 15 | **Duration:** 3.6 hours
+
+### Goal
+Controlled comparison: run the exact same collision communication pipeline with V-JEPA 2 ViT-L (1024-dim, spatial-mean-pooled) features instead of DINOv2.
+
+### Config
+Identical protocol to Phase 79 except: V-JEPA 2 features (1024-dim → TemporalEncoder → 128-dim), loaded from `vjepa2_collision_pooled.pt` (float16→float32). Oracle 200 epochs (5 seeds), 2-agent 400 epochs (20 seeds), 4-agent 400 epochs (20 seeds).
+
+### Results
+
+| Condition | Oracle | Holdout | PosDis | Comp% |
+|---|---|---|---|---|
+| V-JEPA2 oracle (collision) | — | 87.7% ± 1.7% | — | — |
+| V-JEPA2 2-agent (collision) | 87.7% | 75.0% ± 3.0% | 0.456 ± 0.225 | 10/20 |
+| V-JEPA2 4-agent (collision) | — | 87.4% ± 3.1% | 0.962 ± 0.033 | 20/20 |
+
+Full comparison table:
+
+| Condition | Oracle | Holdout | PosDis | Comp% |
+|---|---|---|---|---|
+| DINOv2 2-agent (collision) | 78.9% | 73.4% ± 3.3% | 0.439 | 9/20 |
+| DINOv2 4-agent (collision) | — | 77.7% ± 3.9% | 0.904 | 20/20 |
+| V-JEPA2 2-agent (collision) | 87.7% | 75.0% ± 3.0% | 0.456 | 10/20 |
+| V-JEPA2 4-agent (collision) | — | 87.4% ± 3.1% | 0.962 | 20/20 |
+| DINOv2 2-agent (ramp) | ~90% | 76.7% ± 6.5% | 0.486 | 16/20 |
+| DINOv2 4-agent (ramp) | — | 98.3% ± 1.6% | 0.999 | 80/80 |
+
+Statistical tests:
+- 2-agent V-JEPA2 vs DINOv2 (collision): t=1.53, p=0.134, d=0.50 (not significant)
+- **4-agent V-JEPA2 vs DINOv2 (collision): t=8.45, p<0.0001, d=2.74** (huge V-JEPA2 advantage)
+- **V-JEPA2 4-agent vs 2-agent: t=12.42, p<0.0001, d=4.03**
+- DINOv2 4-agent vs 2-agent (collision): t=3.71, p=0.0007, d=1.20
+
+### Analysis
+**V-JEPA 2 dominates collision dynamics.** The key story:
+
+1. **Oracle ceiling is much higher**: V-JEPA2 oracle = 87.7% vs DINOv2 = 78.9%. V-JEPA 2's video-native features encode collision dynamics (mass ratio, restitution) far better than DINOv2's frame-level CLS tokens.
+
+2. **2-agent: no significant difference** (75.0% vs 73.4%, p=0.134). Both backbones hit a similar communication bottleneck — the 2×5 vocabulary limits what can be transmitted regardless of feature quality.
+
+3. **4-agent: V-JEPA2 massively wins** (87.4% vs 77.7%, p<0.0001, d=2.74). With 4 agents covering different temporal windows, V-JEPA2's richer representations can be fully exploited. The 4-agent V-JEPA2 nearly matches the oracle (87.4% vs 87.7%), meaning the communication protocol loses almost nothing.
+
+4. **Domain matters for backbone choice**: On the ramp dataset (single object, simpler dynamics), DINOv2 beat V-JEPA 2 (Phase 78). On collision dynamics (two bodies, requires temporal reasoning), V-JEPA 2 wins decisively. This suggests backbone choice should be domain-aware.
+
+5. **Compositionality**: Both backbones achieve 20/20 with 4 agents, ~10/20 with 2 agents. The temporal split is the primary driver of compositionality, not the backbone.
+
+### Verdict
+**V-JEPA 2 + 4-agent is the strongest collision configuration.** 87.4% holdout with 20/20 compositionality. The reversal from Phase 78 (where DINOv2 won on ramp data) shows that video-native features excel precisely when the task requires temporal reasoning across multi-body interactions.
+
+### Files
+- `_phase79b_vjepa2_collision.py` — Full V-JEPA 2 pipeline
+- `results/vjepa2_collision_pooled.pt` — (600, 24, 1024) V-JEPA 2 features
+- `results/phase79b_vjepa2_oracle_probe.json` — Oracle probe results
+- `results/phase79b_vjepa2_collision.json` — 2-agent communication results
+- `results/phase79b_vjepa2_4agent_collision.json` — 4-agent communication results

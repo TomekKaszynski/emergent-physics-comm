@@ -1,0 +1,50 @@
+{
+  "config": {
+    "encoder": "TemporalEncoder Conv1D",
+    "input_dim": 1024,
+    "n_frames": 24,
+    "oracle_epochs": 200,
+    "n_seeds": 5
+  },
+  "per_seed": [
+    {
+      "seed": 0,
+      "train_both": 0.9858044164037855,
+      "holdout_mass": 0.9425911559348332,
+      "holdout_rest": 0.95655546935609,
+      "holdout_both": 0.8991466252909232
+    },
+    {
+      "seed": 1,
+      "train_both": 0.9858044164037855,
+      "holdout_mass": 0.9255236617532971,
+      "holdout_rest": 0.9224204809930179,
+      "holdout_both": 0.847944142746315
+    },
+    {
+      "seed": 2,
+      "train_both": 0.9810725552050473,
+      "holdout_mass": 0.934833204034135,
+      "holdout_rest": 0.9379363847944143,
+      "holdout_both": 0.8727695888285493
+    },
+    {
+      "seed": 3,
+      "train_both": 0.9889589905362776,
+      "holdout_mass": 0.9177657098525989,
+      "holdout_rest": 0.9643134212567882,
+      "holdout_both": 0.8820791311093871
+    },
+    {
+      "seed": 4,
+      "train_both": 0.9873817034700315,
+      "holdout_mass": 0.9402637703646237,
+      "holdout_rest": 0.9410395655546936,
+      "holdout_both": 0.8813033359193173
+    }
+  ],
+  "summary": {
+    "holdout_both_mean": 0.8766485647788984,
+    "holdout_both_std": 0.016711139820432874
+  }
+}
