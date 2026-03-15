@@ -1,0 +1,156 @@
+{
+  "config": {
+    "encoder": "TemporalEncoder Conv1D",
+    "input_dim": 1024,
+    "n_frames": 16,
+    "oracle_epochs": 200,
+    "n_seeds": 20,
+    "dataset": "ramp"
+  },
+  "per_seed": [
+    {
+      "seed": 0,
+      "train_both": 0.9817351598173516,
+      "holdout_elast": 0.9658914728682171,
+      "holdout_frict": 0.9085271317829458,
+      "holdout_both": 0.8744186046511628
+    },
+    {
+      "seed": 1,
+      "train_both": 0.9452054794520548,
+      "holdout_elast": 0.9472868217054263,
+      "holdout_frict": 0.896124031007752,
+      "holdout_both": 0.8434108527131783
+    },
+    {
+      "seed": 2,
+      "train_both": 0.9634703196347032,
+      "holdout_elast": 0.9310077519379845,
+      "holdout_frict": 0.9333333333333333,
+      "holdout_both": 0.8643410852713178
+    },
+    {
+      "seed": 3,
+      "train_both": 0.9726027397260274,
+      "holdout_elast": 0.9449612403100776,
+      "holdout_frict": 0.8976744186046511,
+      "holdout_both": 0.8426356589147287
+    },
+    {
+      "seed": 4,
+      "train_both": 0.9467275494672754,
+      "holdout_elast": 0.9534883720930233,
+      "holdout_frict": 0.9031007751937985,
+      "holdout_both": 0.8565891472868217
+    },
+    {
+      "seed": 5,
+      "train_both": 0.954337899543379,
+      "holdout_elast": 0.9542635658914729,
+      "holdout_frict": 0.9054263565891473,
+      "holdout_both": 0.8596899224806202
+    },
+    {
+      "seed": 6,
+      "train_both": 0.954337899543379,
+      "holdout_elast": 0.9534883720930233,
+      "holdout_frict": 0.9457364341085271,
+      "holdout_both": 0.8992248062015504
+    },
+    {
+      "seed": 7,
+      "train_both": 0.9467275494672754,
+      "holdout_elast": 0.924031007751938,
+      "holdout_frict": 0.9077519379844962,
+      "holdout_both": 0.8317829457364341
+    },
+    {
+      "seed": 8,
+      "train_both": 0.9375951293759512,
+      "holdout_elast": 0.9651162790697675,
+      "holdout_frict": 0.9124031007751938,
+      "holdout_both": 0.8775193798449612
+    },
+    {
+      "seed": 9,
+      "train_both": 0.939117199391172,
+      "holdout_elast": 0.9612403100775194,
+      "holdout_frict": 0.9124031007751938,
+      "holdout_both": 0.8736434108527131
+    },
+    {
+      "seed": 10,
+      "train_both": 0.9528158295281582,
+      "holdout_elast": 0.924031007751938,
+      "holdout_frict": 0.8837209302325582,
+      "holdout_both": 0.8077519379844961
+    },
+    {
+      "seed": 11,
+      "train_both": 0.943683409436834,
+      "holdout_elast": 0.9372093023255814,
+      "holdout_frict": 0.92015503875969,
+      "holdout_both": 0.8573643410852713
+    },
+    {
+      "seed": 12,
+      "train_both": 0.9680365296803652,
+      "holdout_elast": 0.9720930232558139,
+      "holdout_frict": 0.9046511627906977,
+      "holdout_both": 0.8767441860465116
+    },
+    {
+      "seed": 13,
+      "train_both": 0.9421613394216134,
+      "holdout_elast": 0.958139534883721,
+      "holdout_frict": 0.9186046511627907,
+      "holdout_both": 0.8767441860465116
+    },
+    {
+      "seed": 14,
+      "train_both": 0.9482496194824962,
+      "holdout_elast": 0.9643410852713178,
+      "holdout_frict": 0.9038759689922481,
+      "holdout_both": 0.8682170542635659
+    },
+    {
+      "seed": 15,
+      "train_both": 0.943683409436834,
+      "holdout_elast": 0.9472868217054263,
+      "holdout_frict": 0.9410852713178295,
+      "holdout_both": 0.8883720930232558
+    },
+    {
+      "seed": 16,
+      "train_both": 0.9786910197869102,
+      "holdout_elast": 0.9798449612403101,
+      "holdout_frict": 0.9186046511627907,
+      "holdout_both": 0.8984496124031007
+    },
+    {
+      "seed": 17,
+      "train_both": 0.9665144596651446,
+      "holdout_elast": 0.9565891472868217,
+      "holdout_frict": 0.8922480620155039,
+      "holdout_both": 0.8488372093023255
+    },
+    {
+      "seed": 18,
+      "train_both": 0.954337899543379,
+      "holdout_elast": 0.9705426356589147,
+      "holdout_frict": 0.9217054263565891,
+      "holdout_both": 0.8922480620155039
+    },
+    {
+      "seed": 19,
+      "train_both": 0.974124809741248,
+      "holdout_elast": 0.9457364341085271,
+      "holdout_frict": 0.9248062015503876,
+      "holdout_both": 0.8705426356589148
+    }
+  ],
+  "summary": {
+    "holdout_both_mean": 0.8654263565891472,
+    "holdout_both_std": 0.022336345381025753
+  }
+}

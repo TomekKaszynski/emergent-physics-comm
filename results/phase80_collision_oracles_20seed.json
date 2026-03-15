@@ -1,0 +1,255 @@
+{
+  "dino_per_seed": [
+    {
+      "seed": 0,
+      "holdout_mass": 0.8316524437548487,
+      "holdout_rest": 0.9503491078355314,
+      "holdout_both": 0.7820015515903801
+    },
+    {
+      "seed": 1,
+      "holdout_mass": 0.8719937936384794,
+      "holdout_rest": 0.934833204034135,
+      "holdout_both": 0.8076027928626842
+    },
+    {
+      "seed": 2,
+      "holdout_mass": 0.8494957331264547,
+      "holdout_rest": 0.95655546935609,
+      "holdout_both": 0.8060512024825446
+    },
+    {
+      "seed": 3,
+      "holdout_mass": 0.813033359193173,
+      "holdout_rest": 0.9526764934057409,
+      "holdout_both": 0.7664856477889838
+    },
+    {
+      "seed": 4,
+      "holdout_mass": 0.8502715283165244,
+      "holdout_rest": 0.9325058184639256,
+      "holdout_both": 0.78277734678045
+    },
+    {
+      "seed": 5,
+      "holdout_mass": 0.8510473235065943,
+      "holdout_rest": 0.939487975174554,
+      "holdout_both": 0.7905352986811481
+    },
+    {
+      "seed": 6,
+      "holdout_mass": 0.8580294802172227,
+      "holdout_rest": 0.921644685802948,
+      "holdout_both": 0.78277734678045
+    },
+    {
+      "seed": 7,
+      "holdout_mass": 0.839410395655547,
+      "holdout_rest": 0.9534522885958107,
+      "holdout_both": 0.7928626842513576
+    },
+    {
+      "seed": 8,
+      "holdout_mass": 0.8370830100853375,
+      "holdout_rest": 0.9456943366951125,
+      "holdout_both": 0.78277734678045
+    },
+    {
+      "seed": 9,
+      "holdout_mass": 0.8029480217222653,
+      "holdout_rest": 0.9635376260667183,
+      "holdout_both": 0.7664856477889838
+    },
+    {
+      "seed": 10,
+      "holdout_mass": 0.8378588052754073,
+      "holdout_rest": 0.9581070597362297,
+      "holdout_both": 0.7959658650116369
+    },
+    {
+      "seed": 11,
+      "holdout_mass": 0.8634600465477114,
+      "holdout_rest": 0.9169899146625291,
+      "holdout_both": 0.7804499612102405
+    },
+    {
+      "seed": 12,
+      "holdout_mass": 0.8766485647788984,
+      "holdout_rest": 0.9356089992242048,
+      "holdout_both": 0.8122575640031032
+    },
+    {
+      "seed": 13,
+      "holdout_mass": 0.8324282389449186,
+      "holdout_rest": 0.9387121799844841,
+      "holdout_both": 0.7711404189294027
+    },
+    {
+      "seed": 14,
+      "holdout_mass": 0.8642358417377812,
+      "holdout_rest": 0.9332816136539953,
+      "holdout_both": 0.7990690457719162
+    },
+    {
+      "seed": 15,
+      "holdout_mass": 0.8246702870442203,
+      "holdout_rest": 0.9487975174553918,
+      "holdout_both": 0.773467804499612
+    },
+    {
+      "seed": 16,
+      "holdout_mass": 0.8463925523661753,
+      "holdout_rest": 0.943366951124903,
+      "holdout_both": 0.7897595034910784
+    },
+    {
+      "seed": 17,
+      "holdout_mass": 0.8339798293250582,
+      "holdout_rest": 0.9557796741660202,
+      "holdout_both": 0.7897595034910784
+    },
+    {
+      "seed": 18,
+      "holdout_mass": 0.8502715283165244,
+      "holdout_rest": 0.9557796741660202,
+      "holdout_both": 0.8060512024825446
+    },
+    {
+      "seed": 19,
+      "holdout_mass": 0.8301008533747091,
+      "holdout_rest": 0.9332816136539953,
+      "holdout_both": 0.7633824670287044
+    }
+  ],
+  "vjepa_per_seed": [
+    {
+      "seed": 0,
+      "holdout_mass": 0.9425911559348332,
+      "holdout_rest": 0.95655546935609,
+      "holdout_both": 0.8991466252909232
+    },
+    {
+      "seed": 1,
+      "holdout_mass": 0.9255236617532971,
+      "holdout_rest": 0.9224204809930179,
+      "holdout_both": 0.847944142746315
+    },
+    {
+      "seed": 2,
+      "holdout_mass": 0.934833204034135,
+      "holdout_rest": 0.9379363847944143,
+      "holdout_both": 0.8727695888285493
+    },
+    {
+      "seed": 3,
+      "holdout_mass": 0.9177657098525989,
+      "holdout_rest": 0.9643134212567882,
+      "holdout_both": 0.8820791311093871
+    },
+    {
+      "seed": 4,
+      "holdout_mass": 0.9402637703646237,
+      "holdout_rest": 0.9410395655546936,
+      "holdout_both": 0.8813033359193173
+    },
+    {
+      "seed": 5,
+      "holdout_mass": 0.9231962761830876,
+      "holdout_rest": 0.9712955779674166,
+      "holdout_both": 0.8944918541505043
+    },
+    {
+      "seed": 6,
+      "holdout_mass": 0.9588828549262994,
+      "holdout_rest": 0.9332816136539953,
+      "holdout_both": 0.8921644685802949
+    },
+    {
+      "seed": 7,
+      "holdout_mass": 0.9596586501163693,
+      "holdout_rest": 0.943366951124903,
+      "holdout_both": 0.9030256012412723
+    },
+    {
+      "seed": 8,
+      "holdout_mass": 0.9441427463149729,
+      "holdout_rest": 0.943366951124903,
+      "holdout_both": 0.8875096974398758
+    },
+    {
+      "seed": 9,
+      "holdout_mass": 0.9363847944142746,
+      "holdout_rest": 0.9200930954228084,
+      "holdout_both": 0.8564778898370831
+    },
+    {
+      "seed": 10,
+      "holdout_mass": 0.9542280837858805,
+      "holdout_rest": 0.9247478665632273,
+      "holdout_both": 0.8789759503491078
+    },
+    {
+      "seed": 11,
+      "holdout_mass": 0.9371605896043445,
+      "holdout_rest": 0.9278510473235065,
+      "holdout_both": 0.8650116369278511
+    },
+    {
+      "seed": 12,
+      "holdout_mass": 0.9410395655546936,
+      "holdout_rest": 0.9356089992242048,
+      "holdout_both": 0.8766485647788984
+    },
+    {
+      "seed": 13,
+      "holdout_mass": 0.9332816136539953,
+      "holdout_rest": 0.9332816136539953,
+      "holdout_both": 0.8665632273079907
+    },
+    {
+      "seed": 14,
+      "holdout_mass": 0.921644685802948,
+      "holdout_rest": 0.9231962761830876,
+      "holdout_both": 0.8448409619860356
+    },
+    {
+      "seed": 15,
+      "holdout_mass": 0.9557796741660202,
+      "holdout_rest": 0.9262994569433669,
+      "holdout_both": 0.8820791311093871
+    },
+    {
+      "seed": 16,
+      "holdout_mass": 0.9612102404965089,
+      "holdout_rest": 0.9573312645461598,
+      "holdout_both": 0.9185415050426687
+    },
+    {
+      "seed": 17,
+      "holdout_mass": 0.9550038789759504,
+      "holdout_rest": 0.9177657098525989,
+      "holdout_both": 0.8727695888285493
+    },
+    {
+      "seed": 18,
+      "holdout_mass": 0.9658650116369278,
+      "holdout_rest": 0.948021722265322,
+      "holdout_both": 0.9138867339022498
+    },
+    {
+      "seed": 19,
+      "holdout_mass": 0.921644685802948,
+      "holdout_rest": 0.9503491078355314,
+      "holdout_both": 0.8719937936384794
+    }
+  ],
+  "summary": {
+    "dino_mean": 0.7870830100853374,
+    "dino_std": 0.014198270729884445,
+    "vjepa_mean": 0.880411171450737,
+    "vjepa_std": 0.0191768583768937,
+    "t_stat": 17.049144759583104,
+    "p_value": 2.1469688439868817e-19,
+    "cohens_d": 5.531472983927328
+  }
+}

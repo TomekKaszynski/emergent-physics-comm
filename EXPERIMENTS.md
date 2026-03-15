@@ -5751,3 +5751,69 @@ Statistical tests:
 - `results/phase79b_vjepa2_oracle_probe.json` — Oracle probe results
 - `results/phase79b_vjepa2_collision.json` — 2-agent communication results
 - `results/phase79b_vjepa2_4agent_collision.json` — 4-agent communication results
+
+---
+
+## Phase 80: V-JEPA 2 4-Agent on Ramp — Closing the Crossover Confound
+**Date:** Mar 15 | **Duration:** 2.3 hours
+
+### Goal
+Complete the 2×2 factorial comparison: {DINOv2, V-JEPA2} × {ramp, collision}. Phase 78 showed DINOv2 > V-JEPA2 on ramp (2-agent, temporally pooled features). Phase 79b showed V-JEPA2 > DINOv2 on collision (4-agent). But the comparison was confounded — ramp had no 4-agent V-JEPA2, and V-JEPA2 ramp used pooled (non-temporal) features. This phase fixes both: proper temporal V-JEPA2 features on ramp, with both 2-agent and 4-agent conditions.
+
+### Feature preparation
+`vjepa2_features_full.pt` (300, 2048, 1024) → reshape (300, 16, 128, 1024) → spatial mean pool → (300, 16, 1024). 16 temporal positions, 4 per agent. Saved as `vjepa2_ramp_temporal.pt`.
+
+### Config
+Same protocol as all prior phases: population IL (3 receivers, simultaneous reset/40), 400 comm epochs, Gumbel tau 3→1, entropy reg 0.03, gradient clipping 1.0. Oracle: 20 seeds × 200 epochs. 2-agent: 20 seeds, 2×5 vocab. 4-agent: 20 seeds, 4 agents × 4 temporal positions each, 4×2×5 vocab. Also: re-ran collision oracles with 20 seeds (previously only 5).
+
+### Results
+
+Full 2×2 controlled comparison:
+
+| Dataset | Backbone | Agents | Oracle | Holdout | PosDis | Comp% |
+|---|---|---|---|---|---|---|
+| Ramp | DINOv2 | 2 | ~90% | 76.7% ± 6.5% | 0.486 | 16/20 |
+| Ramp | DINOv2 | 4 | — | 98.3% ± 1.6% | 0.999 | 80/80 |
+| Ramp | V-JEPA2 | 2 | 86.5% | 74.8% ± 6.8% | 0.402 | 10/20 |
+| Ramp | V-JEPA2 | 4 | — | 95.1% ± 3.3% | 0.999 | 20/20 |
+| Collision | DINOv2 | 2 | 78.7% ± 1.4% | 73.4% ± 3.3% | 0.439 | 9/20 |
+| Collision | DINOv2 | 4 | — | 77.7% ± 3.9% | 0.904 | 20/20 |
+| Collision | V-JEPA2 | 2 | 88.0% ± 1.9% | 75.0% ± 3.0% | 0.456 | 10/20 |
+| Collision | V-JEPA2 | 4 | — | 87.4% ± 3.1% | 0.962 | 20/20 |
+
+Statistical tests (ramp):
+- 2-agent V-JEPA2 vs DINOv2: t=-0.88, p=0.384 (not significant)
+- **4-agent V-JEPA2 vs DINOv2: t=-3.58, p=0.001, d=-1.16** (DINOv2 advantage)
+- V-JEPA2 4-agent vs 2-agent: t=11.70, p<0.0001, d=3.80
+
+Statistical tests (collision):
+- **4-agent V-JEPA2 vs DINOv2: t=8.45, p<0.0001, d=2.74** (V-JEPA2 advantage)
+
+Collision oracles (20 seeds):
+- DINOv2: 78.7% ± 1.4%
+- V-JEPA2: 88.0% ± 1.9%
+- V-JEPA2 vs DINOv2: t=17.05, p<0.0001, d=5.53
+
+### Analysis
+**Clean crossover interaction confirmed:**
+
+1. **Ramp: DINOv2 wins.** DINOv2 4-agent achieves 98.3% vs V-JEPA2 95.1% (p=0.001, d=-1.16). Despite V-JEPA2 having higher feature dimensionality (1024 vs 384), DINOv2's per-frame CLS tokens are better suited for single-object ramp dynamics where the key signals (slide speed, bounce height) are spatially localized.
+
+2. **Collision: V-JEPA2 wins.** V-JEPA2 4-agent achieves 87.4% vs DINOv2 77.7% (p<0.0001, d=2.74). V-JEPA2's video-native features capture multi-body collision dynamics (momentum transfer, energy loss) that DINOv2 frame features miss.
+
+3. **2-agent: backbone doesn't matter.** On both datasets, 2-agent shows no significant backbone difference (ramp p=0.38, collision p=0.13). The 2×5 communication bottleneck is the binding constraint — feature quality can't help when the channel is too narrow.
+
+4. **4-agent unlocks backbone advantages.** The crossover only manifests with 4 agents. Temporal splitting gives enough communication bandwidth for the richer backbone to express its advantage.
+
+5. **Oracle predicts communication ceiling.** V-JEPA2 ramp oracle (86.5%) is lower than DINOv2 ramp oracle (~90%), and V-JEPA2 collision oracle (88.0%) is higher than DINOv2 collision oracle (78.7%). Communication accuracy tracks oracle quality.
+
+### Verdict
+**Domain-backbone matching matters, but only with sufficient communication bandwidth.** The take-home: (1) match backbone to task — DINOv2 for spatial/single-object, V-JEPA2 for temporal/multi-body; (2) 4-agent temporal splitting is necessary to realize backbone advantages; (3) 2-agent communication bottleneck neutralizes feature quality differences.
+
+### Files
+- `_phase80_vjepa2_ramp_4agent.py` — Full pipeline
+- `results/vjepa2_ramp_temporal.pt` — (300, 16, 1024) temporal V-JEPA2 features
+- `results/phase80_vjepa2_ramp_oracle.json` — Oracle probe (20 seeds)
+- `results/phase80_vjepa2_ramp_2agent.json` — 2-agent communication (20 seeds)
+- `results/phase80_vjepa2_ramp_4agent.json` — 4-agent communication (20 seeds)
+- `results/phase80_collision_oracles_20seed.json` — Collision oracles (20 seeds each)
