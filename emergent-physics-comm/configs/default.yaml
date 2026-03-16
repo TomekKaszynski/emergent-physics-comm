@@ -1,0 +1,45 @@
+# Default configuration for emergent communication experiments.
+# Override individual values via command-line args.
+
+# Model architecture
+hidden_dim: 128
+vocab_size: 5
+n_heads: 2
+
+# Multi-agent
+n_agents: 4          # Number of sender agents (set to 1 for 2-agent baseline)
+
+# Training
+batch_size: 32
+oracle_epochs: 200
+comm_epochs: 400
+oracle_lr: 1.0e-3
+sender_lr: 1.0e-3
+receiver_lr: 3.0e-3
+
+# Gumbel-Softmax schedule
+tau_start: 3.0
+tau_end: 1.0
+soft_warmup: 30      # Epochs before hard=True
+
+# Entropy regularization
+entropy_threshold: 0.1
+entropy_coef: 0.03
+
+# Population iterated learning
+n_receivers: 3
+receiver_reset_interval: 40
+
+# Evaluation
+n_seeds: 20
+compositionality_threshold: 0.4  # PosDis threshold for "compositional"
+
+# Dataset
+# Ramp: 300 scenes, 8 frames (DINOv2 384-dim), 5x5 grid (elasticity x friction)
+# Collision: 600 scenes, 24 frames (384 or 1024-dim), 5x5 grid (mass_ratio x restitution)
+holdout_cells:
+  - [0, 1]
+  - [1, 3]
+  - [2, 0]
+  - [3, 4]
+  - [4, 2]
