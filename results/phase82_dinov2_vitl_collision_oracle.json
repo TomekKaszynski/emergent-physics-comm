@@ -1,0 +1,194 @@
+{
+  "config": {
+    "model": "dinov2_vitl14",
+    "input_dim": 1024,
+    "epochs": 200,
+    "n_seeds": 20
+  },
+  "per_seed": [
+    {
+      "seed": 0,
+      "holdout_e": 0.8796875,
+      "holdout_f": 0.909375,
+      "holdout_both": 0.7921875,
+      "train_e": 0.9609375,
+      "train_f": 0.9328125,
+      "train_both": 0.8984375
+    },
+    {
+      "seed": 1,
+      "holdout_e": 0.8875,
+      "holdout_f": 0.940625,
+      "holdout_both": 0.8296875,
+      "train_e": 0.9328125,
+      "train_f": 0.9578125,
+      "train_both": 0.8921875
+    },
+    {
+      "seed": 2,
+      "holdout_e": 0.8609375,
+      "holdout_f": 0.9171875,
+      "holdout_both": 0.7796875,
+      "train_e": 0.925,
+      "train_f": 0.9421875,
+      "train_both": 0.871875
+    },
+    {
+      "seed": 3,
+      "holdout_e": 0.859375,
+      "holdout_f": 0.9171875,
+      "holdout_both": 0.7765625,
+      "train_e": 0.953125,
+      "train_f": 0.953125,
+      "train_both": 0.9078125
+    },
+    {
+      "seed": 4,
+      "holdout_e": 0.89375,
+      "holdout_f": 0.903125,
+      "holdout_both": 0.803125,
+      "train_e": 0.940625,
+      "train_f": 0.91875,
+      "train_both": 0.8640625
+    },
+    {
+      "seed": 5,
+      "holdout_e": 0.85,
+      "holdout_f": 0.921875,
+      "holdout_both": 0.7765625,
+      "train_e": 0.9265625,
+      "train_f": 0.9640625,
+      "train_both": 0.8921875
+    },
+    {
+      "seed": 6,
+      "holdout_e": 0.8546875,
+      "holdout_f": 0.9375,
+      "holdout_both": 0.7921875,
+      "train_e": 0.94375,
+      "train_f": 0.9578125,
+      "train_both": 0.90625
+    },
+    {
+      "seed": 7,
+      "holdout_e": 0.8453125,
+      "holdout_f": 0.934375,
+      "holdout_both": 0.784375,
+      "train_e": 0.9375,
+      "train_f": 0.965625,
+      "train_both": 0.909375
+    },
+    {
+      "seed": 8,
+      "holdout_e": 0.8765625,
+      "holdout_f": 0.91875,
+      "holdout_both": 0.796875,
+      "train_e": 0.934375,
+      "train_f": 0.9546875,
+      "train_both": 0.8921875
+    },
+    {
+      "seed": 9,
+      "holdout_e": 0.853125,
+      "holdout_f": 0.8796875,
+      "holdout_both": 0.7390625,
+      "train_e": 0.9,
+      "train_f": 0.9171875,
+      "train_both": 0.8328125
+    },
+    {
+      "seed": 10,
+      "holdout_e": 0.8578125,
+      "holdout_f": 0.9296875,
+      "holdout_both": 0.7921875,
+      "train_e": 0.934375,
+      "train_f": 0.9421875,
+      "train_both": 0.8796875
+    },
+    {
+      "seed": 11,
+      "holdout_e": 0.740625,
+      "holdout_f": 0.9234375,
+      "holdout_both": 0.6703125,
+      "train_e": 0.859375,
+      "train_f": 0.9640625,
+      "train_both": 0.828125
+    },
+    {
+      "seed": 12,
+      "holdout_e": 0.85,
+      "holdout_f": 0.9234375,
+      "holdout_both": 0.778125,
+      "train_e": 0.9359375,
+      "train_f": 0.95625,
+      "train_both": 0.8984375
+    },
+    {
+      "seed": 13,
+      "holdout_e": 0.85,
+      "holdout_f": 0.9125,
+      "holdout_both": 0.7640625,
+      "train_e": 0.9390625,
+      "train_f": 0.9203125,
+      "train_both": 0.8609375
+    },
+    {
+      "seed": 14,
+      "holdout_e": 0.821875,
+      "holdout_f": 0.8921875,
+      "holdout_both": 0.7140625,
+      "train_e": 0.9109375,
+      "train_f": 0.9078125,
+      "train_both": 0.8328125
+    },
+    {
+      "seed": 15,
+      "holdout_e": 0.7609375,
+      "holdout_f": 0.88125,
+      "holdout_both": 0.646875,
+      "train_e": 0.8578125,
+      "train_f": 0.9265625,
+      "train_both": 0.7921875
+    },
+    {
+      "seed": 16,
+      "holdout_e": 0.890625,
+      "holdout_f": 0.9109375,
+      "holdout_both": 0.8078125,
+      "train_e": 0.9328125,
+      "train_f": 0.9140625,
+      "train_both": 0.8546875
+    },
+    {
+      "seed": 17,
+      "holdout_e": 0.8359375,
+      "holdout_f": 0.9265625,
+      "holdout_both": 0.76875,
+      "train_e": 0.91875,
+      "train_f": 0.9421875,
+      "train_both": 0.86875
+    },
+    {
+      "seed": 18,
+      "holdout_e": 0.8796875,
+      "holdout_f": 0.9421875,
+      "holdout_both": 0.821875,
+      "train_e": 0.95625,
+      "train_f": 0.95625,
+      "train_both": 0.9125
+    },
+    {
+      "seed": 19,
+      "holdout_e": 0.8859375,
+      "holdout_f": 0.9421875,
+      "holdout_both": 0.8296875,
+      "train_e": 0.93125,
+      "train_f": 0.946875,
+      "train_both": 0.8828125
+    }
+  ],
+  "summary": {
+    "holdout_both_mean": 0.773203125,
+    "holdout_both_std": 0.04690955757409012
+  }
+}
