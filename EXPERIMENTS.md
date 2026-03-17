@@ -5925,3 +5925,54 @@ Full 24-frame input, 2×5 vocab, same IL recipe.
 - `results/phase82_dinov2_vitl_collision_oracle.json` — Oracle probe (20 seeds)
 - `results/phase82_dinov2_vitl_collision_4agent.json` — 4-agent communication (20 seeds)
 - `results/phase82_dinov2_vitl_collision_2agent.json` — 2-agent communication (20 seeds)
+
+---
+
+## Phase 83: Outcome Prediction from Frozen Messages
+**Date:** Mar 16 | **Duration:** ~12 min
+
+### Goal
+Show frozen V-JEPA 2 messages predict collision outcomes better than frozen DINOv2 messages, and comparably to raw V-JEPA 2 features. This demonstrates that emergent messages carry meaningful physics information, not just compositional structure.
+
+### Setup
+1. **Outcome label:** Sphere B post-collision speed > median (perfectly balanced: 300/300)
+2. **Frozen senders:** Trained one V-JEPA 2 and one DINOv2 4-agent sender (seed 0, 400 epochs, same Phase 79 architecture), then froze and extracted discrete messages for all 600 scenes
+3. **Three conditions** (20 seeds each, 100 epochs):
+   - V-JEPA 2 frozen messages (40-dim one-hot) → MLP(40→64→1)
+   - DINOv2 frozen messages (40-dim one-hot) → MLP(40→64→1)
+   - Raw V-JEPA 2 features (1024-dim mean-pooled) → MLP(1024→64→1)
+4. Same Latin square holdout (480 train, 120 test)
+
+### Results
+
+| Condition | Holdout Accuracy | Std |
+|---|---|---|
+| V-JEPA 2 messages | **88.7%** | 0.5% |
+| DINOv2 messages | 78.5% | 1.3% |
+| V-JEPA 2 raw features | 94.6% | 0.7% |
+
+### Statistical Tests
+- **V-JEPA 2 vs DINOv2 messages:** t=32.36, p<0.0001, Cohen's d=10.50
+  → V-JEPA 2 messages carry dramatically more physics information
+- **V-JEPA 2 messages vs raw features:** t=−29.89, p<0.0001, Cohen's d=−9.70
+  → Messages retain most information (88.7% vs 94.6%), only 6pp below raw features despite 25× compression (40 vs 1024 dims)
+
+### Sender Properties
+- V-JEPA 2 sender PosDis: 0.737 (compositional)
+- DINOv2 sender PosDis: 0.669 (compositional)
+
+### Self-Correction
+No corrections needed — all checks passed:
+- V-JEPA 2 messages > 60% ✓
+- Gap between backbones > 3pp (10.2pp) ✓
+- Messages don't beat raw features ✓
+
+### Key Findings
+1. **Messages as physics summaries.** V-JEPA 2 messages (40 binary dims) achieve 88.7% on outcome prediction, retaining 94% of raw feature performance despite 25× compression.
+2. **Backbone gap preserved in messages.** The 10.2pp gap between V-JEPA 2 and DINOv2 messages (88.7% vs 78.5%, d=10.50) mirrors the communication accuracy gap from Phase 79 (87.4% vs 77.7%).
+3. **Compositionality enables transfer.** Messages trained for *comparison* (which scene has higher mass/restitution) transfer to *outcome prediction* (how fast does sphere B go), suggesting genuinely physics-meaningful representations.
+
+### Files
+- `_phase83_outcome_prediction.py` — Full self-correcting pipeline
+- `results/phase83_outcome_prediction.json` — All results with t-tests
+- `results/phase83_collision_outcomes.json` — Outcome labels
