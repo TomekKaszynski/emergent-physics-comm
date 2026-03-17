@@ -6040,3 +6040,42 @@ Key findings:
 3. **Extreme velocities are harder** — ×0.5 and ×1.5 near chance due to class imbalance (67/600 and 499/600 positive)
 4. **Raw features still dominate** (79.9%) — messages lose some information in compression
 - Files: `results/phase84d_action_conditioned.json`
+
+---
+
+## Phase 85: Real-Video Transfer — CoPhy CollisionCF
+**Date:** Mar 17 | **Duration:** ~15 min (+ 5 min download)
+
+### Goal
+Zero-shot transfer: frozen 4-agent V-JEPA 2 sender (trained on synthetic Kubric collisions) applied to real CoPhy CollisionCF collision videos.
+
+### Setup
+- Downloaded CoPhy 224×224 dataset (18.3GB) from Zenodo, extracted collisionCF (20,000 trials)
+- Subsampled 500 trials for computational feasibility
+- Extracted V-JEPA 2 features: 16 frames → 8 temporal positions, interpolated to 24 for sender compatibility
+- CoPhy has 4 objects per scene (vs our 2), confounders: mass ∈ {0,1,2,5}, friction ∈ {0,0.1,0.5,1}, restitution ∈ {0,0.1,0.5,1}
+
+### Result: NEGATIVE (with caveats)
+
+**Messages are largely collapsed:**
+- Positions 0-5: near-constant (99-100% same symbol)
+- Position 6: 64.4% max freq (some variation)
+- Position 7: 77.2% max freq (some variation)
+- Average max frequency: 92.5% — exceeds 80% collapse threshold
+
+**But residual information persists:**
+- 3 significant symbol-property correlations (p_perm < 0.05): pos2-friction, pos6-friction, pos6-restitution
+- Outcome prediction from frozen messages: **67.6% ± 1.1%** (chance 50%) — messages carry some physics
+- TopSim: 0.014 (vs 0.738 synthetic) — compositional structure does not transfer
+- Clustering AMI: near zero for all properties
+
+### Interpretation
+The sender-property mapping is distribution-specific. When applied to visually different CoPhy scenes (different objects, textures, camera), most message positions collapse to constant symbols. However, the V-JEPA 2 backbone provides enough shared representation that 2 of 8 positions retain variable output, and these weakly correlate with friction/restitution. The 67.6% outcome prediction confirms that even collapsed messages carry some physics information through the residual positions.
+
+### For the Paper
+Not strong enough for a main result. Include as one sentence in future work: "Zero-shot transfer from synthetic to real collision video (CoPhy) produces partially collapsed but non-trivial messages (67.6% outcome prediction vs 50% chance), suggesting that adapting the communication protocol across visual domains is a promising direction."
+
+### Files
+- `_phase85_cophy_transfer.py` — Full pipeline
+- `results/phase85_cophy_transfer.json` — All results
+- `results/phase85_cophy_vjepa2_features.pt` — Cached CoPhy V-JEPA 2 features

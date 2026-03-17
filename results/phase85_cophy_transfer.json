@@ -1,0 +1,331 @@
+{
+  "n_scenes": 500,
+  "feature_shape": [
+    500,
+    8,
+    1024
+  ],
+  "symbol_frequencies": {
+    "position_0": [
+      0,
+      0,
+      0,
+      0,
+      500
+    ],
+    "position_1": [
+      0,
+      0,
+      0,
+      500,
+      0
+    ],
+    "position_2": [
+      0,
+      0,
+      498,
+      1,
+      1
+    ],
+    "position_3": [
+      495,
+      4,
+      0,
+      0,
+      1
+    ],
+    "position_4": [
+      0,
+      0,
+      0,
+      0,
+      500
+    ],
+    "position_5": [
+      0,
+      0,
+      0,
+      500,
+      0
+    ],
+    "position_6": [
+      322,
+      18,
+      123,
+      34,
+      3
+    ],
+    "position_7": [
+      58,
+      386,
+      0,
+      39,
+      17
+    ]
+  },
+  "spearman_correlations": {
+    "pos2_obj0_mass": {
+      "rho": 0.018136398046951534,
+      "p_spearman": 0.6858006410799333,
+      "p_permutation": 0.698
+    },
+    "pos2_obj0_friction": {
+      "rho": 0.018136653965936722,
+      "p_spearman": 0.6857964434360684,
+      "p_permutation": 0.705
+    },
+    "pos2_obj0_restitution": {
+      "rho": -0.022372584840518597,
+      "p_spearman": 0.6177254434219657,
+      "p_permutation": 0.659
+    },
+    "pos2_obj1_mass": {
+      "rho": 0.031272265095323604,
+      "p_spearman": 0.4853713505696652,
+      "p_permutation": 0.43
+    },
+    "pos2_obj1_friction": {
+      "rho": 0.0959067134131414,
+      "p_spearman": 0.032023565419140164,
+      "p_permutation": 0.026
+    },
+    "pos2_obj1_restitution": {
+      "rho": 0.05482115304955363,
+      "p_spearman": 0.2210690086802199,
+      "p_permutation": 0.319
+    },
+    "pos2_obj2_mass": {
+      "rho": -0.05762443304081819,
+      "p_spearman": 0.19831551127280628,
+      "p_permutation": 0.414
+    },
+    "pos2_obj2_friction": {
+      "rho": -0.05764322247900465,
+      "p_spearman": 0.1981689916730082,
+      "p_permutation": 0.402
+    },
+    "pos2_obj2_restitution": {
+      "rho": -0.05762569410244284,
+      "p_spearman": 0.19830567507173985,
+      "p_permutation": 0.402
+    },
+    "pos2_obj3_mass": {
+      "rho": 0.004679618752624232,
+      "p_spearman": 0.9168692793207024,
+      "p_permutation": 1.0
+    },
+    "pos2_obj3_friction": {
+      "rho": -0.015084964689477075,
+      "p_spearman": 0.7365051877239676,
+      "p_permutation": 0.77
+    },
+    "pos2_obj3_restitution": {
+      "rho": -0.016166744536313272,
+      "p_spearman": 0.7183848995398224,
+      "p_permutation": 0.776
+    },
+    "pos3_obj0_mass": {
+      "rho": 0.014813912598127253,
+      "p_spearman": 0.7410688727544129,
+      "p_permutation": 0.698
+    },
+    "pos3_obj0_friction": {
+      "rho": 0.02783322465545602,
+      "p_spearman": 0.5346440951588138,
+      "p_permutation": 0.51
+    },
+    "pos3_obj0_restitution": {
+      "rho": 0.016793378477124813,
+      "p_spearman": 0.7079595234299156,
+      "p_permutation": 0.741
+    },
+    "pos3_obj1_mass": {
+      "rho": -0.01590771273234734,
+      "p_spearman": 0.7227098861475078,
+      "p_permutation": 0.739
+    },
+    "pos3_obj1_friction": {
+      "rho": 0.051988726968007486,
+      "p_spearman": 0.24589473860529634,
+      "p_permutation": 0.218
+    },
+    "pos3_obj1_restitution": {
+      "rho": -0.0003599967743772492,
+      "p_spearman": 0.9935933548449558,
+      "p_permutation": 1.0
+    },
+    "pos3_obj2_mass": {
+      "rho": 0.008560804819390316,
+      "p_spearman": 0.8485649236649357,
+      "p_permutation": 0.899
+    },
+    "pos3_obj2_friction": {
+      "rho": -0.015866089035406254,
+      "p_spearman": 0.7234056948513735,
+      "p_permutation": 0.714
+    },
+    "pos3_obj2_restitution": {
+      "rho": -0.015936641748110672,
+      "p_spearman": 0.7222264245485388,
+      "p_permutation": 0.717
+    },
+    "pos3_obj3_mass": {
+      "rho": 5.055766697455404e-05,
+      "p_spearman": 0.9991002462885363,
+      "p_permutation": 1.0
+    },
+    "pos3_obj3_friction": {
+      "rho": -0.0368792858126691,
+      "p_spearman": 0.41058655522236986,
+      "p_permutation": 0.417
+    },
+    "pos3_obj3_restitution": {
+      "rho": -0.014542353821884785,
+      "p_spearman": 0.7456502143501096,
+      "p_permutation": 0.735
+    },
+    "pos6_obj0_mass": {
+      "rho": 0.02731418088509603,
+      "p_spearman": 0.5422933464085871,
+      "p_permutation": 0.537
+    },
+    "pos6_obj0_friction": {
+      "rho": -0.012816217640174564,
+      "p_spearman": 0.774974776496464,
+      "p_permutation": 0.779
+    },
+    "pos6_obj0_restitution": {
+      "rho": 0.015248365727623356,
+      "p_spearman": 0.7337584744996809,
+      "p_permutation": 0.726
+    },
+    "pos6_obj1_mass": {
+      "rho": 0.007684438483750405,
+      "p_spearman": 0.8639078939414622,
+      "p_permutation": 0.834
+    },
+    "pos6_obj1_friction": {
+      "rho": -0.005598201965378648,
+      "p_spearman": 0.9006286300243949,
+      "p_permutation": 0.878
+    },
+    "pos6_obj1_restitution": {
+      "rho": -0.0020799608682489424,
+      "p_spearman": 0.9629970302309574,
+      "p_permutation": 0.961
+    },
+    "pos6_obj2_mass": {
+      "rho": -0.04637775392857678,
+      "p_spearman": 0.3006691408372761,
+      "p_permutation": 0.274
+    },
+    "pos6_obj2_friction": {
+      "rho": -0.08824564823149195,
+      "p_spearman": 0.04859331516452873,
+      "p_permutation": 0.046
+    },
+    "pos6_obj2_restitution": {
+      "rho": -0.1061062963288396,
+      "p_spearman": 0.01762640903490763,
+      "p_permutation": 0.015
+    },
+    "pos6_obj3_mass": {
+      "rho": 0.05764586109819137,
+      "p_spearman": 0.19814842210486916,
+      "p_permutation": 0.193
+    },
+    "pos6_obj3_friction": {
+      "rho": 0.012607039817883862,
+      "p_spearman": 0.7785511841158878,
+      "p_permutation": 0.788
+    },
+    "pos6_obj3_restitution": {
+      "rho": 0.051686250382685824,
+      "p_spearman": 0.24865672981655815,
+      "p_permutation": 0.244
+    },
+    "pos7_obj0_mass": {
+      "rho": -0.05090592512360953,
+      "p_spearman": 0.25588172404013054,
+      "p_permutation": 0.252
+    },
+    "pos7_obj0_friction": {
+      "rho": -0.04892011775318985,
+      "p_spearman": 0.2749196982984514,
+      "p_permutation": 0.256
+    },
+    "pos7_obj0_restitution": {
+      "rho": -0.07273442488951237,
+      "p_spearman": 0.10427496425072644,
+      "p_permutation": 0.102
+    },
+    "pos7_obj1_mass": {
+      "rho": 0.03505182792858763,
+      "p_spearman": 0.43417853277379126,
+      "p_permutation": 0.42
+    },
+    "pos7_obj1_friction": {
+      "rho": 0.029486160751142798,
+      "p_spearman": 0.5106516059985504,
+      "p_permutation": 0.5
+    },
+    "pos7_obj1_restitution": {
+      "rho": -0.008936795754807493,
+      "p_spearman": 0.8419994109503656,
+      "p_permutation": 0.854
+    },
+    "pos7_obj2_mass": {
+      "rho": -0.027368404898942073,
+      "p_spearman": 0.5414916983358751,
+      "p_permutation": 0.533
+    },
+    "pos7_obj2_friction": {
+      "rho": -0.033991157095827715,
+      "p_spearman": 0.4482222138160784,
+      "p_permutation": 0.437
+    },
+    "pos7_obj2_restitution": {
+      "rho": -0.023801334630529733,
+      "p_spearman": 0.595448455249325,
+      "p_permutation": 0.591
+    },
+    "pos7_obj3_mass": {
+      "rho": 0.059643583312782154,
+      "p_spearman": 0.18301841302120322,
+      "p_permutation": 0.177
+    },
+    "pos7_obj3_friction": {
+      "rho": 0.057259624203439774,
+      "p_spearman": 0.2011759532409581,
+      "p_permutation": 0.206
+    },
+    "pos7_obj3_restitution": {
+      "rho": 0.06646038843393433,
+      "p_spearman": 0.1378033366715557,
+      "p_permutation": 0.133
+    }
+  },
+  "n_significant_correlations": 3,
+  "clustering_ami": {
+    "obj0_mass": -0.0031784980520281197,
+    "obj0_friction": 0.004449909668199753,
+    "obj0_restitution": -0.0020410426135213477,
+    "obj1_mass": -0.00020262405354859068,
+    "obj1_friction": -0.00208629673729101,
+    "obj1_restitution": -0.002053399272491775,
+    "obj2_mass": -0.0010092035129852402,
+    "obj2_friction": 0.005998187346315105,
+    "obj2_restitution": 0.0018213224649459504,
+    "obj3_mass": 0.0006932172290188061,
+    "obj3_friction": 0.009018194929188433,
+    "obj3_restitution": 0.0007314064194152615
+  },
+  "outcome_prediction": {
+    "mean": 0.675500002503395,
+    "std": 0.010712153710034197
+  },
+  "topsim": 0.014039339057724105,
+  "transfer_result": "negative",
+  "summary": "Frozen sender produces degenerate messages on CoPhy \u2014 distribution-specific mapping",
+  "collapsed": true
+}
