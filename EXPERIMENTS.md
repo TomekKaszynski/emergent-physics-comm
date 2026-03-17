@@ -5976,3 +5976,67 @@ No corrections needed — all checks passed:
 - `_phase83_outcome_prediction.py` — Full self-correcting pipeline
 - `results/phase83_outcome_prediction.json` — All results with t-tests
 - `results/phase83_collision_outcomes.json` — Outcome labels
+
+---
+
+## Phase 84a: Complementary Compositionality Metrics
+**Date:** Mar 16 | **Duration:** <1 min (computed from existing JSONs)
+
+TopSim, BosDis, and conflict scores for all conditions. Key findings:
+- **80-seed 4-agent ramp:** TopSim=0.792, PosDis=0.999, BosDis=0.993 — all near ceiling
+- **2-agent ramp correlations (60 seeds):** TopSim-PosDis r=0.669 (p<0.0001), TopSim-Holdout r=0.399 (p=0.002)
+- **Compositional vs holistic:** TopSim 0.641 vs 0.538 (d=1.17, p=0.0002)
+- **V-JEPA 2 collision:** TopSim=0.737, BosDis=0.864 vs DINOv2-S: 0.596, 0.787
+- Files: `results/phase84a_complementary_metrics.json`
+
+---
+
+## Phase 84b: Linear Probe Comparison
+**Date:** Mar 16 | **Duration:** 7 min
+
+| Method | Comparison | Outcome |
+|---|---|---|
+| Linear Probe (1024→1) | 92.6% ± 1.5% | 95.2% ± 0.5% |
+| MLP Probe (1024→128→1) | 93.6% ± 1.3% | 94.4% ± 0.6% |
+| V-JEPA 2 Messages (40-dim) | ~87.4% | 88.7% |
+
+Probes achieve higher raw accuracy but lack compositional structure, cannot be selectively ablated, and don't provide interpretable encoding.
+- Files: `results/phase84b_linear_probe.json`
+
+---
+
+## Phase 84c: Discrete vs Continuous Communication
+**Date:** Mar 16 | **Duration:** 189 min
+
+| Metric | Discrete | Continuous |
+|---|---|---|
+| Comparison holdout | 89.8% ± 2.7% | 82.4% ± 19.9% |
+| Outcome prediction | 89.3% ± 3.9% | 86.2% ± 10.3% |
+| Seeds collapsed (≤50%) | 0/20 | 5/20 |
+| Ablation selectivity | 0.807 ± 0.135 | 0.722 ± 0.177 |
+
+Key findings:
+1. **Discrete is more stable.** 0/20 discrete seeds collapse vs 5/20 continuous (25% failure rate)
+2. **Discrete ablation is selective.** Block-zeroing disrupts one property preferentially (selectivity 0.807 vs 0.722 for continuous)
+3. **Continuous ablation is uniform.** Zeroing a block drops both properties together (e.g., seed 0: block 3 drops mass 47%, rest 46%)
+- Files: `results/phase84c_discrete_vs_continuous.json`
+
+---
+
+## Phase 84d: Action-Conditioned Generalization
+**Date:** Mar 16 | **Duration:** 65 min
+
+Leave-one-velocity-out cross-validation using analytical collision outcomes at 5 velocity levels (×0.5, ×0.75, ×1.0, ×1.25, ×1.5).
+
+| Condition | ×0.5 | ×0.75 | ×1.0 | ×1.25 | ×1.5 | Overall |
+|---|---|---|---|---|---|---|
+| V-JEPA 2 msgs | 59.1% | 83.2% | 87.0% | 73.2% | 57.0% | 71.9% |
+| DINOv2 msgs | 59.0% | 81.7% | 91.3% | 75.6% | 56.9% | 72.9% |
+| V-JEPA 2 raw | 62.3% | 90.2% | 94.3% | 84.2% | 68.4% | 79.9% |
+
+Key findings:
+1. **Messages generalize to novel velocities.** Both V-JEPA 2 (71.9%) and DINOv2 (72.9%) messages well above chance across velocity conditions
+2. **No V-JEPA 2 vs DINOv2 gap** in this task (p=0.59) — both backbones encode material properties similarly when combined with velocity
+3. **Extreme velocities are harder** — ×0.5 and ×1.5 near chance due to class imbalance (67/600 and 499/600 positive)
+4. **Raw features still dominate** (79.9%) — messages lose some information in compression
+- Files: `results/phase84d_action_conditioned.json`
