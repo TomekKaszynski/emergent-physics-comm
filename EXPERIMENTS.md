@@ -6079,3 +6079,55 @@ Not strong enough for a main result. Include as one sentence in future work: "Ze
 - `_phase85_cophy_transfer.py` — Full pipeline
 - `results/phase85_cophy_transfer.json` — All results
 - `results/phase85_cophy_vjepa2_features.pt` — Cached CoPhy V-JEPA 2 features
+
+---
+
+## Phase 86a: Counterfactual Slot-Swap
+**Date:** Mar 17 | **Duration:** 3 min
+
+### Goal
+Test if message positions are causal modular variables by swapping mass vs restitution slots between scenes and checking downstream predictions.
+
+### Result: NEGATIVE
+- Counterfactual accuracy: **42.2%** (below 50% chance)
+- Slot swapping does not produce valid counterfactual predictions
+- The outcome predictor was trained on correlations between message patterns and outcomes, not on independent causal slots — swapping disrupts these correlations
+
+### Interpretation
+The compositional structure (PosDis) measures statistical independence of slot-attribute mappings, not causal modularity. A predictor trained on original messages learns holistic message-outcome associations that break under slot manipulation. This is a known limitation of emergent communication — compositionality ≠ causal disentanglement.
+
+### Files
+- `results/phase86a_counterfactual_swap.json`
+
+---
+
+## Phase 86b: Train Communication on CoPhy Real Video
+**Date:** Mar 17 | **Duration:** 18 min
+
+### Goal
+Train multi-agent communication from scratch on CoPhy CollisionCF real collision videos. If compositionality emerges on real video, it transforms the paper.
+
+### Setup
+- 500 CoPhy trials → 259 with active objects (mass > 0)
+- V-JEPA 2 features: (259, 8, 1024) — 8 temporal positions
+- 4 agents × 2 temporal positions each
+- 3×3 grid: mass ∈ {1,2,5} × restitution ∈ {0.1,0.5,1}
+- Diagonal holdout: cells (0,0), (1,1), (2,2)
+- 10 seeds, 400 epochs each
+
+### Result: NEGATIVE
+- Holdout accuracy: **51.6% ± 0.0%** (chance level for all 10 seeds)
+- PosDis: 0.024 ± 0.041 (no compositionality)
+- TopSim: 0.003 ± 0.011 (no structure)
+- Compositional seeds: 0/10
+
+### Why it failed
+1. **Too few scenes.** 259 active scenes in 3×3 grid = ~29 per cell, with 181 for training. Our synthetic pipeline uses 600 scenes (480 train).
+2. **Too few temporal positions.** 8 positions (2 per agent) vs 24 in synthetic. Conv1d with kernel=2 on 2-frame input is barely temporal processing.
+3. **CoPhy's 4-object scenes** are more complex than our 2-sphere synthetic setup — visual noise from additional objects.
+
+### Path Forward
+Need 2000+ CoPhy scenes with V-JEPA 2 extraction at 48 frames (24 temporal positions), which requires ~2 hours on MPS. This was blocked by compute limits in this session.
+
+### Files
+- `results/phase86b_cophy_training.json`
