@@ -1,0 +1,166 @@
+{
+  "ramp_4agent_dinov2_80": {
+    "name": "4-Agent DINOv2 Ramp (80 seeds)",
+    "n_seeds": 80,
+    "topsim_mean": 0.7918387981841194,
+    "topsim_std": 0.02486240168051261,
+    "posdis_mean": 0.9989476630733783,
+    "posdis_std": 0.0019263441575550924,
+    "bosdis_mean": 0.9927476965464287,
+    "bosdis_std": 0.012732393605820968,
+    "conflict_mean": 0.00864018164946552,
+    "conflict_std": 0.022333078022993204,
+    "holdout_mean": 0.9832945736434109,
+    "holdout_std": 0.016140002152757488
+  },
+  "ramp_2agent_dinov2_20": {
+    "name": "2-Agent DINOv2 Ramp (20 seeds)",
+    "n_seeds": 20,
+    "topsim_mean": 0.655133551980424,
+    "topsim_std": 0.03356957242743595,
+    "posdis_mean": 0.4861115706695456,
+    "posdis_std": 0.1927468041769617,
+    "bosdis_mean": 0.6746004301623756,
+    "bosdis_std": 0.08817942048395776,
+    "conflict_mean": 0.5138884293304544,
+    "conflict_std": 0.19274680417696172,
+    "holdout_mean": 0.7666279069767443,
+    "holdout_std": 0.06453667618620185
+  },
+  "collision_4agent_dinov2_vits": {
+    "name": "4-Agent DINOv2 ViT-S Collision (20 seeds)",
+    "n_seeds": 20,
+    "topsim_mean": 0.5960632238777385,
+    "topsim_std": 0.0738309415152547,
+    "posdis_mean": 0.9043854113157954,
+    "posdis_std": 0.07880578900810786,
+    "bosdis_mean": 0.7867171432840503,
+    "bosdis_std": 0.03852746516572655,
+    "conflict_mean": 0.3130774689376514,
+    "conflict_std": 0.07082737970963253,
+    "holdout_mean": 0.7773079906904576,
+    "holdout_std": 0.03875287229809928
+  },
+  "collision_2agent_dinov2_vits": {
+    "name": "2-Agent DINOv2 ViT-S Collision (20 seeds)",
+    "n_seeds": 20,
+    "topsim_mean": 0.6363997393479807,
+    "topsim_std": 0.03688414726130393,
+    "posdis_mean": 0.4385861143923598,
+    "posdis_std": 0.23649530055211387,
+    "bosdis_mean": 0.6611223329103354,
+    "bosdis_std": 0.11542875836736044,
+    "conflict_mean": 0.5614138856076403,
+    "conflict_std": 0.23649530055211385,
+    "holdout_mean": 0.7339798293250583,
+    "holdout_std": 0.03293878742424808
+  },
+  "collision_4agent_vjepa2": {
+    "name": "4-Agent V-JEPA 2 Collision (20 seeds)",
+    "n_seeds": 20,
+    "topsim_mean": 0.7374124322741225,
+    "topsim_std": 0.04114241573691911,
+    "posdis_mean": 0.962345346170341,
+    "posdis_std": 0.032798846274962636,
+    "bosdis_mean": 0.8643480595776121,
+    "bosdis_std": 0.06715443970748919,
+    "conflict_mean": 0.19373753752263093,
+    "conflict_std": 0.11245139413965066,
+    "holdout_mean": 0.8735841737781227,
+    "holdout_std": 0.031056502005256417
+  },
+  "collision_2agent_vjepa2": {
+    "name": "2-Agent V-JEPA 2 Collision (20 seeds)",
+    "n_seeds": 20,
+    "topsim_mean": 0.6632884956677291,
+    "topsim_std": 0.04197556077582294,
+    "posdis_mean": 0.45590625294843806,
+    "posdis_std": 0.22510560203260102,
+    "bosdis_mean": 0.6677807816329813,
+    "bosdis_std": 0.10834060374562197,
+    "conflict_mean": 0.5440937470515619,
+    "conflict_std": 0.22510560203260102,
+    "holdout_mean": 0.7497284716834756,
+    "holdout_std": 0.030436888478721898
+  },
+  "collision_4agent_dinov2_vitl": {
+    "name": "4-Agent DINOv2 ViT-L Collision (20 seeds)",
+    "n_seeds": 20,
+    "topsim_mean": 0.635597210410414,
+    "topsim_std": 0.02828211667658115,
+    "posdis_mean": null,
+    "posdis_std": null,
+    "bosdis_mean": null,
+    "bosdis_std": null,
+    "conflict_mean": null,
+    "conflict_std": null,
+    "holdout_mean": 0.7464062499999999,
+    "holdout_std": 0.04336634234561983
+  },
+  "collision_2agent_dinov2_vitl": {
+    "name": "2-Agent DINOv2 ViT-L Collision (20 seeds)",
+    "n_seeds": 20,
+    "topsim_mean": 0.5901209559442755,
+    "topsim_std": 0.1387744804761418,
+    "posdis_mean": 0.4822555789694863,
+    "posdis_std": 0.233638735175182,
+    "bosdis_mean": null,
+    "bosdis_std": null,
+    "conflict_mean": null,
+    "conflict_std": null,
+    "holdout_mean": 0.7120312500000001,
+    "holdout_std": 0.07756848662432121
+  },
+  "correlations_80seed_4agent": {
+    "topsim_posdis": {
+      "r": 0.0452494014277431,
+      "p": 0.690219311367517
+    },
+    "topsim_holdout": {
+      "r": 0.0002902832377704931,
+      "p": 0.997961001405561
+    },
+    "posdis_holdout": {
+      "r": 0.06456102369791494,
+      "p": 0.5693851819839013
+    },
+    "bosdis_holdout": {
+      "r": 0.07889381516855246,
+      "p": 0.48666227858540734
+    },
+    "bosdis_posdis": {
+      "r": 0.1208525184670656,
+      "p": 0.2855903650702116
+    },
+    "bosdis_topsim": {
+      "r": 0.11830084908911576,
+      "p": 0.29595955832206833
+    }
+  },
+  "correlations_2agent_ramp": {
+    "n_seeds": 60,
+    "topsim_posdis": {
+      "r": 0.6694298755755874,
+      "p": 4.9803528902975045e-09
+    },
+    "topsim_holdout": {
+      "r": 0.39927341637927355,
+      "p": 0.0015763092205167875
+    },
+    "posdis_holdout": {
+      "r": 0.5469569996844099,
+      "p": 6.1336298709859355e-06
+    }
+  },
+  "compositional_vs_holistic": {
+    "n_compositional": 24,
+    "n_holistic": 36,
+    "comp_topsim_mean": 0.640771246649773,
+    "comp_topsim_std": 0.030524299395164826,
+    "hol_topsim_mean": 0.5382357424814009,
+    "hol_topsim_std": 0.1197924083002122,
+    "ttest_t": 4.036336824882327,
+    "ttest_p": 0.00016110038309258924,
+    "cohens_d": 1.1730048987439827
+  }
+}
