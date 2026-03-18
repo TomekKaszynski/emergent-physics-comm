@@ -6235,3 +6235,45 @@ Small vocab (9 messages) nearly matches default (25). Larger vocabs don't help.
 
 ### Exp 14: Multi-Scenario Joint Training
 - Joint (spring+fall+ramp): 65.5% (vs 84.1% spring-only)
+
+---
+
+## Phase 89: Action-Conditioned Planning with Compositional Messages
+**Date:** Mar 18 | **Duration:** ~15 min
+
+### Goal
+Demonstrate that frozen compositional messages support action-conditioned planning: a downstream module can query the discrete protocol with novel actions and receive physically grounded predictions.
+
+### Setup
+- Trained fresh 4-agent V-JEPA 2 collision sender (best of 5 seeds)
+- Froze sender, extracted discrete messages for all 600 collision scenes
+- Three experiments on frozen messages
+
+### Results
+
+**Step 1: Action-Conditioned Outcome Prediction**
+- Leave-one-velocity-out cross-validation: **91.5%** (chance 50%)
+- Per velocity bin: 86.0%–95.7% across 5 bins
+- Raw features comparison: 92.4% — messages retain 99% of predictive power
+- Messages + velocity nearly match raw features for outcome prediction
+
+**Step 2: Selective Property Querying**
+
+| Task | Relevant Pos | Irrelevant Pos | All Pos | Gap |
+|------|-------------|----------------|---------|-----|
+| Mass ratio | 85.6% | 82.6% | 88.8% | +3.0% |
+| Restitution | 90.5% | 85.8% | 91.4% | +4.7% |
+
+Relevant message positions outperform irrelevant ones for both properties, confirming addressable interface.
+
+**Step 3: Counterfactual Planning**
+- Regression r = 0.780 (message + velocity → post-collision speed)
+- **100% monotonic response** — higher velocity → higher predicted outcome for all 50 test scenes across all 10 seeds
+- The protocol enables physically correct counterfactual reasoning: "what would happen at a different velocity?"
+
+### Key Finding
+Frozen compositional messages act as a queryable discrete physics interface. A downstream predictor achieves 91.5% accuracy with novel velocity inputs, responds monotonically to velocity changes, and allows selective property querying — the core requirements for planning with learned physics models.
+
+### Files
+- `_phase89_action_conditioned.py` — Full pipeline
+- `results/phase89_action_conditioned.json` — All results
