@@ -6316,3 +6316,38 @@ Doubling DINOv2's temporal coverage from 24 to 48 frames decreases performance b
 - `results/phase88_dinov2_48frame_4agent.json` — 48-frame results
 - `results/phase88_dinov2_agg24_4agent.json` — Aggregated 24-frame results
 - `results/phase88_frame_matched.json` — Combined comparison
+
+---
+
+## Phase 90: Surgical Ablation on Real Video
+**Date:** Mar 18 | **Duration:** ~6 min
+
+### Goal
+Extend the causal intervention experiment (Section 4.2, synthetic-only) to real camera footage. Position-zeroing ablation on Physics 101 spring mass communication.
+
+### Setup
+- Top 5 seeds from Phase 87 spring mass 2-agent communication
+- For each frozen sender+receiver: zero one agent's message positions, measure mass comparison accuracy drop
+- 2 agents × 2 heads = 4 message positions
+
+### Results
+
+| Seed | Full | Zero Agent 0 | Zero Agent 1 | Zero All | Mass Agent | Drop | Other Drop |
+|------|------|-------------|-------------|----------|------------|------|------------|
+| 6 | 93.0% | 79.0% | 88.7% | 50.8% | Ag0 | -13.9pp | -4.3pp |
+| 2 | 92.1% | 87.6% | 88.9% | 51.9% | Ag0 | -4.5pp | -3.2pp |
+| 3 | 91.1% | 90.6% | 87.2% | 48.7% | Ag1 | -3.9pp | -0.5pp |
+| 8 | 88.6% | 78.9% | 84.5% | 49.0% | Ag0 | -9.6pp | -4.0pp |
+| 5 | 84.2% | 86.0% | 77.1% | 49.3% | Ag1 | -7.1pp | +1.7pp |
+
+**Average: mass-relevant agent: -7.8pp ± 3.7pp, other: -2.1pp ± 2.3pp**
+**Selectivity gap: 5.7pp (paired t=3.63, p=0.022, d=1.87)**
+
+### Key Finding
+**CLEAN selective ablation on real video.** Zeroing the mass-aligned agent causes 7.8pp accuracy drop while the complementary agent causes only 2.1pp — a significant 5.7pp selectivity gap (p=0.022). The causal intervention pattern from synthetic data (Section 4.2) transfers to real camera footage with laboratory-measured physical properties.
+
+Zeroing ALL positions drops to ~50% (chance), confirming messages are necessary for the task.
+
+### Files
+- `_phase90_realvideo_ablation.py` — Full pipeline
+- `results/phase90_realvideo_ablation.json` — All results
