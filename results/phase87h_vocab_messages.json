@@ -1,0 +1,360 @@
+{
+  "exp12_mass_bin": {
+    "mean_acc": 0.6992855548858643,
+    "std_acc": 0.11198329480952354,
+    "chance": 0.2,
+    "n_classes": 5
+  },
+  "exp12_material": {
+    "mean_acc": 0.15435435771942138,
+    "std_acc": 0.1327531168772265,
+    "chance": 0.1111111111111111,
+    "n_classes": 9
+  },
+  "exp12_density_bin": {
+    "mean_acc": 0.29146454483270645,
+    "std_acc": 0.14224238398805747,
+    "chance": 0.2,
+    "n_classes": 5
+  },
+  "exp13_vocab3": {
+    "per_seed": [
+      {
+        "seed": 0,
+        "vocab_size": 3,
+        "holdout_acc": 0.747988140618382,
+        "topsim": 0.6643705959968088,
+        "mass_rho": 0.7996339388523696,
+        "mean_entropy": 0.7840480388652781,
+        "nan_count": 0,
+        "time_sec": 32.39944100379944
+      },
+      {
+        "seed": 1,
+        "vocab_size": 3,
+        "holdout_acc": 0.7939548744146445,
+        "topsim": 0.5105859383856444,
+        "mass_rho": 0.7971302659719314,
+        "mean_entropy": 0.8703597771025284,
+        "nan_count": 0,
+        "time_sec": 31.95431423187256
+      },
+      {
+        "seed": 2,
+        "vocab_size": 3,
+        "holdout_acc": 0.888208269525268,
+        "topsim": 0.48800545171915694,
+        "mass_rho": -0.8998643026554327,
+        "mean_entropy": 0.7275471245071765,
+        "nan_count": 0,
+        "time_sec": 33.88756084442139
+      },
+      {
+        "seed": 3,
+        "vocab_size": 3,
+        "holdout_acc": 0.8692272519433013,
+        "topsim": 0.5290257253839629,
+        "mass_rho": -0.7984127356147207,
+        "mean_entropy": 0.8280852690262398,
+        "nan_count": 0,
+        "time_sec": 34.44112801551819
+      },
+      {
+        "seed": 4,
+        "vocab_size": 3,
+        "holdout_acc": 0.7580504786771105,
+        "topsim": 0.355408416219931,
+        "mass_rho": -0.7316659291559717,
+        "mean_entropy": 0.8428885817960776,
+        "nan_count": 0,
+        "time_sec": 34.71037292480469
+      }
+    ],
+    "mean_acc": 0.8114858030357412,
+    "std_acc": 0.05729752571670072,
+    "mean_topsim": 0.5094792255411009,
+    "mean_entropy": 0.81058575825946
+  },
+  "exp13_vocab5": {
+    "per_seed": [
+      {
+        "seed": 0,
+        "vocab_size": 5,
+        "holdout_acc": 0.8005082592121983,
+        "topsim": 0.7326425159051924,
+        "mass_rho": -0.8785376522388816,
+        "mean_entropy": 0.6329022851936615,
+        "nan_count": 0,
+        "time_sec": 34.62969708442688
+      },
+      {
+        "seed": 1,
+        "vocab_size": 5,
+        "holdout_acc": 0.789272030651341,
+        "topsim": 0.43625271422852385,
+        "mass_rho": -0.7957972680877478,
+        "mean_entropy": 0.7226667491016344,
+        "nan_count": 0,
+        "time_sec": 34.498841762542725
+      },
+      {
+        "seed": 2,
+        "vocab_size": 5,
+        "holdout_acc": 0.8953547728432873,
+        "topsim": 0.5180358835057874,
+        "mass_rho": -0.8235326832947873,
+        "mean_entropy": 0.6578734667278,
+        "nan_count": 0,
+        "time_sec": 34.99388384819031
+      },
+      {
+        "seed": 3,
+        "vocab_size": 5,
+        "holdout_acc": 0.8888888888888888,
+        "topsim": 0.3430653446768339,
+        "mass_rho": 0.7169230652942237,
+        "mean_entropy": 0.6808896402251542,
+        "nan_count": 0,
+        "time_sec": 34.992818117141724
+      },
+      {
+        "seed": 4,
+        "vocab_size": 5,
+        "holdout_acc": 0.8046127067014796,
+        "topsim": 0.47051294785824577,
+        "mass_rho": 0.8696795742669124,
+        "mean_entropy": 0.7839727306585415,
+        "nan_count": 0,
+        "time_sec": 34.97804069519043
+      }
+    ],
+    "mean_acc": 0.8357273316594389,
+    "std_acc": 0.04636416903442748,
+    "mean_topsim": 0.5001018812349167,
+    "mean_entropy": 0.6956609743813583
+  },
+  "exp13_vocab8": {
+    "per_seed": [
+      {
+        "seed": 0,
+        "vocab_size": 8,
+        "holdout_acc": 0.819144430326133,
+        "topsim": 0.5672660272418426,
+        "mass_rho": -0.9091757205174564,
+        "mean_entropy": 0.48992089706428,
+        "nan_count": 0,
+        "time_sec": 34.57004475593567
+      },
+      {
+        "seed": 1,
+        "vocab_size": 8,
+        "holdout_acc": 0.7420178799489144,
+        "topsim": 0.6070470468947746,
+        "mass_rho": 0.8494045507240121,
+        "mean_entropy": 0.47336931421939143,
+        "nan_count": 0,
+        "time_sec": 33.8765070438385
+      },
+      {
+        "seed": 2,
+        "vocab_size": 8,
+        "holdout_acc": 0.888208269525268,
+        "topsim": 0.7149052978598154,
+        "mass_rho": -0.866805690012351,
+        "mean_entropy": 0.5142807967386681,
+        "nan_count": 0,
+        "time_sec": 34.373998165130615
+      },
+      {
+        "seed": 3,
+        "vocab_size": 8,
+        "holdout_acc": 0.8628257887517147,
+        "topsim": 0.4284596130373535,
+        "mass_rho": 0.5762308360527232,
+        "mean_entropy": 0.6256676466181457,
+        "nan_count": 0,
+        "time_sec": 34.3076651096344
+      },
+      {
+        "seed": 4,
+        "vocab_size": 8,
+        "holdout_acc": 0.5844212358572672,
+        "topsim": 0.21514587962123724,
+        "mass_rho": 0.49496339622046026,
+        "mean_entropy": 0.17637490899783875,
+        "nan_count": 1611,
+        "time_sec": 25.763514041900635
+      }
+    ],
+    "mean_acc": 0.7793235208818594,
+    "std_acc": 0.10935523179870414,
+    "mean_topsim": 0.5065647729310048,
+    "mean_entropy": 0.45592271272766477
+  },
+  "exp13_vocab10": {
+    "per_seed": [
+      {
+        "seed": 0,
+        "vocab_size": 10,
+        "holdout_acc": 0.7623888182973316,
+        "topsim": 0.7006888761612626,
+        "mass_rho": 0.9190657322687393,
+        "mean_entropy": 0.5035074628445548,
+        "nan_count": 0,
+        "time_sec": 34.48163604736328
+      },
+      {
+        "seed": 1,
+        "vocab_size": 10,
+        "holdout_acc": 0.7816091954022989,
+        "topsim": 0.6561445227088758,
+        "mass_rho": -0.7837805775905516,
+        "mean_entropy": 0.5113801059109448,
+        "nan_count": 0,
+        "time_sec": 34.202784061431885
+      },
+      {
+        "seed": 2,
+        "vocab_size": 10,
+        "holdout_acc": 0.8575803981623277,
+        "topsim": 0.4593868355417777,
+        "mass_rho": -0.8426013113696997,
+        "mean_entropy": 0.4856073999078778,
+        "nan_count": 0,
+        "time_sec": 34.53443479537964
+      },
+      {
+        "seed": 3,
+        "vocab_size": 10,
+        "holdout_acc": 0.8861454046639232,
+        "topsim": 0.5112627412625419,
+        "mass_rho": -0.8637842480615673,
+        "mean_entropy": 0.4589145622620942,
+        "nan_count": 0,
+        "time_sec": 33.89978098869324
+      },
+      {
+        "seed": 4,
+        "vocab_size": 10,
+        "holdout_acc": 0.5013054830287206,
+        "topsim": 0.0,
+        "mass_rho": 0.0,
+        "mean_entropy": -4.342945178152236e-11,
+        "nan_count": 1611,
+        "time_sec": 25.69577193260193
+      }
+    ],
+    "mean_acc": 0.7578058599109203,
+    "std_acc": 0.13623952646679802,
+    "mean_topsim": 0.4654965951348916,
+    "mean_entropy": 0.39188190617640845
+  },
+  "exp14_joint": {
+    "per_seed": [
+      {
+        "seed": 0,
+        "vocab_size": 5,
+        "holdout_acc": 0.6136363636363636,
+        "topsim": 0.07345290646730133,
+        "mass_rho": 0.41143482754214006,
+        "mean_entropy": 0.32662231091151045,
+        "nan_count": 21219,
+        "time_sec": 282.52293825149536
+      },
+      {
+        "seed": 1,
+        "vocab_size": 5,
+        "holdout_acc": 0.8419090231170768,
+        "topsim": 0.40769240218341646,
+        "mass_rho": -0.4273708997245438,
+        "mean_entropy": 0.8208684060306228,
+        "nan_count": 1194,
+        "time_sec": 398.25269508361816
+      },
+      {
+        "seed": 2,
+        "vocab_size": 5,
+        "holdout_acc": 0.7227238525206923,
+        "topsim": 0.25879479481700685,
+        "mass_rho": 0.6167199892370044,
+        "mean_entropy": 0.776760550197415,
+        "nan_count": 8553,
+        "time_sec": 360.90742802619934
+      },
+      {
+        "seed": 3,
+        "vocab_size": 5,
+        "holdout_acc": 0.5919605612438377,
+        "topsim": 0.055220904309782964,
+        "mass_rho": -0.41995417733834906,
+        "mean_entropy": 0.36416179439987817,
+        "nan_count": 22487,
+        "time_sec": 303.2045691013336
+      },
+      {
+        "seed": 4,
+        "vocab_size": 5,
+        "holdout_acc": 0.6704331450094162,
+        "topsim": 0.09814682068053066,
+        "mass_rho": -0.3980138046668985,
+        "mean_entropy": 0.3343492982698454,
+        "nan_count": 24293,
+        "time_sec": 281.15126609802246
+      },
+      {
+        "seed": 5,
+        "vocab_size": 5,
+        "holdout_acc": 0.5177956371986223,
+        "topsim": 0.1435618519569598,
+        "mass_rho": -0.4162754436078858,
+        "mean_entropy": 0.45465019321523825,
+        "nan_count": 25721,
+        "time_sec": 258.30010890960693
+      },
+      {
+        "seed": 6,
+        "vocab_size": 5,
+        "holdout_acc": 0.5767254038179148,
+        "topsim": 0.021442151729977873,
+        "mass_rho": 0.35861381138831394,
+        "mean_entropy": 0.3758733240504817,
+        "nan_count": 20123,
+        "time_sec": 291.1324369907379
+      },
+      {
+        "seed": 7,
+        "vocab_size": 5,
+        "holdout_acc": 0.6183628318584071,
+        "topsim": 0.10887827496507432,
+        "mass_rho": -0.3958632421620664,
+        "mean_entropy": 0.45304850334744307,
+        "nan_count": 22837,
+        "time_sec": 301.3383729457855
+      },
+      {
+        "seed": 8,
+        "vocab_size": 5,
+        "holdout_acc": 0.7794173287930383,
+        "topsim": 0.5081582144509479,
+        "mass_rho": 0.6567767484506356,
+        "mean_entropy": 0.7975725962719526,
+        "nan_count": 17822,
+        "time_sec": 336.2336311340332
+      },
+      {
+        "seed": 9,
+        "vocab_size": 5,
+        "holdout_acc": 0.6213333333333333,
+        "topsim": 0.09785761350416051,
+        "mass_rho": -0.40535641628328395,
+        "mean_entropy": 0.3410932724649887,
+        "nan_count": 26192,
+        "time_sec": 274.9906339645386
+      }
+    ],
+    "mean_acc": 0.6554297480528704,
+    "std_acc": 0.0939947377903716,
+    "comparison": "Phase 87 spring-only: 84.1%"
+  },
+  "total_time_min": 63.20482633113861
+}
