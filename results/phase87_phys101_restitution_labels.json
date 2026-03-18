@@ -1,0 +1,3832 @@
+[
+  {
+    "obj": "cardboard_01",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/cardboard_01/foam/01/Camera_1.mp4",
+    "restitution": 0.1377300064765506,
+    "h_drop": 75.21238959649688,
+    "h_bounce": 1.426745537367367,
+    "valid": true,
+    "mass": 14.0
+  },
+  {
+    "obj": "cardboard_01",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/cardboard_01/foam/02/Camera_1.mp4",
+    "restitution": 0.7080000613509031,
+    "h_drop": 104.26359648727819,
+    "h_bounce": 52.26359648727819,
+    "valid": true,
+    "mass": 14.0
+  },
+  {
+    "obj": "cardboard_01",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/cardboard_01/glass/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 40.111111111111114,
+    "h_bounce": 104.61111111111111,
+    "valid": true,
+    "mass": 14.0
+  },
+  {
+    "obj": "cardboard_01",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/cardboard_01/glass/02/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 34.543209876543216,
+    "h_bounce": 84.79320987654322,
+    "valid": true,
+    "mass": 14.0
+  },
+  {
+    "obj": "cardboard_01",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/cardboard_01/glass/03/Camera_1.mp4",
+    "restitution": 0.8267153463159157,
+    "h_drop": 69.50110360322219,
+    "h_bounce": 47.50110360322219,
+    "valid": true,
+    "mass": 14.0
+  },
+  {
+    "obj": "cardboard_01",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/cardboard_01/glass/04/Camera_1.mp4",
+    "restitution": 0.512622687484413,
+    "h_drop": 87.49108367626886,
+    "h_bounce": 22.991083676268858,
+    "valid": true,
+    "mass": 14.0
+  },
+  {
+    "obj": "cardboard_01",
+    "sub_condition": "metal/01",
+    "path": "phys101/scenarios/fall/cardboard_01/metal/01/Camera_1.mp4",
+    "restitution": 1.1913873335034149,
+    "h_drop": 105.62505715592135,
+    "h_bounce": 149.92460522425057,
+    "valid": true,
+    "mass": 14.0
+  },
+  {
+    "obj": "cardboard_01",
+    "sub_condition": "metal/02",
+    "path": "phys101/scenarios/fall/cardboard_01/metal/02/Camera_1.mp4",
+    "restitution": 0.155650113841509,
+    "h_drop": 66.61385096548733,
+    "h_bounce": 1.6138509654873303,
+    "valid": true,
+    "mass": 14.0
+  },
+  {
+    "obj": "cardboard_01",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/cardboard_01/metal/04/Camera_1.mp4",
+    "restitution": 0.822151932974463,
+    "h_drop": 95.65946737267166,
+    "h_bounce": 64.65946737267166,
+    "valid": true,
+    "mass": 14.0
+  },
+  {
+    "obj": "cardboard_01",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/cardboard_01/rug/02/Camera_1.mp4",
+    "restitution": 0.6999195441574474,
+    "h_drop": 101.93827160493825,
+    "h_bounce": 49.93827160493825,
+    "valid": true,
+    "mass": 14.0
+  },
+  {
+    "obj": "cardboard_01",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/cardboard_01/rug/03/Camera_1.mp4",
+    "restitution": 0.9360310534657124,
+    "h_drop": 625.7778471737183,
+    "h_bounce": 548.2778471737183,
+    "valid": true,
+    "mass": 14.0
+  },
+  {
+    "obj": "cardboard_01",
+    "sub_condition": "rug/04",
+    "path": "phys101/scenarios/fall/cardboard_01/rug/04/Camera_1.mp4",
+    "restitution": 0.9254027644198312,
+    "h_drop": 682.3100228898512,
+    "h_bounce": 584.3100228898512,
+    "valid": true,
+    "mass": 14.0
+  },
+  {
+    "obj": "cardboard_01",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/cardboard_01/table/01/Camera_1.mp4",
+    "restitution": 1.0766907797720477,
+    "h_drop": 21.976223136716968,
+    "h_bounce": 25.476223136716968,
+    "valid": true,
+    "mass": 14.0
+  },
+  {
+    "obj": "cardboard_01",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/cardboard_01/table/03/Camera_1.mp4",
+    "restitution": 0.8912494270505996,
+    "h_drop": 31.60334072832167,
+    "h_bounce": 25.10334072832167,
+    "valid": true,
+    "mass": 14.0
+  },
+  {
+    "obj": "cardboard_05",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/cardboard_05/foam/01/Camera_1.mp4",
+    "restitution": 0.9663831000675576,
+    "h_drop": 423.9164457381086,
+    "h_bounce": 395.8939985290782,
+    "valid": true,
+    "mass": 51.3
+  },
+  {
+    "obj": "cardboard_05",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/cardboard_05/foam/03/Camera_1.mp4",
+    "restitution": 1.2309618903818749,
+    "h_drop": 43.66666666666666,
+    "h_bounce": 66.16666666666666,
+    "valid": true,
+    "mass": 51.3
+  },
+  {
+    "obj": "cardboard_05",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/cardboard_05/glass/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 35.19829294314894,
+    "h_bounce": 83.89802376198026,
+    "valid": true,
+    "mass": 51.3
+  },
+  {
+    "obj": "cardboard_05",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/cardboard_05/glass/03/Camera_1.mp4",
+    "restitution": 0.9277737423152225,
+    "h_drop": 68.22953818015543,
+    "h_bounce": 58.72953818015543,
+    "valid": true,
+    "mass": 51.3
+  },
+  {
+    "obj": "cardboard_05",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/cardboard_05/glass/04/Camera_1.mp4",
+    "restitution": 0.9103447929625471,
+    "h_drop": 502.1242250729606,
+    "h_bounce": 416.1242250729606,
+    "valid": true,
+    "mass": 51.3
+  },
+  {
+    "obj": "cardboard_05",
+    "sub_condition": "glass/05",
+    "path": "phys101/scenarios/fall/cardboard_05/glass/05/Camera_1.mp4",
+    "restitution": 1.0715905756659414,
+    "h_drop": 59.73113854595337,
+    "h_bounce": 68.5896463932242,
+    "valid": true,
+    "mass": 51.3
+  },
+  {
+    "obj": "cardboard_05",
+    "sub_condition": "metal/02",
+    "path": "phys101/scenarios/fall/cardboard_05/metal/02/Camera_1.mp4",
+    "restitution": 0.6466884300469361,
+    "h_drop": 114.30161103585829,
+    "h_bounce": 47.801611035858286,
+    "valid": true,
+    "mass": 51.3
+  },
+  {
+    "obj": "cardboard_05",
+    "sub_condition": "metal/03",
+    "path": "phys101/scenarios/fall/cardboard_05/metal/03/Camera_1.mp4",
+    "restitution": 0.7385681113103312,
+    "h_drop": 101.20630323968231,
+    "h_bounce": 55.20630323968231,
+    "valid": true,
+    "mass": 51.3
+  },
+  {
+    "obj": "cardboard_05",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/cardboard_05/metal/04/Camera_1.mp4",
+    "restitution": 0.789428443433232,
+    "h_drop": 119.42588546988281,
+    "h_bounce": 74.42588546988281,
+    "valid": true,
+    "mass": 51.3
+  },
+  {
+    "obj": "cardboard_05",
+    "sub_condition": "rug/01",
+    "path": "phys101/scenarios/fall/cardboard_05/rug/01/Camera_1.mp4",
+    "restitution": 0.15665155084702478,
+    "h_drop": 408.0125079619112,
+    "h_bounce": 10.012507961911183,
+    "valid": true,
+    "mass": 51.3
+  },
+  {
+    "obj": "cardboard_05",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/cardboard_05/rug/02/Camera_1.mp4",
+    "restitution": 0.8025701617921142,
+    "h_drop": 241.21681398218465,
+    "h_bounce": 155.37230034439787,
+    "valid": true,
+    "mass": 51.3
+  },
+  {
+    "obj": "cardboard_05",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/cardboard_05/rug/03/Camera_1.mp4",
+    "restitution": 0.0910193901006974,
+    "h_drop": 516.2771129071597,
+    "h_bounce": 4.277112907159676,
+    "valid": true,
+    "mass": 51.3
+  },
+  {
+    "obj": "cardboard_05",
+    "sub_condition": "rug/04",
+    "path": "phys101/scenarios/fall/cardboard_05/rug/04/Camera_1.mp4",
+    "restitution": 0.6870555478836556,
+    "h_drop": 85.23458964505102,
+    "h_bounce": 40.23458964505102,
+    "valid": true,
+    "mass": 51.3
+  },
+  {
+    "obj": "cardboard_05",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/cardboard_05/table/01/Camera_1.mp4",
+    "restitution": 0.8533517157696472,
+    "h_drop": 101.88193271918908,
+    "h_bounce": 74.19135570801667,
+    "valid": true,
+    "mass": 51.3
+  },
+  {
+    "obj": "cardboard_09",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/cardboard_09/foam/01/Camera_1.mp4",
+    "restitution": 0.7808572327414478,
+    "h_drop": 146.05573337397755,
+    "h_bounce": 89.05573337397755,
+    "valid": true,
+    "mass": 114.8
+  },
+  {
+    "obj": "cardboard_09",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/cardboard_09/foam/02/Camera_1.mp4",
+    "restitution": 0.08677683599357013,
+    "h_drop": 619.666222526775,
+    "h_bounce": 4.666222526774959,
+    "valid": true,
+    "mass": 114.8
+  },
+  {
+    "obj": "cardboard_09",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/cardboard_09/foam/03/Camera_1.mp4",
+    "restitution": 0.17970621924842053,
+    "h_drop": 404.0484727916701,
+    "h_bounce": 13.048472791670122,
+    "valid": true,
+    "mass": 114.8
+  },
+  {
+    "obj": "cardboard_09",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/cardboard_09/foam/04/Camera_1.mp4",
+    "restitution": 0.19410428565842816,
+    "h_drop": 610.5015454267777,
+    "h_bounce": 23.00154542677774,
+    "valid": true,
+    "mass": 114.8
+  },
+  {
+    "obj": "cardboard_09",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/cardboard_09/glass/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 81.06584362139915,
+    "h_bounce": 274.834371496031,
+    "valid": true,
+    "mass": 114.8
+  },
+  {
+    "obj": "cardboard_09",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/cardboard_09/glass/02/Camera_1.mp4",
+    "restitution": 0.5360931058620905,
+    "h_drop": 330.7418694241209,
+    "h_bounce": 95.05383016055248,
+    "valid": true,
+    "mass": 114.8
+  },
+  {
+    "obj": "cardboard_09",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/cardboard_09/glass/04/Camera_1.mp4",
+    "restitution": 0.16019705686737662,
+    "h_drop": 158.14511216777697,
+    "h_bounce": 4.058493358218925,
+    "valid": true,
+    "mass": 114.8
+  },
+  {
+    "obj": "cardboard_09",
+    "sub_condition": "metal/03",
+    "path": "phys101/scenarios/fall/cardboard_09/metal/03/Camera_1.mp4",
+    "restitution": 0.8202074548596142,
+    "h_drop": 64.36239394401261,
+    "h_bounce": 43.299174215847955,
+    "valid": true,
+    "mass": 114.8
+  },
+  {
+    "obj": "cardboard_09",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/cardboard_09/rug/03/Camera_1.mp4",
+    "restitution": 0.4360932554232359,
+    "h_drop": 100.02189706853625,
+    "h_bounce": 19.021897068536248,
+    "valid": true,
+    "mass": 114.8
+  },
+  {
+    "obj": "cardboard_09",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/cardboard_09/table/01/Camera_1.mp4",
+    "restitution": 1.1606898784401856,
+    "h_drop": 32.97878033497602,
+    "h_bounce": 44.42904564533444,
+    "valid": true,
+    "mass": 114.8
+  },
+  {
+    "obj": "cardboard_09",
+    "sub_condition": "table/02",
+    "path": "phys101/scenarios/fall/cardboard_09/table/02/Camera_1.mp4",
+    "restitution": 0.08725397496123101,
+    "h_drop": 426.74896849264644,
+    "h_bounce": 3.2489492074041664,
+    "valid": true,
+    "mass": 114.8
+  },
+  {
+    "obj": "cardboard_09",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/cardboard_09/table/04/Camera_1.mp4",
+    "restitution": 0.027259418060249365,
+    "h_drop": 540.9019311747061,
+    "h_bounce": 0.4019311747060783,
+    "valid": true,
+    "mass": 114.8
+  },
+  {
+    "obj": "foam_04",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/foam_04/glass/02/Camera_1.mp4",
+    "restitution": 0.23869541680874354,
+    "h_drop": 99.6792768373534,
+    "h_bounce": 5.679276837353399,
+    "valid": true,
+    "mass": 1.3
+  },
+  {
+    "obj": "foam_04",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/foam_04/glass/03/Camera_1.mp4",
+    "restitution": 1.0424743703217436,
+    "h_drop": 75.75308641975309,
+    "h_bounce": 82.32487974326004,
+    "valid": true,
+    "mass": 1.3
+  },
+  {
+    "obj": "foam_04",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/foam_04/glass/04/Camera_1.mp4",
+    "restitution": 0.5066164875514924,
+    "h_drop": 119.05727070361527,
+    "h_bounce": 30.557270703615274,
+    "valid": true,
+    "mass": 1.3
+  },
+  {
+    "obj": "foam_04",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/foam_04/metal/04/Camera_1.mp4",
+    "restitution": 0.7529692828159469,
+    "h_drop": 59.542510520139246,
+    "h_bounce": 33.758384962443216,
+    "valid": true,
+    "mass": 1.3
+  },
+  {
+    "obj": "foam_04",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/foam_04/table/01/Camera_1.mp4",
+    "restitution": 0.622973895796743,
+    "h_drop": 54.37662715355253,
+    "h_bounce": 21.103377312209574,
+    "valid": true,
+    "mass": 1.3
+  },
+  {
+    "obj": "foam_07",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/foam_07/foam/01/Camera_1.mp4",
+    "restitution": 0.7635732956486505,
+    "h_drop": 39.264125274489544,
+    "h_bounce": 22.892719638790197,
+    "valid": true,
+    "mass": 5.0
+  },
+  {
+    "obj": "foam_07",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/foam_07/foam/02/Camera_1.mp4",
+    "restitution": 0.9695460583553397,
+    "h_drop": 400.13043767026994,
+    "h_bounce": 376.13043767026994,
+    "valid": true,
+    "mass": 5.0
+  },
+  {
+    "obj": "foam_07",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/foam_07/foam/03/Camera_1.mp4",
+    "restitution": 0.9402797593246024,
+    "h_drop": 181.23137783247188,
+    "h_bounce": 160.23137783247188,
+    "valid": true,
+    "mass": 5.0
+  },
+  {
+    "obj": "foam_07",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/foam_07/glass/01/Camera_1.mp4",
+    "restitution": 0.4782479518939801,
+    "h_drop": 63.451882711345206,
+    "h_bounce": 14.512784632306847,
+    "valid": true,
+    "mass": 5.0
+  },
+  {
+    "obj": "foam_07",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/foam_07/glass/02/Camera_1.mp4",
+    "restitution": 0.7310208291122606,
+    "h_drop": 299.6079019119714,
+    "h_bounce": 160.1079019119714,
+    "valid": true,
+    "mass": 5.0
+  },
+  {
+    "obj": "foam_07",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/foam_07/glass/03/Camera_1.mp4",
+    "restitution": 0.27320886383114923,
+    "h_drop": 525.2027528151144,
+    "h_bounce": 39.20275281511442,
+    "valid": true,
+    "mass": 5.0
+  },
+  {
+    "obj": "foam_07",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/foam_07/glass/04/Camera_1.mp4",
+    "restitution": 0.902613251407205,
+    "h_drop": 366.99363240698403,
+    "h_bounce": 298.99363240698403,
+    "valid": true,
+    "mass": 5.0
+  },
+  {
+    "obj": "foam_07",
+    "sub_condition": "metal/01",
+    "path": "phys101/scenarios/fall/foam_07/metal/01/Camera_1.mp4",
+    "restitution": 0.16176049452465777,
+    "h_drop": 528.8378121838964,
+    "h_bounce": 13.837812183896403,
+    "valid": true,
+    "mass": 5.0
+  },
+  {
+    "obj": "foam_07",
+    "sub_condition": "metal/02",
+    "path": "phys101/scenarios/fall/foam_07/metal/02/Camera_1.mp4",
+    "restitution": 0.9283525988778119,
+    "h_drop": 459.6072132184005,
+    "h_bounce": 396.1072132184005,
+    "valid": true,
+    "mass": 5.0
+  },
+  {
+    "obj": "foam_07",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/foam_07/metal/04/Camera_1.mp4",
+    "restitution": 0.14847043133735052,
+    "h_drop": 540.2731820205822,
+    "h_bounce": 11.909495129406423,
+    "valid": true,
+    "mass": 5.0
+  },
+  {
+    "obj": "foam_07",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/foam_07/rug/02/Camera_1.mp4",
+    "restitution": 0.1717937105256678,
+    "h_drop": 505.6739965977896,
+    "h_bounce": 14.923996597789596,
+    "valid": true,
+    "mass": 5.0
+  },
+  {
+    "obj": "foam_07",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/foam_07/rug/03/Camera_1.mp4",
+    "restitution": 0.1856294301854243,
+    "h_drop": 514.2191087833767,
+    "h_bounce": 17.71910878337667,
+    "valid": true,
+    "mass": 5.0
+  },
+  {
+    "obj": "foam_07",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/foam_07/table/01/Camera_1.mp4",
+    "restitution": 1.0116661155951787,
+    "h_drop": 436.7588253226214,
+    "h_bounce": 447.0088253226214,
+    "valid": true,
+    "mass": 5.0
+  },
+  {
+    "obj": "foam_07",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/foam_07/table/03/Camera_1.mp4",
+    "restitution": 0.9591819431704213,
+    "h_drop": 250.5503474004443,
+    "h_bounce": 230.51383614493443,
+    "valid": true,
+    "mass": 5.0
+  },
+  {
+    "obj": "foam_07",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/foam_07/table/04/Camera_1.mp4",
+    "restitution": 0.9925985106537586,
+    "h_drop": 233.09388996976872,
+    "h_bounce": 229.65617544306122,
+    "valid": true,
+    "mass": 5.0
+  },
+  {
+    "obj": "h_rubber_01",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/h_rubber_01/foam/02/Camera_1.mp4",
+    "restitution": 1.149951540723458,
+    "h_drop": 55.83324911089048,
+    "h_bounce": 73.83324911089048,
+    "valid": true,
+    "mass": 29.2
+  },
+  {
+    "obj": "h_rubber_01",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/h_rubber_01/foam/03/Camera_1.mp4",
+    "restitution": 1.2322423928740294,
+    "h_drop": 26.651751371998245,
+    "h_bounce": 40.46858735988337,
+    "valid": true,
+    "mass": 29.2
+  },
+  {
+    "obj": "h_rubber_01",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/h_rubber_01/foam/04/Camera_1.mp4",
+    "restitution": 1.0147541497879702,
+    "h_drop": 538.2496244520129,
+    "h_bounce": 554.2496244520129,
+    "valid": true,
+    "mass": 29.2
+  },
+  {
+    "obj": "h_rubber_01",
+    "sub_condition": "foam/05",
+    "path": "phys101/scenarios/fall/h_rubber_01/foam/05/Camera_1.mp4",
+    "restitution": 1.1159743435595286,
+    "h_drop": 30.562504673199015,
+    "h_bounce": 38.062504673199015,
+    "valid": true,
+    "mass": 29.2
+  },
+  {
+    "obj": "h_rubber_01",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/h_rubber_01/glass/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 16.81832037799117,
+    "h_bounce": 60.81832037799117,
+    "valid": true,
+    "mass": 29.2
+  },
+  {
+    "obj": "h_rubber_01",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/h_rubber_01/glass/03/Camera_1.mp4",
+    "restitution": 1.0974200330607045,
+    "h_drop": 42.79286694101509,
+    "h_bounce": 51.53676463748755,
+    "valid": true,
+    "mass": 29.2
+  },
+  {
+    "obj": "h_rubber_01",
+    "sub_condition": "glass/05",
+    "path": "phys101/scenarios/fall/h_rubber_01/glass/05/Camera_1.mp4",
+    "restitution": 0.9498821943725279,
+    "h_drop": 286.5217601281795,
+    "h_bounce": 258.5217601281795,
+    "valid": true,
+    "mass": 29.2
+  },
+  {
+    "obj": "h_rubber_01",
+    "sub_condition": "metal/02",
+    "path": "phys101/scenarios/fall/h_rubber_01/metal/02/Camera_1.mp4",
+    "restitution": 1.0664026531906188,
+    "h_drop": 34.44444444444446,
+    "h_bounce": 39.17072575632416,
+    "valid": true,
+    "mass": 29.2
+  },
+  {
+    "obj": "h_rubber_01",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/h_rubber_01/metal/04/Camera_1.mp4",
+    "restitution": 0.3460809993278017,
+    "h_drop": 71.00433538247896,
+    "h_bounce": 8.504335382478956,
+    "valid": true,
+    "mass": 29.2
+  },
+  {
+    "obj": "h_rubber_01",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/h_rubber_01/rug/02/Camera_1.mp4",
+    "restitution": 1.0786494718499986,
+    "h_drop": 275.2551440329218,
+    "h_bounce": 320.2551440329218,
+    "valid": true,
+    "mass": 29.2
+  },
+  {
+    "obj": "h_rubber_01",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/h_rubber_01/table/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 14.020000338701777,
+    "h_bounce": 101.52000033870178,
+    "valid": true,
+    "mass": 29.2
+  },
+  {
+    "obj": "h_rubber_01",
+    "sub_condition": "table/02",
+    "path": "phys101/scenarios/fall/h_rubber_01/table/02/Camera_1.mp4",
+    "restitution": 1.120720616814756,
+    "h_drop": 105.15790275872581,
+    "h_bounce": 132.07987178641375,
+    "valid": true,
+    "mass": 29.2
+  },
+  {
+    "obj": "h_rubber_01",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/h_rubber_01/table/03/Camera_1.mp4",
+    "restitution": 1.0365962589828934,
+    "h_drop": 50.0051259601812,
+    "h_bounce": 53.732098214107936,
+    "valid": true,
+    "mass": 29.2
+  },
+  {
+    "obj": "h_rubber_01",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/h_rubber_01/table/04/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 31.92135345221766,
+    "h_bounce": 77.6034838837172,
+    "valid": true,
+    "mass": 29.2
+  },
+  {
+    "obj": "h_rubber_05",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/h_rubber_05/foam/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 58.827154848797875,
+    "h_bounce": 132.5752198831416,
+    "valid": true,
+    "mass": 56.8
+  },
+  {
+    "obj": "h_rubber_05",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/h_rubber_05/foam/03/Camera_1.mp4",
+    "restitution": 0.9688151870198883,
+    "h_drop": 60.885090655336995,
+    "h_bounce": 57.14692062232339,
+    "valid": true,
+    "mass": 56.8
+  },
+  {
+    "obj": "h_rubber_05",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/h_rubber_05/glass/02/Camera_1.mp4",
+    "restitution": 0.9696693384124192,
+    "h_drop": 585.8586365343212,
+    "h_bounce": 550.8586365343212,
+    "valid": true,
+    "mass": 56.8
+  },
+  {
+    "obj": "h_rubber_05",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/h_rubber_05/glass/04/Camera_1.mp4",
+    "restitution": 0.7103742413718048,
+    "h_drop": 127.63191586648375,
+    "h_bounce": 64.40709316744474,
+    "valid": true,
+    "mass": 56.8
+  },
+  {
+    "obj": "h_rubber_05",
+    "sub_condition": "metal/02",
+    "path": "phys101/scenarios/fall/h_rubber_05/metal/02/Camera_1.mp4",
+    "restitution": 0.7994297287595897,
+    "h_drop": 106.47736625514403,
+    "h_bounce": 68.0483954631527,
+    "valid": true,
+    "mass": 56.8
+  },
+  {
+    "obj": "h_rubber_05",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/h_rubber_05/rug/02/Camera_1.mp4",
+    "restitution": 0.5786266922781204,
+    "h_drop": 79.58161865569272,
+    "h_bounce": 26.644630144999894,
+    "valid": true,
+    "mass": 56.8
+  },
+  {
+    "obj": "h_rubber_05",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/h_rubber_05/rug/03/Camera_1.mp4",
+    "restitution": 0.6179730257804585,
+    "h_drop": 54.197530864197546,
+    "h_bounce": 20.697530864197546,
+    "valid": true,
+    "mass": 56.8
+  },
+  {
+    "obj": "h_rubber_05",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/h_rubber_05/table/03/Camera_1.mp4",
+    "restitution": 0.4911966945417885,
+    "h_drop": 91.75148009531316,
+    "h_bounce": 22.13726429166732,
+    "valid": true,
+    "mass": 56.8
+  },
+  {
+    "obj": "h_rubber_05",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/h_rubber_05/table/04/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 11.816491388507842,
+    "h_bounce": 43.31649138850784,
+    "valid": true,
+    "mass": 56.8
+  },
+  {
+    "obj": "h_rubber_10",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/h_rubber_10/foam/01/Camera_1.mp4",
+    "restitution": 1.2212089035579468,
+    "h_drop": 32.81435756744398,
+    "h_bounce": 48.93773108027534,
+    "valid": true,
+    "mass": 103.2
+  },
+  {
+    "obj": "h_rubber_10",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/h_rubber_10/foam/02/Camera_1.mp4",
+    "restitution": 0.7815487264843194,
+    "h_drop": 87.60737692424937,
+    "h_bounce": 53.51219884090179,
+    "valid": true,
+    "mass": 103.2
+  },
+  {
+    "obj": "h_rubber_10",
+    "sub_condition": "foam/05",
+    "path": "phys101/scenarios/fall/h_rubber_10/foam/05/Camera_1.mp4",
+    "restitution": 0.9456066876370388,
+    "h_drop": 448.8415490969019,
+    "h_bounce": 401.3415490969019,
+    "valid": true,
+    "mass": 103.2
+  },
+  {
+    "obj": "h_rubber_10",
+    "sub_condition": "foam/06",
+    "path": "phys101/scenarios/fall/h_rubber_10/foam/06/Camera_1.mp4",
+    "restitution": 0.9296133962208859,
+    "h_drop": 382.86267337296147,
+    "h_bounce": 330.86267337296147,
+    "valid": true,
+    "mass": 103.2
+  },
+  {
+    "obj": "h_rubber_10",
+    "sub_condition": "foam/07",
+    "path": "phys101/scenarios/fall/h_rubber_10/foam/07/Camera_1.mp4",
+    "restitution": 0.27062555968251095,
+    "h_drop": 105.20502606148946,
+    "h_bounce": 7.705026061489463,
+    "valid": true,
+    "mass": 103.2
+  },
+  {
+    "obj": "h_rubber_10",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/h_rubber_10/glass/01/Camera_1.mp4",
+    "restitution": 0.8831221506050865,
+    "h_drop": 51.62246608748666,
+    "h_bounce": 40.26060562505097,
+    "valid": true,
+    "mass": 103.2
+  },
+  {
+    "obj": "h_rubber_10",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/h_rubber_10/glass/02/Camera_1.mp4",
+    "restitution": 0.8472035868072468,
+    "h_drop": 46.39800843367371,
+    "h_bounce": 33.302352317423924,
+    "valid": true,
+    "mass": 103.2
+  },
+  {
+    "obj": "h_rubber_10",
+    "sub_condition": "metal/01",
+    "path": "phys101/scenarios/fall/h_rubber_10/metal/01/Camera_1.mp4",
+    "restitution": 0.9373075833577001,
+    "h_drop": 551.6469394753062,
+    "h_bounce": 484.6469394753062,
+    "valid": true,
+    "mass": 103.2
+  },
+  {
+    "obj": "h_rubber_10",
+    "sub_condition": "metal/03",
+    "path": "phys101/scenarios/fall/h_rubber_10/metal/03/Camera_1.mp4",
+    "restitution": 0.9433848285100094,
+    "h_drop": 604.4077301497599,
+    "h_bounce": 537.9077301497599,
+    "valid": true,
+    "mass": 103.2
+  },
+  {
+    "obj": "h_rubber_10",
+    "sub_condition": "rug/01",
+    "path": "phys101/scenarios/fall/h_rubber_10/rug/01/Camera_1.mp4",
+    "restitution": 0.969974051803732,
+    "h_drop": 43.99295500347171,
+    "h_bounce": 41.39075680899555,
+    "valid": true,
+    "mass": 103.2
+  },
+  {
+    "obj": "h_rubber_10",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/h_rubber_10/rug/02/Camera_1.mp4",
+    "restitution": 0.5682110908465777,
+    "h_drop": 111.49899367263765,
+    "h_bounce": 35.99899367263765,
+    "valid": true,
+    "mass": 103.2
+  },
+  {
+    "obj": "h_rubber_10",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/h_rubber_10/rug/03/Camera_1.mp4",
+    "restitution": 0.4810909918400837,
+    "h_drop": 79.29029242092216,
+    "h_bounce": 18.351622609645176,
+    "valid": true,
+    "mass": 103.2
+  },
+  {
+    "obj": "h_rubber_10",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/h_rubber_10/table/01/Camera_1.mp4",
+    "restitution": 0.9614639007010919,
+    "h_drop": 86.87418923267114,
+    "h_bounce": 80.30761532680148,
+    "valid": true,
+    "mass": 103.2
+  },
+  {
+    "obj": "h_rubber_10",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/h_rubber_10/table/03/Camera_1.mp4",
+    "restitution": 0.5970010832074183,
+    "h_drop": 185.07448051618144,
+    "h_bounce": 65.96244989252483,
+    "valid": true,
+    "mass": 103.2
+  },
+  {
+    "obj": "h_wood_01",
+    "sub_condition": "foam/05",
+    "path": "phys101/scenarios/fall/h_wood_01/foam/05/Camera_1.mp4",
+    "restitution": 0.2668009707343989,
+    "h_drop": 10.766380669574758,
+    "h_bounce": 0.7663806695747581,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_01",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/h_wood_01/glass/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 18.696692577351,
+    "h_bounce": 52.67702848722915,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_01",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/h_wood_01/glass/04/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 27.869991839509794,
+    "h_bounce": 88.8699918395098,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_01",
+    "sub_condition": "metal/02",
+    "path": "phys101/scenarios/fall/h_wood_01/metal/02/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 11.543209876543216,
+    "h_bounce": 26.9659651612247,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_01",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/h_wood_01/metal/04/Camera_1.mp4",
+    "restitution": 1.0309655217728129,
+    "h_drop": 43.703703703703695,
+    "h_bounce": 46.45222556886888,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_01",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/h_wood_01/table/01/Camera_1.mp4",
+    "restitution": 0.48315035484368285,
+    "h_drop": 121.40816732591549,
+    "h_bounce": 28.340826351534247,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_04",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/h_wood_04/foam/03/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 13.737057463679989,
+    "h_bounce": 46.73705746367999,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_04",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/h_wood_04/foam/04/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 25.234567901234556,
+    "h_bounce": 58.640881900428184,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_04",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/h_wood_04/glass/01/Camera_1.mp4",
+    "restitution": 1.402808354935369,
+    "h_drop": 15.486663618350889,
+    "h_bounce": 30.47576056804995,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_04",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/h_wood_04/glass/02/Camera_1.mp4",
+    "restitution": 0.9183828933871594,
+    "h_drop": 30.909892265661796,
+    "h_bounce": 26.0702419962887,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_04",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/h_wood_04/glass/04/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 18.751028806584372,
+    "h_bounce": 96.97238744006705,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_04",
+    "sub_condition": "glass/05",
+    "path": "phys101/scenarios/fall/h_wood_04/glass/05/Camera_1.mp4",
+    "restitution": 0.7309471090555463,
+    "h_drop": 93.49725651577504,
+    "h_bounce": 49.95405792929037,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_04",
+    "sub_condition": "metal/03",
+    "path": "phys101/scenarios/fall/h_wood_04/metal/03/Camera_1.mp4",
+    "restitution": 0.8331865027186592,
+    "h_drop": 35.971193415637885,
+    "h_bounce": 24.971193415637885,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_04",
+    "sub_condition": "rug/01",
+    "path": "phys101/scenarios/fall/h_wood_04/rug/01/Camera_1.mp4",
+    "restitution": 1.1060592763894797,
+    "h_drop": 65.98353909465018,
+    "h_bounce": 80.72209238013855,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_04",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/h_wood_04/rug/02/Camera_1.mp4",
+    "restitution": 0.8267886587825222,
+    "h_drop": 66.36737850485756,
+    "h_bounce": 45.367378504857555,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_04",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/h_wood_04/table/01/Camera_1.mp4",
+    "restitution": 0.5038520813054884,
+    "h_drop": 39.88772601285939,
+    "h_bounce": 10.12617414214182,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_04",
+    "sub_condition": "table/02",
+    "path": "phys101/scenarios/fall/h_wood_04/table/02/Camera_1.mp4",
+    "restitution": 0.6415741587049003,
+    "h_drop": 77.3306350093425,
+    "h_bounce": 31.8306350093425,
+    "valid": true,
+    "mass": 2.1
+  },
+  {
+    "obj": "h_wood_07",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/h_wood_07/foam/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 35.68952903520804,
+    "h_bounce": 116.18952903520804,
+    "valid": true,
+    "mass": 3.7
+  },
+  {
+    "obj": "h_wood_07",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/h_wood_07/foam/03/Camera_1.mp4",
+    "restitution": 0.9099253544529018,
+    "h_drop": 29.063709800335303,
+    "h_bounce": 24.063709800335303,
+    "valid": true,
+    "mass": 3.7
+  },
+  {
+    "obj": "h_wood_07",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/h_wood_07/glass/03/Camera_1.mp4",
+    "restitution": 1.2539964002437223,
+    "h_drop": 42.79423868312756,
+    "h_bounce": 67.29423868312756,
+    "valid": true,
+    "mass": 3.7
+  },
+  {
+    "obj": "h_wood_07",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/h_wood_07/glass/04/Camera_1.mp4",
+    "restitution": 1.1353694523707247,
+    "h_drop": 64.26505628616869,
+    "h_bounce": 82.84175723780926,
+    "valid": true,
+    "mass": 3.7
+  },
+  {
+    "obj": "h_wood_07",
+    "sub_condition": "glass/05",
+    "path": "phys101/scenarios/fall/h_wood_07/glass/05/Camera_1.mp4",
+    "restitution": 1.3128492863447923,
+    "h_drop": 35.06995884773664,
+    "h_bounce": 60.44564290142674,
+    "valid": true,
+    "mass": 3.7
+  },
+  {
+    "obj": "h_wood_07",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/h_wood_07/metal/04/Camera_1.mp4",
+    "restitution": 0.6751096990600955,
+    "h_drop": 20.30412030686378,
+    "h_bounce": 9.254071972085768,
+    "valid": true,
+    "mass": 3.7
+  },
+  {
+    "obj": "h_wood_07",
+    "sub_condition": "metal/05",
+    "path": "phys101/scenarios/fall/h_wood_07/metal/05/Camera_1.mp4",
+    "restitution": 0.3726764336815144,
+    "h_drop": 26.128996918155025,
+    "h_bounce": 3.628996918155025,
+    "valid": true,
+    "mass": 3.7
+  },
+  {
+    "obj": "h_wood_07",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/h_wood_07/rug/02/Camera_1.mp4",
+    "restitution": 0.8600442607570156,
+    "h_drop": 24.968897441147803,
+    "h_bounce": 18.468897441147803,
+    "valid": true,
+    "mass": 3.7
+  },
+  {
+    "obj": "h_wood_07",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/h_wood_07/table/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 16.818777625361975,
+    "h_bounce": 133.27792611093602,
+    "valid": true,
+    "mass": 3.7
+  },
+  {
+    "obj": "m_coin_01",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/m_coin_01/foam/02/Camera_1.mp4",
+    "restitution": 0.915508436807851,
+    "h_drop": 80.3443072702332,
+    "h_bounce": 67.34103892967116,
+    "valid": true,
+    "mass": 2.3
+  },
+  {
+    "obj": "m_coin_01",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/m_coin_01/foam/03/Camera_1.mp4",
+    "restitution": 0.8702288633094001,
+    "h_drop": 39.14269658309166,
+    "h_bounce": 29.642696583091663,
+    "valid": true,
+    "mass": 2.3
+  },
+  {
+    "obj": "m_coin_01",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/m_coin_01/glass/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 12.074074074074076,
+    "h_bounce": 125.07407407407408,
+    "valid": true,
+    "mass": 2.3
+  },
+  {
+    "obj": "m_coin_01",
+    "sub_condition": "metal/01",
+    "path": "phys101/scenarios/fall/m_coin_01/metal/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 13.1111111111111,
+    "h_bounce": 45.552823261144255,
+    "valid": true,
+    "mass": 2.3
+  },
+  {
+    "obj": "m_coin_01",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/m_coin_01/metal/04/Camera_1.mp4",
+    "restitution": 0.6164358298697292,
+    "h_drop": 56.81481481481481,
+    "h_bounce": 21.589239445206545,
+    "valid": true,
+    "mass": 2.3
+  },
+  {
+    "obj": "m_coin_01",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/m_coin_01/table/01/Camera_1.mp4",
+    "restitution": 1.445591833906818,
+    "h_drop": 13.660265203475092,
+    "h_bounce": 28.546344553708323,
+    "valid": true,
+    "mass": 2.3
+  },
+  {
+    "obj": "m_coin_01",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/m_coin_01/table/03/Camera_1.mp4",
+    "restitution": 0.8771511049549005,
+    "h_drop": 80.23731138545952,
+    "h_bounce": 61.73411084445033,
+    "valid": true,
+    "mass": 2.3
+  },
+  {
+    "obj": "m_coin_04",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/m_coin_04/foam/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 21.452674897119323,
+    "h_bounce": 80.3619663196164,
+    "valid": true,
+    "mass": 6.0
+  },
+  {
+    "obj": "m_coin_04",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/m_coin_04/foam/02/Camera_1.mp4",
+    "restitution": 1.1283726329349957,
+    "h_drop": 27.331961591220846,
+    "h_bounce": 34.799731296606765,
+    "valid": true,
+    "mass": 6.0
+  },
+  {
+    "obj": "m_coin_04",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/m_coin_04/foam/04/Camera_1.mp4",
+    "restitution": 1.0282279940096566,
+    "h_drop": 34.93278463648835,
+    "h_bounce": 36.93278463648835,
+    "valid": true,
+    "mass": 6.0
+  },
+  {
+    "obj": "m_coin_04",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/m_coin_04/glass/01/Camera_1.mp4",
+    "restitution": 0.6066898915761467,
+    "h_drop": 89.84404477637216,
+    "h_bounce": 33.06913336018937,
+    "valid": true,
+    "mass": 6.0
+  },
+  {
+    "obj": "m_coin_04",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/m_coin_04/glass/03/Camera_1.mp4",
+    "restitution": 0.8784560653041463,
+    "h_drop": 67.95473251028807,
+    "h_bounce": 52.439651744081516,
+    "valid": true,
+    "mass": 6.0
+  },
+  {
+    "obj": "m_coin_04",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/m_coin_04/glass/04/Camera_1.mp4",
+    "restitution": 0.9213326797380164,
+    "h_drop": 13.232230863782476,
+    "h_bounce": 11.232230863782476,
+    "valid": true,
+    "mass": 6.0
+  },
+  {
+    "obj": "p_block_01",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/p_block_01/foam/03/Camera_1.mp4",
+    "restitution": 0.9931795497796585,
+    "h_drop": 68.20164609053498,
+    "h_bounce": 67.27448686740742,
+    "valid": true,
+    "mass": 7.7
+  },
+  {
+    "obj": "p_block_01",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/p_block_01/glass/01/Camera_1.mp4",
+    "restitution": 0.6583867788726893,
+    "h_drop": 119.80141916035836,
+    "h_bounce": 51.930698609115524,
+    "valid": true,
+    "mass": 7.7
+  },
+  {
+    "obj": "p_block_01",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/p_block_01/glass/03/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 14.018417848829898,
+    "h_bounce": 76.0657035951053,
+    "valid": true,
+    "mass": 7.7
+  },
+  {
+    "obj": "p_block_01",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/p_block_01/glass/04/Camera_1.mp4",
+    "restitution": 1.264204392361909,
+    "h_drop": 41.625514403292186,
+    "h_bounce": 66.52642766429284,
+    "valid": true,
+    "mass": 7.7
+  },
+  {
+    "obj": "p_block_01",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/p_block_01/metal/04/Camera_1.mp4",
+    "restitution": 1.25221014334561,
+    "h_drop": 37.655320157835035,
+    "h_bounce": 59.044680821009294,
+    "valid": true,
+    "mass": 7.7
+  },
+  {
+    "obj": "p_block_01",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/p_block_01/rug/02/Camera_1.mp4",
+    "restitution": 1.4570480223171718,
+    "h_drop": 11.074074074074076,
+    "h_bounce": 23.510136772673192,
+    "valid": true,
+    "mass": 7.7
+  },
+  {
+    "obj": "p_block_01",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/p_block_01/table/01/Camera_1.mp4",
+    "restitution": 1.4613303201142762,
+    "h_drop": 22.897678199461495,
+    "h_bounce": 48.897678199461495,
+    "valid": true,
+    "mass": 7.7
+  },
+  {
+    "obj": "p_block_01",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/p_block_01/table/03/Camera_1.mp4",
+    "restitution": 0.8953880774217698,
+    "h_drop": 131.12757201646087,
+    "h_bounce": 105.12757201646087,
+    "valid": true,
+    "mass": 7.7
+  },
+  {
+    "obj": "p_block_01",
+    "sub_condition": "table/05",
+    "path": "phys101/scenarios/fall/p_block_01/table/05/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 17.633744855967052,
+    "h_bounce": 116.07682906865159,
+    "valid": true,
+    "mass": 7.7
+  },
+  {
+    "obj": "p_block_04",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/p_block_04/foam/03/Camera_1.mp4",
+    "restitution": 1.1082169448903125,
+    "h_drop": 55.87684804145712,
+    "h_bounce": 68.62486019163536,
+    "valid": true,
+    "mass": 10.4
+  },
+  {
+    "obj": "p_block_04",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/p_block_04/foam/04/Camera_1.mp4",
+    "restitution": 0.822417161807515,
+    "h_drop": 26.748900173251627,
+    "h_bounce": 18.092153290145745,
+    "valid": true,
+    "mass": 10.4
+  },
+  {
+    "obj": "p_block_04",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/p_block_04/glass/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 28.5186709343088,
+    "h_bounce": 87.0186709343088,
+    "valid": true,
+    "mass": 10.4
+  },
+  {
+    "obj": "p_block_04",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/p_block_04/glass/02/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 44.07361682670327,
+    "h_bounce": 105.07361682670327,
+    "valid": true,
+    "mass": 10.4
+  },
+  {
+    "obj": "p_block_04",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/p_block_04/glass/03/Camera_1.mp4",
+    "restitution": 1.2538717514161197,
+    "h_drop": 54.666666666666686,
+    "h_bounce": 85.9466255052966,
+    "valid": true,
+    "mass": 10.4
+  },
+  {
+    "obj": "p_block_04",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/p_block_04/glass/04/Camera_1.mp4",
+    "restitution": 1.1964405435770444,
+    "h_drop": 56.52842554488643,
+    "h_bounce": 80.91874386280222,
+    "valid": true,
+    "mass": 10.4
+  },
+  {
+    "obj": "p_block_04",
+    "sub_condition": "metal/02",
+    "path": "phys101/scenarios/fall/p_block_04/metal/02/Camera_1.mp4",
+    "restitution": 0.8333617228079898,
+    "h_drop": 50.97530864197532,
+    "h_bounce": 35.40193186839947,
+    "valid": true,
+    "mass": 10.4
+  },
+  {
+    "obj": "p_block_04",
+    "sub_condition": "metal/03",
+    "path": "phys101/scenarios/fall/p_block_04/metal/03/Camera_1.mp4",
+    "restitution": 0.9837733341867166,
+    "h_drop": 55.80887059899405,
+    "h_bounce": 54.012381550745616,
+    "valid": true,
+    "mass": 10.4
+  },
+  {
+    "obj": "p_block_04",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/p_block_04/metal/04/Camera_1.mp4",
+    "restitution": 1.2159775859079638,
+    "h_drop": 70.28395061728395,
+    "h_bounce": 103.92195406577993,
+    "valid": true,
+    "mass": 10.4
+  },
+  {
+    "obj": "p_block_04",
+    "sub_condition": "rug/01",
+    "path": "phys101/scenarios/fall/p_block_04/rug/01/Camera_1.mp4",
+    "restitution": 1.3248512225444053,
+    "h_drop": 50.17695473251027,
+    "h_bounce": 88.07213448383209,
+    "valid": true,
+    "mass": 10.4
+  },
+  {
+    "obj": "p_block_04",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/p_block_04/rug/02/Camera_1.mp4",
+    "restitution": 0.2180814078652053,
+    "h_drop": 59.84625814139363,
+    "h_bounce": 2.8462581413936334,
+    "valid": true,
+    "mass": 10.4
+  },
+  {
+    "obj": "p_block_04",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/p_block_04/rug/03/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 16.703703703703695,
+    "h_bounce": 89.53464672364754,
+    "valid": true,
+    "mass": 10.4
+  },
+  {
+    "obj": "p_block_04",
+    "sub_condition": "rug/04",
+    "path": "phys101/scenarios/fall/p_block_04/rug/04/Camera_1.mp4",
+    "restitution": 0.8930696408717417,
+    "h_drop": 39.24859015393994,
+    "h_bounce": 31.303630844593926,
+    "valid": true,
+    "mass": 10.4
+  },
+  {
+    "obj": "p_block_04",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/p_block_04/table/01/Camera_1.mp4",
+    "restitution": 0.7656213033369287,
+    "h_drop": 124.53863740283492,
+    "h_bounce": 73.00155784283169,
+    "valid": true,
+    "mass": 10.4
+  },
+  {
+    "obj": "p_block_04",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/p_block_04/table/03/Camera_1.mp4",
+    "restitution": 1.1478685790575143,
+    "h_drop": 63.826872597334415,
+    "h_bounce": 84.09843252682086,
+    "valid": true,
+    "mass": 10.4
+  },
+  {
+    "obj": "p_block_09",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/p_block_09/foam/02/Camera_1.mp4",
+    "restitution": 1.146282034454119,
+    "h_drop": 47.7764060356653,
+    "h_bounce": 62.7764060356653,
+    "valid": true,
+    "mass": 19.9
+  },
+  {
+    "obj": "p_block_09",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/p_block_09/glass/03/Camera_1.mp4",
+    "restitution": 1.2398074423521876,
+    "h_drop": 47.26032616979117,
+    "h_bounce": 72.64491043465003,
+    "valid": true,
+    "mass": 19.9
+  },
+  {
+    "obj": "p_block_09",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/p_block_09/glass/04/Camera_1.mp4",
+    "restitution": 0.5402050205805856,
+    "h_drop": 87.54854442920288,
+    "h_bounce": 25.548544429202877,
+    "valid": true,
+    "mass": 19.9
+  },
+  {
+    "obj": "p_block_09",
+    "sub_condition": "metal/01",
+    "path": "phys101/scenarios/fall/p_block_09/metal/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 32.07407407407405,
+    "h_bounce": 102.18277972902975,
+    "valid": true,
+    "mass": 19.9
+  },
+  {
+    "obj": "p_block_09",
+    "sub_condition": "metal/03",
+    "path": "phys101/scenarios/fall/p_block_09/metal/03/Camera_1.mp4",
+    "restitution": 0.5630528557682611,
+    "h_drop": 73.20949899993545,
+    "h_bounce": 23.209498999935448,
+    "valid": true,
+    "mass": 19.9
+  },
+  {
+    "obj": "p_block_09",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/p_block_09/metal/04/Camera_1.mp4",
+    "restitution": 0.6982870324944486,
+    "h_drop": 97.94114492483644,
+    "h_bounce": 47.756570399528215,
+    "valid": true,
+    "mass": 19.9
+  },
+  {
+    "obj": "p_block_09",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/p_block_09/rug/03/Camera_1.mp4",
+    "restitution": 1.1249530646612302,
+    "h_drop": 64.02545406420154,
+    "h_bounce": 81.02545406420154,
+    "valid": true,
+    "mass": 19.9
+  },
+  {
+    "obj": "p_block_09",
+    "sub_condition": "rug/04",
+    "path": "phys101/scenarios/fall/p_block_09/rug/04/Camera_1.mp4",
+    "restitution": 1.0150874243945,
+    "h_drop": 213.79835390946505,
+    "h_bounce": 220.29835390946505,
+    "valid": true,
+    "mass": 19.9
+  },
+  {
+    "obj": "p_block_09",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/p_block_09/table/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 20.975105420921636,
+    "h_bounce": 65.44973705216049,
+    "valid": true,
+    "mass": 19.9
+  },
+  {
+    "obj": "p_block_09",
+    "sub_condition": "table/02",
+    "path": "phys101/scenarios/fall/p_block_09/table/02/Camera_1.mp4",
+    "restitution": 0.8238131009473487,
+    "h_drop": 39.273281511964626,
+    "h_bounce": 26.65352041048095,
+    "valid": true,
+    "mass": 19.9
+  },
+  {
+    "obj": "p_block_09",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/p_block_09/table/03/Camera_1.mp4",
+    "restitution": 1.2394583916077004,
+    "h_drop": 53.84072549916169,
+    "h_bounce": 82.71319706096159,
+    "valid": true,
+    "mass": 19.9
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/p_block_12/foam/01/Camera_1.mp4",
+    "restitution": 0.3925355397582884,
+    "h_drop": 117.83696977568701,
+    "h_bounce": 18.156809323319806,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/p_block_12/foam/02/Camera_1.mp4",
+    "restitution": 0.9396814661269776,
+    "h_drop": 64.10325323036798,
+    "h_bounce": 56.60325323036798,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/p_block_12/foam/03/Camera_1.mp4",
+    "restitution": 0.8523384867255005,
+    "h_drop": 36.56051753628343,
+    "h_bounce": 26.560517536283427,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/p_block_12/foam/04/Camera_1.mp4",
+    "restitution": 0.528351293275956,
+    "h_drop": 122.07896410187209,
+    "h_bounce": 34.07896410187209,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/p_block_12/glass/01/Camera_1.mp4",
+    "restitution": 1.290230049169834,
+    "h_drop": 45.20301783264745,
+    "h_bounce": 75.24917357272486,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/p_block_12/glass/02/Camera_1.mp4",
+    "restitution": 1.4030143726182442,
+    "h_drop": 48.55704960663556,
+    "h_bounce": 95.58209175395382,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/p_block_12/glass/03/Camera_1.mp4",
+    "restitution": 1.0319209412384762,
+    "h_drop": 37.67785511467878,
+    "h_bounce": 40.12167203109664,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/p_block_12/glass/04/Camera_1.mp4",
+    "restitution": 0.9676417841817346,
+    "h_drop": 58.09190672153636,
+    "h_bounce": 54.39323118246338,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "glass/05",
+    "path": "phys101/scenarios/fall/p_block_12/glass/05/Camera_1.mp4",
+    "restitution": 0.9933309868207043,
+    "h_drop": 220.4609787351747,
+    "h_bounce": 217.53026955422584,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "glass/06",
+    "path": "phys101/scenarios/fall/p_block_12/glass/06/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 25.35360463344,
+    "h_bounce": 140.85360463344,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "metal/01",
+    "path": "phys101/scenarios/fall/p_block_12/metal/01/Camera_1.mp4",
+    "restitution": 0.9759340102642077,
+    "h_drop": 51.6556927297668,
+    "h_bounce": 49.199319511446475,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "metal/02",
+    "path": "phys101/scenarios/fall/p_block_12/metal/02/Camera_1.mp4",
+    "restitution": 0.9005122452369798,
+    "h_drop": 75.5864197530864,
+    "h_bounce": 61.2947136438104,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/p_block_12/rug/02/Camera_1.mp4",
+    "restitution": 0.22016040031733858,
+    "h_drop": 616.9015914298652,
+    "h_bounce": 29.90159142986522,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/p_block_12/rug/03/Camera_1.mp4",
+    "restitution": 0.09576618831733646,
+    "h_drop": 747.3541061957275,
+    "h_bounce": 6.854106195727468,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "rug/04",
+    "path": "phys101/scenarios/fall/p_block_12/rug/04/Camera_1.mp4",
+    "restitution": 0.9755337192710173,
+    "h_drop": 496.54525981803033,
+    "h_bounce": 472.54525981803033,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/p_block_12/table/01/Camera_1.mp4",
+    "restitution": 1.2914417403102159,
+    "h_drop": 46.5541838134431,
+    "h_bounce": 77.64408118418677,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/p_block_12/table/03/Camera_1.mp4",
+    "restitution": 1.4859268909938532,
+    "h_drop": 48.962532059062084,
+    "h_bounce": 108.1082291270796,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_block_12",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/p_block_12/table/04/Camera_1.mp4",
+    "restitution": 1.2532038685184597,
+    "h_drop": 75.16918152720626,
+    "h_bounce": 118.05469816651461,
+    "valid": true,
+    "mass": 28.4
+  },
+  {
+    "obj": "p_doll_03",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/p_doll_03/foam/01/Camera_1.mp4",
+    "restitution": 1.2193561469374428,
+    "h_drop": 41.082152110958674,
+    "h_bounce": 61.082152110958674,
+    "valid": true,
+    "mass": 11.5
+  },
+  {
+    "obj": "p_doll_03",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/p_doll_03/foam/02/Camera_1.mp4",
+    "restitution": 0.9551305503600264,
+    "h_drop": 39.89711934156378,
+    "h_bounce": 36.39711934156378,
+    "valid": true,
+    "mass": 11.5
+  },
+  {
+    "obj": "p_doll_03",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/p_doll_03/foam/04/Camera_1.mp4",
+    "restitution": 0.6206118077201542,
+    "h_drop": 19.51724154694716,
+    "h_bounce": 7.517241546947162,
+    "valid": true,
+    "mass": 11.5
+  },
+  {
+    "obj": "p_doll_03",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/p_doll_03/glass/02/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 32.70507544581619,
+    "h_bounce": 117.0197294538398,
+    "valid": true,
+    "mass": 11.5
+  },
+  {
+    "obj": "p_doll_03",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/p_doll_03/glass/03/Camera_1.mp4",
+    "restitution": 1.4610543994072507,
+    "h_drop": 58.827160493827165,
+    "h_bounce": 125.57716049382717,
+    "valid": true,
+    "mass": 11.5
+  },
+  {
+    "obj": "p_doll_03",
+    "sub_condition": "metal/01",
+    "path": "phys101/scenarios/fall/p_doll_03/metal/01/Camera_1.mp4",
+    "restitution": 1.4150776000662721,
+    "h_drop": 47.882944673068124,
+    "h_bounce": 95.88294467306812,
+    "valid": true,
+    "mass": 11.5
+  },
+  {
+    "obj": "p_doll_03",
+    "sub_condition": "metal/03",
+    "path": "phys101/scenarios/fall/p_doll_03/metal/03/Camera_1.mp4",
+    "restitution": 1.3746318805950106,
+    "h_drop": 33.16049382716051,
+    "h_bounce": 62.66049382716051,
+    "valid": true,
+    "mass": 11.5
+  },
+  {
+    "obj": "p_doll_03",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/p_doll_03/metal/04/Camera_1.mp4",
+    "restitution": 1.3144339334907111,
+    "h_drop": 19.074074074074048,
+    "h_bounce": 32.954975231059564,
+    "valid": true,
+    "mass": 11.5
+  },
+  {
+    "obj": "p_doll_03",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/p_doll_03/rug/02/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 10.17283950617285,
+    "h_bounce": 35.67283950617285,
+    "valid": true,
+    "mass": 11.5
+  },
+  {
+    "obj": "p_doll_03",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/p_doll_03/rug/03/Camera_1.mp4",
+    "restitution": 1.3298007582315061,
+    "h_drop": 47.14403292181069,
+    "h_bounce": 83.3680961659688,
+    "valid": true,
+    "mass": 11.5
+  },
+  {
+    "obj": "p_doll_03",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/p_doll_03/table/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 14.012345679012299,
+    "h_bounce": 115.5123456790123,
+    "valid": true,
+    "mass": 11.5
+  },
+  {
+    "obj": "p_doll_03",
+    "sub_condition": "table/02",
+    "path": "phys101/scenarios/fall/p_doll_03/table/02/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 26.249707869735346,
+    "h_bounce": 139.72165878725664,
+    "valid": true,
+    "mass": 11.5
+  },
+  {
+    "obj": "p_doll_03",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/p_doll_03/table/03/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 26.636488340192045,
+    "h_bounce": 147.52630317143425,
+    "valid": true,
+    "mass": 11.5
+  },
+  {
+    "obj": "p_doll_03",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/p_doll_03/table/04/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 12.222222222222229,
+    "h_bounce": 151.9223921918079,
+    "valid": true,
+    "mass": 11.5
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/p_doll_06/foam/01/Camera_1.mp4",
+    "restitution": 1.1092884334902633,
+    "h_drop": 95.4360615759793,
+    "h_bounce": 117.4360615759793,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/p_doll_06/foam/02/Camera_1.mp4",
+    "restitution": 0.927316555154014,
+    "h_drop": 117.7864654778235,
+    "h_bounce": 101.2864654778235,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/p_doll_06/foam/03/Camera_1.mp4",
+    "restitution": 0.7847748861242577,
+    "h_drop": 57.27251943301326,
+    "h_bounce": 35.27251943301326,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/p_doll_06/glass/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 25.63511659807955,
+    "h_bounce": 147.04833436252486,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/p_doll_06/glass/02/Camera_1.mp4",
+    "restitution": 1.040090248661987,
+    "h_drop": 100.42958390489255,
+    "h_bounce": 108.64349113150114,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/p_doll_06/glass/03/Camera_1.mp4",
+    "restitution": 0.9376856802155952,
+    "h_drop": 346.7352876424664,
+    "h_bounce": 304.8685393895107,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/p_doll_06/glass/04/Camera_1.mp4",
+    "restitution": 0.5823527345303338,
+    "h_drop": 76.93903368388965,
+    "h_bounce": 26.092696677175468,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "metal/01",
+    "path": "phys101/scenarios/fall/p_doll_06/metal/01/Camera_1.mp4",
+    "restitution": 0.8916336570194107,
+    "h_drop": 162.80643194634962,
+    "h_bounce": 129.43283561747995,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "metal/02",
+    "path": "phys101/scenarios/fall/p_doll_06/metal/02/Camera_1.mp4",
+    "restitution": 0.6597923474790071,
+    "h_drop": 69.13009534454434,
+    "h_bounce": 30.09412386202476,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "metal/03",
+    "path": "phys101/scenarios/fall/p_doll_06/metal/03/Camera_1.mp4",
+    "restitution": 0.8124677956624611,
+    "h_drop": 305.96420486940224,
+    "h_bounce": 201.968170704529,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/p_doll_06/metal/04/Camera_1.mp4",
+    "restitution": 1.1648308182047347,
+    "h_drop": 54.84682213077272,
+    "h_bounce": 74.41785947095991,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/p_doll_06/rug/02/Camera_1.mp4",
+    "restitution": 0.9462795430843688,
+    "h_drop": 521.2566235003642,
+    "h_bounce": 466.7566235003642,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/p_doll_06/rug/03/Camera_1.mp4",
+    "restitution": 0.6766949071302766,
+    "h_drop": 55.84865112025605,
+    "h_bounce": 25.57399077760536,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "rug/04",
+    "path": "phys101/scenarios/fall/p_doll_06/rug/04/Camera_1.mp4",
+    "restitution": 0.8764000951038826,
+    "h_drop": 263.0184730446716,
+    "h_bounce": 202.01847304467162,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/p_doll_06/table/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 50.789342105927346,
+    "h_bounce": 135.78934210592735,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/p_doll_06/table/03/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 51.50324871434458,
+    "h_bounce": 136.4485304986843,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_doll_06",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/p_doll_06/table/04/Camera_1.mp4",
+    "restitution": 1.447926271767098,
+    "h_drop": 84.360056901895,
+    "h_bounce": 176.860056901895,
+    "valid": true,
+    "mass": 34.7
+  },
+  {
+    "obj": "p_ring_01",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/p_ring_01/foam/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 31.09876543209876,
+    "h_bounce": 129.01288263796815,
+    "valid": true,
+    "mass": 51.1
+  },
+  {
+    "obj": "p_ring_01",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/p_ring_01/foam/02/Camera_1.mp4",
+    "restitution": 1.1123388967592558,
+    "h_drop": 52.676421277244316,
+    "h_bounce": 65.17642127724432,
+    "valid": true,
+    "mass": 51.1
+  },
+  {
+    "obj": "p_ring_01",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/p_ring_01/glass/01/Camera_1.mp4",
+    "restitution": 1.2449207426415145,
+    "h_drop": 69.51143118427069,
+    "h_bounce": 107.73073841992482,
+    "valid": true,
+    "mass": 51.1
+  },
+  {
+    "obj": "p_ring_01",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/p_ring_01/glass/02/Camera_1.mp4",
+    "restitution": 1.0955593432999122,
+    "h_drop": 67.41563786008231,
+    "h_bounce": 80.91563786008231,
+    "valid": true,
+    "mass": 51.1
+  },
+  {
+    "obj": "p_ring_01",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/p_ring_01/glass/03/Camera_1.mp4",
+    "restitution": 0.7680483541166678,
+    "h_drop": 158.6872377805501,
+    "h_bounce": 93.60932771404262,
+    "valid": true,
+    "mass": 51.1
+  },
+  {
+    "obj": "p_ring_01",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/p_ring_01/glass/04/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 18.740740740740705,
+    "h_bounce": 91.9781706718149,
+    "valid": true,
+    "mass": 51.1
+  },
+  {
+    "obj": "p_ring_01",
+    "sub_condition": "metal/01",
+    "path": "phys101/scenarios/fall/p_ring_01/metal/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 15.462839745301238,
+    "h_bounce": 44.89790674258312,
+    "valid": true,
+    "mass": 51.1
+  },
+  {
+    "obj": "p_ring_01",
+    "sub_condition": "metal/02",
+    "path": "phys101/scenarios/fall/p_ring_01/metal/02/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 31.26337448559667,
+    "h_bounce": 169.75570740191978,
+    "valid": true,
+    "mass": 51.1
+  },
+  {
+    "obj": "p_ring_01",
+    "sub_condition": "metal/03",
+    "path": "phys101/scenarios/fall/p_ring_01/metal/03/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 43.12650510592897,
+    "h_bounce": 116.14015707845925,
+    "valid": true,
+    "mass": 51.1
+  },
+  {
+    "obj": "p_ring_01",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/p_ring_01/metal/04/Camera_1.mp4",
+    "restitution": 0.7986537856036352,
+    "h_drop": 119.3727074124879,
+    "h_bounce": 76.1416270707355,
+    "valid": true,
+    "mass": 51.1
+  },
+  {
+    "obj": "p_ring_01",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/p_ring_01/rug/02/Camera_1.mp4",
+    "restitution": 1.1575823167863584,
+    "h_drop": 80.8831094036752,
+    "h_bounce": 108.3831094036752,
+    "valid": true,
+    "mass": 51.1
+  },
+  {
+    "obj": "p_ring_01",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/p_ring_01/rug/03/Camera_1.mp4",
+    "restitution": 1.1111861134060683,
+    "h_drop": 27.69084997205711,
+    "h_bounce": 34.19084997205711,
+    "valid": true,
+    "mass": 51.1
+  },
+  {
+    "obj": "p_ring_01",
+    "sub_condition": "rug/04",
+    "path": "phys101/scenarios/fall/p_ring_01/rug/04/Camera_1.mp4",
+    "restitution": 0.9339594831682106,
+    "h_drop": 73.71244220901283,
+    "h_bounce": 64.2979123979395,
+    "valid": true,
+    "mass": 51.1
+  },
+  {
+    "obj": "p_ring_01",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/p_ring_01/table/03/Camera_1.mp4",
+    "restitution": 1.4428744399469822,
+    "h_drop": 22.62277091906722,
+    "h_bounce": 47.09804475002417,
+    "valid": true,
+    "mass": 51.1
+  },
+  {
+    "obj": "p_ring_01",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/p_ring_01/table/04/Camera_1.mp4",
+    "restitution": 1.172392927257674,
+    "h_drop": 64.08311322946062,
+    "h_bounce": 88.0825708206424,
+    "valid": true,
+    "mass": 51.1
+  },
+  {
+    "obj": "p_ring_03",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/p_ring_03/foam/03/Camera_1.mp4",
+    "restitution": 0.9210695045272992,
+    "h_drop": 98.92438342036709,
+    "h_bounce": 83.92438342036709,
+    "valid": true,
+    "mass": 22.0
+  },
+  {
+    "obj": "p_ring_03",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/p_ring_03/foam/04/Camera_1.mp4",
+    "restitution": 0.8250469959328554,
+    "h_drop": 57.939703994333655,
+    "h_bounce": 39.439703994333655,
+    "valid": true,
+    "mass": 22.0
+  },
+  {
+    "obj": "p_ring_03",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/p_ring_03/glass/01/Camera_1.mp4",
+    "restitution": 1.0155002896180585,
+    "h_drop": 106.41975308641975,
+    "h_bounce": 109.74439537540479,
+    "valid": true,
+    "mass": 22.0
+  },
+  {
+    "obj": "p_ring_03",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/p_ring_03/glass/02/Camera_1.mp4",
+    "restitution": 0.6992989439649848,
+    "h_drop": 115.83539094650206,
+    "h_bounce": 56.64570855466553,
+    "valid": true,
+    "mass": 22.0
+  },
+  {
+    "obj": "p_ring_03",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/p_ring_03/glass/03/Camera_1.mp4",
+    "restitution": 0.3239079010792444,
+    "h_drop": 80.43940726771808,
+    "h_bounce": 8.439407267718082,
+    "valid": true,
+    "mass": 22.0
+  },
+  {
+    "obj": "p_ring_03",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/p_ring_03/glass/04/Camera_1.mp4",
+    "restitution": 0.9558812023522836,
+    "h_drop": 85.6558451455571,
+    "h_bounce": 78.26450573470436,
+    "valid": true,
+    "mass": 22.0
+  },
+  {
+    "obj": "p_ring_03",
+    "sub_condition": "metal/02",
+    "path": "phys101/scenarios/fall/p_ring_03/metal/02/Camera_1.mp4",
+    "restitution": 0.8448555608670131,
+    "h_drop": 83.85185185185185,
+    "h_bounce": 59.85185185185185,
+    "valid": true,
+    "mass": 22.0
+  },
+  {
+    "obj": "p_ring_03",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/p_ring_03/metal/04/Camera_1.mp4",
+    "restitution": 0.7461538362377619,
+    "h_drop": 87.98557976188036,
+    "h_bounce": 48.98557976188036,
+    "valid": true,
+    "mass": 22.0
+  },
+  {
+    "obj": "p_ring_03",
+    "sub_condition": "metal/05",
+    "path": "phys101/scenarios/fall/p_ring_03/metal/05/Camera_1.mp4",
+    "restitution": 1.3008598083467695,
+    "h_drop": 44.580246913580254,
+    "h_bounce": 75.44030945864039,
+    "valid": true,
+    "mass": 22.0
+  },
+  {
+    "obj": "p_ring_03",
+    "sub_condition": "rug/01",
+    "path": "phys101/scenarios/fall/p_ring_03/rug/01/Camera_1.mp4",
+    "restitution": 1.4989983864547132,
+    "h_drop": 22.0000686153695,
+    "h_bounce": 49.4340697555363,
+    "valid": true,
+    "mass": 22.0
+  },
+  {
+    "obj": "p_ring_03",
+    "sub_condition": "rug/04",
+    "path": "phys101/scenarios/fall/p_ring_03/rug/04/Camera_1.mp4",
+    "restitution": 0.055994198110602016,
+    "h_drop": 883.2693587801808,
+    "h_bounce": 2.7693587801808235,
+    "valid": true,
+    "mass": 22.0
+  },
+  {
+    "obj": "p_ring_03",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/p_ring_03/table/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 45.251486053955205,
+    "h_bounce": 146.6688213426669,
+    "valid": true,
+    "mass": 22.0
+  },
+  {
+    "obj": "p_ring_03",
+    "sub_condition": "table/02",
+    "path": "phys101/scenarios/fall/p_ring_03/table/02/Camera_1.mp4",
+    "restitution": 1.0612725268748722,
+    "h_drop": 23.75308641975309,
+    "h_bounce": 26.75308641975309,
+    "valid": true,
+    "mass": 22.0
+  },
+  {
+    "obj": "p_ring_03",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/p_ring_03/table/03/Camera_1.mp4",
+    "restitution": 1.1187142412233053,
+    "h_drop": 43.502057613168716,
+    "h_bounce": 54.44376272516831,
+    "valid": true,
+    "mass": 22.0
+  },
+  {
+    "obj": "p_ring_03",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/p_ring_03/table/04/Camera_1.mp4",
+    "restitution": 1.3437574994568438,
+    "h_drop": 26.39379159680942,
+    "h_bounce": 47.6588529222917,
+    "valid": true,
+    "mass": 22.0
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/p_ring_05/foam/01/Camera_1.mp4",
+    "restitution": 1.4382304942244137,
+    "h_drop": 29.948331047096474,
+    "h_bounce": 61.948331047096474,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/p_ring_05/foam/02/Camera_1.mp4",
+    "restitution": 1.1530806013287314,
+    "h_drop": 41.11796982167354,
+    "h_bounce": 54.67024186967059,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/p_ring_05/foam/03/Camera_1.mp4",
+    "restitution": 1.0571339572180511,
+    "h_drop": 24.52537722908093,
+    "h_bounce": 27.40789885656929,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/p_ring_05/foam/04/Camera_1.mp4",
+    "restitution": 1.2789935753688884,
+    "h_drop": 18.444444444444457,
+    "h_bounce": 30.171875325399142,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "foam/05",
+    "path": "phys101/scenarios/fall/p_ring_05/foam/05/Camera_1.mp4",
+    "restitution": 0.951408946397324,
+    "h_drop": 488.902738474289,
+    "h_bounce": 442.5444837373436,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/p_ring_05/glass/01/Camera_1.mp4",
+    "restitution": 1.06164069085633,
+    "h_drop": 62.213991769547334,
+    "h_bounce": 70.12020535017882,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/p_ring_05/glass/02/Camera_1.mp4",
+    "restitution": 0.12191788510250293,
+    "h_drop": 719.1900193814766,
+    "h_bounce": 10.690019381476645,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/p_ring_05/glass/03/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 15.271604938271594,
+    "h_bounce": 74.72137184773416,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "metal/01",
+    "path": "phys101/scenarios/fall/p_ring_05/metal/01/Camera_1.mp4",
+    "restitution": 0.8510259071129841,
+    "h_drop": 296.27560002359587,
+    "h_bounce": 214.57614996008806,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "metal/02",
+    "path": "phys101/scenarios/fall/p_ring_05/metal/02/Camera_1.mp4",
+    "restitution": 0.9999473229545277,
+    "h_drop": 527.3362466828017,
+    "h_bounce": 527.2806911152005,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "metal/03",
+    "path": "phys101/scenarios/fall/p_ring_05/metal/03/Camera_1.mp4",
+    "restitution": 0.6211312406737736,
+    "h_drop": 74.89466124601861,
+    "h_bounce": 28.894661246018615,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/p_ring_05/metal/04/Camera_1.mp4",
+    "restitution": 0.9468196434274787,
+    "h_drop": 604.4405448629785,
+    "h_bounce": 541.8612661810805,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "rug/01",
+    "path": "phys101/scenarios/fall/p_ring_05/rug/01/Camera_1.mp4",
+    "restitution": 0.6216288046758627,
+    "h_drop": 60.231265559111904,
+    "h_bounce": 23.27470843380155,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/p_ring_05/rug/03/Camera_1.mp4",
+    "restitution": 0.8141415520656522,
+    "h_drop": 69.69704821419498,
+    "h_bounce": 46.19704821419498,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "rug/04",
+    "path": "phys101/scenarios/fall/p_ring_05/rug/04/Camera_1.mp4",
+    "restitution": 1.1056388046059955,
+    "h_drop": 25.33093287433232,
+    "h_bounce": 30.96547380138233,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/p_ring_05/table/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 22.626733729614415,
+    "h_bounce": 51.33935199636093,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "table/02",
+    "path": "phys101/scenarios/fall/p_ring_05/table/02/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 13.46364883401921,
+    "h_bounce": 79.96364883401921,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/p_ring_05/table/03/Camera_1.mp4",
+    "restitution": 0.6537023934892371,
+    "h_drop": 31.121776224106924,
+    "h_bounce": 13.2991696433686,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/p_ring_05/table/04/Camera_1.mp4",
+    "restitution": 0.4604760601817397,
+    "h_drop": 113.8561200747439,
+    "h_bounce": 24.141846987401408,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_ring_05",
+    "sub_condition": "table/05",
+    "path": "phys101/scenarios/fall/p_ring_05/table/05/Camera_1.mp4",
+    "restitution": 1.0337347587441608,
+    "h_drop": 11.98821324857704,
+    "h_bounce": 12.810695205652706,
+    "valid": true,
+    "mass": 32.6
+  },
+  {
+    "obj": "p_toy_01",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/p_toy_01/foam/03/Camera_1.mp4",
+    "restitution": 0.6222601569187788,
+    "h_drop": 53.85185185185185,
+    "h_bounce": 20.851851851851848,
+    "valid": true,
+    "mass": 4.2
+  },
+  {
+    "obj": "p_toy_01",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/p_toy_01/foam/04/Camera_1.mp4",
+    "restitution": 1.078179300723963,
+    "h_drop": 44.62345679012344,
+    "h_bounce": 51.87345679012344,
+    "valid": true,
+    "mass": 4.2
+  },
+  {
+    "obj": "p_toy_01",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/p_toy_01/glass/01/Camera_1.mp4",
+    "restitution": 0.9858832848808604,
+    "h_drop": 133.76543209876542,
+    "h_bounce": 130.01543209876542,
+    "valid": true,
+    "mass": 4.2
+  },
+  {
+    "obj": "p_toy_01",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/p_toy_01/glass/02/Camera_1.mp4",
+    "restitution": 1.0134819230811205,
+    "h_drop": 119.8257887517147,
+    "h_bounce": 123.07853269085248,
+    "valid": true,
+    "mass": 4.2
+  },
+  {
+    "obj": "p_toy_01",
+    "sub_condition": "metal/05",
+    "path": "phys101/scenarios/fall/p_toy_01/metal/05/Camera_1.mp4",
+    "restitution": 0.9187739130402799,
+    "h_drop": 32.131687242798336,
+    "h_bounce": 27.123819298915123,
+    "valid": true,
+    "mass": 4.2
+  },
+  {
+    "obj": "p_toy_01",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/p_toy_01/rug/02/Camera_1.mp4",
+    "restitution": 1.2215344289959154,
+    "h_drop": 30.47873799725653,
+    "h_bounce": 45.47873799725653,
+    "valid": true,
+    "mass": 4.2
+  },
+  {
+    "obj": "p_toy_01",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/p_toy_01/table/01/Camera_1.mp4",
+    "restitution": 1.1488206891667252,
+    "h_drop": 26.554183813443075,
+    "h_bounce": 35.0459190598761,
+    "valid": true,
+    "mass": 4.2
+  },
+  {
+    "obj": "p_toy_01",
+    "sub_condition": "table/02",
+    "path": "phys101/scenarios/fall/p_toy_01/table/02/Camera_1.mp4",
+    "restitution": 1.3283639737303212,
+    "h_drop": 22.14403292181069,
+    "h_bounce": 39.07427204163581,
+    "valid": true,
+    "mass": 4.2
+  },
+  {
+    "obj": "p_toy_04",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/p_toy_04/foam/04/Camera_1.mp4",
+    "restitution": 0.961215646486578,
+    "h_drop": 54.93827160493825,
+    "h_bounce": 50.75942049105201,
+    "valid": true,
+    "mass": 5.8
+  },
+  {
+    "obj": "p_toy_04",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/p_toy_04/glass/03/Camera_1.mp4",
+    "restitution": 1.400799857427894,
+    "h_drop": 51.64814814814815,
+    "h_bounce": 101.34607464721763,
+    "valid": true,
+    "mass": 5.8
+  },
+  {
+    "obj": "p_toy_04",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/p_toy_04/metal/04/Camera_1.mp4",
+    "restitution": 1.0816791221922892,
+    "h_drop": 38.22861009552852,
+    "h_bounce": 44.72861009552852,
+    "valid": true,
+    "mass": 5.8
+  },
+  {
+    "obj": "p_toy_04",
+    "sub_condition": "metal/05",
+    "path": "phys101/scenarios/fall/p_toy_04/metal/05/Camera_1.mp4",
+    "restitution": 0.9902002476186036,
+    "h_drop": 17.666666666666657,
+    "h_bounce": 17.322105370116333,
+    "valid": true,
+    "mass": 5.8
+  },
+  {
+    "obj": "p_toy_04",
+    "sub_condition": "rug/01",
+    "path": "phys101/scenarios/fall/p_toy_04/rug/01/Camera_1.mp4",
+    "restitution": 1.1225946741402368,
+    "h_drop": 46.74074074074073,
+    "h_bounce": 58.90356031996025,
+    "valid": true,
+    "mass": 5.8
+  },
+  {
+    "obj": "p_toy_04",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/p_toy_04/table/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 15.957933241883865,
+    "h_bounce": 85.93068811398588,
+    "valid": true,
+    "mass": 5.8
+  },
+  {
+    "obj": "p_toy_04",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/p_toy_04/table/04/Camera_1.mp4",
+    "restitution": 1.4294949657462186,
+    "h_drop": 35.93827160493825,
+    "h_bounce": 73.43827160493825,
+    "valid": true,
+    "mass": 5.8
+  },
+  {
+    "obj": "rubber_01",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/rubber_01/foam/03/Camera_1.mp4",
+    "restitution": 1.220827507915504,
+    "h_drop": 31.32510288065842,
+    "h_bounce": 46.68755369827639,
+    "valid": true,
+    "mass": 10.7
+  },
+  {
+    "obj": "rubber_01",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/rubber_01/glass/03/Camera_1.mp4",
+    "restitution": 0.5326610216806865,
+    "h_drop": 74.6922710561937,
+    "h_bounce": 21.192271056193704,
+    "valid": true,
+    "mass": 10.7
+  },
+  {
+    "obj": "rubber_01",
+    "sub_condition": "glass/05",
+    "path": "phys101/scenarios/fall/rubber_01/glass/05/Camera_1.mp4",
+    "restitution": 1.0842813925815316,
+    "h_drop": 38.42798353909464,
+    "h_bounce": 45.178479010007464,
+    "valid": true,
+    "mass": 10.7
+  },
+  {
+    "obj": "rubber_01",
+    "sub_condition": "glass/06",
+    "path": "phys101/scenarios/fall/rubber_01/glass/06/Camera_1.mp4",
+    "restitution": 0.8346007880834853,
+    "h_drop": 52.72844586699182,
+    "h_bounce": 36.72844586699182,
+    "valid": true,
+    "mass": 10.7
+  },
+  {
+    "obj": "rubber_01",
+    "sub_condition": "metal/01",
+    "path": "phys101/scenarios/fall/rubber_01/metal/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 23.045267489711932,
+    "h_bounce": 99.9429421254314,
+    "valid": true,
+    "mass": 10.7
+  },
+  {
+    "obj": "rubber_01",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/rubber_01/rug/02/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 16.510288065843625,
+    "h_bounce": 49.821595416446854,
+    "valid": true,
+    "mass": 10.7
+  },
+  {
+    "obj": "rubber_01",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/rubber_01/table/01/Camera_1.mp4",
+    "restitution": 0.868491164761656,
+    "h_drop": 28.487350571137995,
+    "h_bounce": 21.487350571137995,
+    "valid": true,
+    "mass": 10.7
+  },
+  {
+    "obj": "rubber_01",
+    "sub_condition": "table/02",
+    "path": "phys101/scenarios/fall/rubber_01/table/02/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 18.395061728395063,
+    "h_bounce": 52.89506172839506,
+    "valid": true,
+    "mass": 10.7
+  },
+  {
+    "obj": "rubber_01",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/rubber_01/table/04/Camera_1.mp4",
+    "restitution": 1.2244946215339456,
+    "h_drop": 19.023319615912214,
+    "h_bounce": 28.523319615912214,
+    "valid": true,
+    "mass": 10.7
+  },
+  {
+    "obj": "rubber_05",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/rubber_05/foam/03/Camera_1.mp4",
+    "restitution": 1.0980049060565742,
+    "h_drop": 29.185185185185176,
+    "h_bounce": 35.186090433139,
+    "valid": true,
+    "mass": 40.7
+  },
+  {
+    "obj": "rubber_05",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/rubber_05/foam/04/Camera_1.mp4",
+    "restitution": 0.7908522699077711,
+    "h_drop": 138.3678470422869,
+    "h_bounce": 86.54179811304832,
+    "valid": true,
+    "mass": 40.7
+  },
+  {
+    "obj": "rubber_05",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/rubber_05/glass/03/Camera_1.mp4",
+    "restitution": 1.2705705421453628,
+    "h_drop": 37.0833714372809,
+    "h_bounce": 59.86552223330254,
+    "valid": true,
+    "mass": 40.7
+  },
+  {
+    "obj": "rubber_05",
+    "sub_condition": "glass/05",
+    "path": "phys101/scenarios/fall/rubber_05/glass/05/Camera_1.mp4",
+    "restitution": 0.3030601468397345,
+    "h_drop": 41.92503719484586,
+    "h_bounce": 3.8506240165381627,
+    "valid": true,
+    "mass": 40.7
+  },
+  {
+    "obj": "rubber_05",
+    "sub_condition": "metal/01",
+    "path": "phys101/scenarios/fall/rubber_05/metal/01/Camera_1.mp4",
+    "restitution": 1.1897397547754922,
+    "h_drop": 58.925925925925924,
+    "h_bounce": 83.40850994045772,
+    "valid": true,
+    "mass": 40.7
+  },
+  {
+    "obj": "rubber_05",
+    "sub_condition": "metal/03",
+    "path": "phys101/scenarios/fall/rubber_05/metal/03/Camera_1.mp4",
+    "restitution": 0.5998895566110681,
+    "h_drop": 85.97738483828326,
+    "h_bounce": 30.940464830008295,
+    "valid": true,
+    "mass": 40.7
+  },
+  {
+    "obj": "rubber_05",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/rubber_05/metal/04/Camera_1.mp4",
+    "restitution": 0.8012860045137103,
+    "h_drop": 79.33696123420285,
+    "h_bounce": 50.939030702362004,
+    "valid": true,
+    "mass": 40.7
+  },
+  {
+    "obj": "rubber_05",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/rubber_05/rug/02/Camera_1.mp4",
+    "restitution": 0.3709942830399519,
+    "h_drop": 843.4031673118925,
+    "h_bounce": 116.08327767650042,
+    "valid": true,
+    "mass": 40.7
+  },
+  {
+    "obj": "rubber_05",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/rubber_05/rug/03/Camera_1.mp4",
+    "restitution": 0.5899971456484348,
+    "h_drop": 107.8896882082195,
+    "h_bounce": 37.55603707914173,
+    "valid": true,
+    "mass": 40.7
+  },
+  {
+    "obj": "rubber_05",
+    "sub_condition": "rug/04",
+    "path": "phys101/scenarios/fall/rubber_05/rug/04/Camera_1.mp4",
+    "restitution": 0.45825471256077577,
+    "h_drop": 899.6805623571695,
+    "h_bounce": 188.9305623571695,
+    "valid": true,
+    "mass": 40.7
+  },
+  {
+    "obj": "rubber_05",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/rubber_05/table/04/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 19.436213991769563,
+    "h_bounce": 73.410890808617,
+    "valid": true,
+    "mass": 40.7
+  },
+  {
+    "obj": "w_block_01",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/w_block_01/foam/02/Camera_1.mp4",
+    "restitution": 0.8582947780349572,
+    "h_drop": 65.62962962962965,
+    "h_bounce": 48.347374402802956,
+    "valid": true,
+    "mass": 21.2
+  },
+  {
+    "obj": "w_block_01",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/w_block_01/foam/03/Camera_1.mp4",
+    "restitution": 0.552920637536885,
+    "h_drop": 88.58113308760835,
+    "h_bounce": 27.08113308760835,
+    "valid": true,
+    "mass": 21.2
+  },
+  {
+    "obj": "w_block_01",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/w_block_01/glass/01/Camera_1.mp4",
+    "restitution": 1.3213123511574258,
+    "h_drop": 13.968449931412891,
+    "h_bounce": 24.387046408062304,
+    "valid": true,
+    "mass": 21.2
+  },
+  {
+    "obj": "w_block_01",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/w_block_01/glass/02/Camera_1.mp4",
+    "restitution": 0.8720122927355947,
+    "h_drop": 70.96508267145364,
+    "h_bounce": 53.962234819890284,
+    "valid": true,
+    "mass": 21.2
+  },
+  {
+    "obj": "w_block_01",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/w_block_01/glass/03/Camera_1.mp4",
+    "restitution": 0.7639676313981996,
+    "h_drop": 88.42798353909464,
+    "h_bounce": 51.61068679307769,
+    "valid": true,
+    "mass": 21.2
+  },
+  {
+    "obj": "w_block_01",
+    "sub_condition": "metal/01",
+    "path": "phys101/scenarios/fall/w_block_01/metal/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 12.451760402377658,
+    "h_bounce": 98.16041885804262,
+    "valid": true,
+    "mass": 21.2
+  },
+  {
+    "obj": "w_block_01",
+    "sub_condition": "rug/01",
+    "path": "phys101/scenarios/fall/w_block_01/rug/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 10.40740740740739,
+    "h_bounce": 33.602982443192346,
+    "valid": true,
+    "mass": 21.2
+  },
+  {
+    "obj": "w_block_01",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/w_block_01/rug/03/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 22.189300411522623,
+    "h_bounce": 70.09571391047415,
+    "valid": true,
+    "mass": 21.2
+  },
+  {
+    "obj": "w_block_01",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/w_block_01/table/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 13.025809073820028,
+    "h_bounce": 135.51670632089073,
+    "valid": true,
+    "mass": 21.2
+  },
+  {
+    "obj": "w_block_01",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/w_block_01/table/03/Camera_1.mp4",
+    "restitution": 0.7200983406556419,
+    "h_drop": 108.0051821368694,
+    "h_bounce": 56.005182136869394,
+    "valid": true,
+    "mass": 21.2
+  },
+  {
+    "obj": "w_block_05",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/w_block_05/foam/01/Camera_1.mp4",
+    "restitution": 0.8055130310745761,
+    "h_drop": 65.49930636697977,
+    "h_bounce": 42.499306366979766,
+    "valid": true,
+    "mass": 110.3
+  },
+  {
+    "obj": "w_block_05",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/w_block_05/foam/02/Camera_1.mp4",
+    "restitution": 0.5897648285269519,
+    "h_drop": 77.12782914845181,
+    "h_bounce": 26.826798439249885,
+    "valid": true,
+    "mass": 110.3
+  },
+  {
+    "obj": "w_block_05",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/w_block_05/foam/03/Camera_1.mp4",
+    "restitution": 0.9401886183088349,
+    "h_drop": 512.7305303137056,
+    "h_bounce": 453.2305303137056,
+    "valid": true,
+    "mass": 110.3
+  },
+  {
+    "obj": "w_block_05",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/w_block_05/foam/04/Camera_1.mp4",
+    "restitution": 0.9262606671155248,
+    "h_drop": 45.76137819793905,
+    "h_bounce": 39.26137819793905,
+    "valid": true,
+    "mass": 110.3
+  },
+  {
+    "obj": "w_block_05",
+    "sub_condition": "foam/05",
+    "path": "phys101/scenarios/fall/w_block_05/foam/05/Camera_1.mp4",
+    "restitution": 0.5113008131414158,
+    "h_drop": 66.8939534879596,
+    "h_bounce": 17.487987358922922,
+    "valid": true,
+    "mass": 110.3
+  },
+  {
+    "obj": "w_block_05",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/w_block_05/glass/02/Camera_1.mp4",
+    "restitution": 1.4291614523451008,
+    "h_drop": 50.24112178021642,
+    "h_bounce": 102.61761467195458,
+    "valid": true,
+    "mass": 110.3
+  },
+  {
+    "obj": "w_block_05",
+    "sub_condition": "metal/01",
+    "path": "phys101/scenarios/fall/w_block_05/metal/01/Camera_1.mp4",
+    "restitution": 1.0710174136519635,
+    "h_drop": 107.37037037037038,
+    "h_bounce": 123.1622219519372,
+    "valid": true,
+    "mass": 110.3
+  },
+  {
+    "obj": "w_block_05",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/w_block_05/metal/04/Camera_1.mp4",
+    "restitution": 0.5130875956078547,
+    "h_drop": 118.76627721152866,
+    "h_bounce": 31.26627721152866,
+    "valid": true,
+    "mass": 110.3
+  },
+  {
+    "obj": "w_block_05",
+    "sub_condition": "rug/01",
+    "path": "phys101/scenarios/fall/w_block_05/rug/01/Camera_1.mp4",
+    "restitution": 0.8448171028202865,
+    "h_drop": 12.225619428424352,
+    "h_bounce": 8.725619428424352,
+    "valid": true,
+    "mass": 110.3
+  },
+  {
+    "obj": "w_block_05",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/w_block_05/rug/03/Camera_1.mp4",
+    "restitution": 0.607732460690604,
+    "h_drop": 49.94757437400676,
+    "h_bounce": 18.447574374006763,
+    "valid": true,
+    "mass": 110.3
+  },
+  {
+    "obj": "w_block_05",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/w_block_05/table/01/Camera_1.mp4",
+    "restitution": 1.0347455730248964,
+    "h_drop": 134.16278006401467,
+    "h_bounce": 143.6478740741173,
+    "valid": true,
+    "mass": 110.3
+  },
+  {
+    "obj": "w_block_05",
+    "sub_condition": "table/02",
+    "path": "phys101/scenarios/fall/w_block_05/table/02/Camera_1.mp4",
+    "restitution": 0.7943873132326157,
+    "h_drop": 47.34202103337907,
+    "h_bounce": 29.875239345682388,
+    "valid": true,
+    "mass": 110.3
+  },
+  {
+    "obj": "w_block_05",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/w_block_05/table/03/Camera_1.mp4",
+    "restitution": 1.323941708161558,
+    "h_drop": 51.65843621399176,
+    "h_bounce": 90.5480252258935,
+    "valid": true,
+    "mass": 110.3
+  },
+  {
+    "obj": "w_block_05",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/w_block_05/table/04/Camera_1.mp4",
+    "restitution": 0.9451322813359887,
+    "h_drop": 37.73113854595337,
+    "h_bounce": 33.704283887267536,
+    "valid": true,
+    "mass": 110.3
+  },
+  {
+    "obj": "w_block_08",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/w_block_08/foam/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 27.5083996990154,
+    "h_bounce": 64.84058863367488,
+    "valid": true,
+    "mass": 116.9
+  },
+  {
+    "obj": "w_block_08",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/w_block_08/foam/02/Camera_1.mp4",
+    "restitution": 1.0677053479254381,
+    "h_drop": 42.29583904892547,
+    "h_bounce": 48.21703277030349,
+    "valid": true,
+    "mass": 116.9
+  },
+  {
+    "obj": "w_block_08",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/w_block_08/foam/03/Camera_1.mp4",
+    "restitution": 0.8018902233023639,
+    "h_drop": 61.62947149911838,
+    "h_bounce": 39.62947149911838,
+    "valid": true,
+    "mass": 116.9
+  },
+  {
+    "obj": "w_block_08",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/w_block_08/foam/04/Camera_1.mp4",
+    "restitution": 0.9905350966872575,
+    "h_drop": 79.61689525883352,
+    "h_bounce": 78.11689525883352,
+    "valid": true,
+    "mass": 116.9
+  },
+  {
+    "obj": "w_block_08",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/w_block_08/glass/03/Camera_1.mp4",
+    "restitution": 0.7270406701303567,
+    "h_drop": 30.51719758166948,
+    "h_bounce": 16.131028586358525,
+    "valid": true,
+    "mass": 116.9
+  },
+  {
+    "obj": "w_block_08",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/w_block_08/glass/04/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 36.14814814814815,
+    "h_bounce": 97.88627524033713,
+    "valid": true,
+    "mass": 116.9
+  },
+  {
+    "obj": "w_block_08",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/w_block_08/metal/04/Camera_1.mp4",
+    "restitution": 0.3323101357838077,
+    "h_drop": 132.1136231249414,
+    "h_bounce": 14.5893108821748,
+    "valid": true,
+    "mass": 116.9
+  },
+  {
+    "obj": "w_block_08",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/w_block_08/rug/02/Camera_1.mp4",
+    "restitution": 0.711315243133425,
+    "h_drop": 131.45679012345678,
+    "h_bounce": 66.51310995325288,
+    "valid": true,
+    "mass": 116.9
+  },
+  {
+    "obj": "w_block_08",
+    "sub_condition": "rug/04",
+    "path": "phys101/scenarios/fall/w_block_08/rug/04/Camera_1.mp4",
+    "restitution": 0.6268053281296859,
+    "h_drop": 118.09876543209876,
+    "h_bounce": 46.3992239346949,
+    "valid": true,
+    "mass": 116.9
+  },
+  {
+    "obj": "w_block_08",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/w_block_08/table/01/Camera_1.mp4",
+    "restitution": 1.0151328221916887,
+    "h_drop": 43.48148148148147,
+    "h_bounce": 44.80743389685452,
+    "valid": true,
+    "mass": 116.9
+  },
+  {
+    "obj": "w_block_08",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/w_block_08/table/03/Camera_1.mp4",
+    "restitution": 1.1905419405923436,
+    "h_drop": 62.40329218106996,
+    "h_bounce": 88.44980931300202,
+    "valid": true,
+    "mass": 116.9
+  },
+  {
+    "obj": "w_block_08",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/w_block_08/table/04/Camera_1.mp4",
+    "restitution": 0.8816187750957523,
+    "h_drop": 123.74813290656908,
+    "h_bounce": 96.183442292938,
+    "valid": true,
+    "mass": 116.9
+  },
+  {
+    "obj": "w_block_10",
+    "sub_condition": "foam/03",
+    "path": "phys101/scenarios/fall/w_block_10/foam/03/Camera_1.mp4",
+    "restitution": 0.9582970696969324,
+    "h_drop": 65.11111111111111,
+    "h_bounce": 59.793699826753354,
+    "valid": true,
+    "mass": 230.8
+  },
+  {
+    "obj": "w_block_10",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/w_block_10/glass/01/Camera_1.mp4",
+    "restitution": 1.1813171622655605,
+    "h_drop": 68.76543209876544,
+    "h_bounce": 95.96286450491093,
+    "valid": true,
+    "mass": 230.8
+  },
+  {
+    "obj": "w_block_10",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/w_block_10/glass/02/Camera_1.mp4",
+    "restitution": 1.2507168100576898,
+    "h_drop": 63.038408779149535,
+    "h_bounce": 98.61051252118986,
+    "valid": true,
+    "mass": 230.8
+  },
+  {
+    "obj": "w_block_10",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/w_block_10/glass/03/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 22.45404663923182,
+    "h_bounce": 73.20969950301208,
+    "valid": true,
+    "mass": 230.8
+  },
+  {
+    "obj": "w_block_10",
+    "sub_condition": "metal/02",
+    "path": "phys101/scenarios/fall/w_block_10/metal/02/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 19.957475994513032,
+    "h_bounce": 46.947386376828206,
+    "valid": true,
+    "mass": 230.8
+  },
+  {
+    "obj": "w_block_10",
+    "sub_condition": "metal/03",
+    "path": "phys101/scenarios/fall/w_block_10/metal/03/Camera_1.mp4",
+    "restitution": 0.7908406587720316,
+    "h_drop": 121.87608596250573,
+    "h_bounce": 76.22483217711286,
+    "valid": true,
+    "mass": 230.8
+  },
+  {
+    "obj": "w_block_10",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/w_block_10/metal/04/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 24.037037037037038,
+    "h_bounce": 64.45153975581297,
+    "valid": true,
+    "mass": 230.8
+  },
+  {
+    "obj": "w_block_10",
+    "sub_condition": "rug/04",
+    "path": "phys101/scenarios/fall/w_block_10/rug/04/Camera_1.mp4",
+    "restitution": 1.0091049206796119,
+    "h_drop": 46.27983539094649,
+    "h_bounce": 47.12642043048993,
+    "valid": true,
+    "mass": 230.8
+  },
+  {
+    "obj": "w_block_10",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/w_block_10/table/01/Camera_1.mp4",
+    "restitution": 1.2701207968241461,
+    "h_drop": 74.08692181223279,
+    "h_bounce": 119.51752891277604,
+    "valid": true,
+    "mass": 230.8
+  },
+  {
+    "obj": "w_block_10",
+    "sub_condition": "table/02",
+    "path": "phys101/scenarios/fall/w_block_10/table/02/Camera_1.mp4",
+    "restitution": 0.6252055853345736,
+    "h_drop": 205.6052939084489,
+    "h_bounce": 80.36741341438625,
+    "valid": true,
+    "mass": 230.8
+  },
+  {
+    "obj": "w_pole_03",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/w_pole_03/foam/04/Camera_1.mp4",
+    "restitution": 1.4281765442647059,
+    "h_drop": 12.18518518518519,
+    "h_bounce": 24.853978943793038,
+    "valid": true,
+    "mass": 12.3
+  },
+  {
+    "obj": "w_pole_03",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/w_pole_03/glass/02/Camera_1.mp4",
+    "restitution": 0.5207811082738807,
+    "h_drop": 82.67995130221416,
+    "h_bounce": 22.423874551456663,
+    "valid": true,
+    "mass": 12.3
+  },
+  {
+    "obj": "w_pole_03",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/w_pole_03/glass/03/Camera_1.mp4",
+    "restitution": 0.9004116350504265,
+    "h_drop": 39.62825788751715,
+    "h_bounce": 32.12825788751715,
+    "valid": true,
+    "mass": 12.3
+  },
+  {
+    "obj": "w_pole_03",
+    "sub_condition": "glass/04",
+    "path": "phys101/scenarios/fall/w_pole_03/glass/04/Camera_1.mp4",
+    "restitution": 0.8444579997623105,
+    "h_drop": 29.641975308642003,
+    "h_bounce": 21.13796865905573,
+    "valid": true,
+    "mass": 12.3
+  },
+  {
+    "obj": "w_pole_03",
+    "sub_condition": "metal/02",
+    "path": "phys101/scenarios/fall/w_pole_03/metal/02/Camera_1.mp4",
+    "restitution": 0.4495726578838792,
+    "h_drop": 23.812972653596518,
+    "h_bounce": 4.812972653596518,
+    "valid": true,
+    "mass": 12.3
+  },
+  {
+    "obj": "w_pole_03",
+    "sub_condition": "rug/04",
+    "path": "phys101/scenarios/fall/w_pole_03/rug/04/Camera_1.mp4",
+    "restitution": 1.188050916090014,
+    "h_drop": 18.22755368919897,
+    "h_bounce": 25.72755368919897,
+    "valid": true,
+    "mass": 12.3
+  },
+  {
+    "obj": "w_pole_03",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/w_pole_03/table/01/Camera_1.mp4",
+    "restitution": 0.9934640896120022,
+    "h_drop": 72.81862520957174,
+    "h_bounce": 71.86986386678271,
+    "valid": true,
+    "mass": 12.3
+  },
+  {
+    "obj": "w_pole_03",
+    "sub_condition": "table/02",
+    "path": "phys101/scenarios/fall/w_pole_03/table/02/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 20.864197530864203,
+    "h_bounce": 60.84850574193442,
+    "valid": true,
+    "mass": 12.3
+  },
+  {
+    "obj": "w_pole_03",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/w_pole_03/table/03/Camera_1.mp4",
+    "restitution": 1.1795827549864637,
+    "h_drop": 37.92181069958849,
+    "h_bounce": 52.76499428009595,
+    "valid": true,
+    "mass": 12.3
+  },
+  {
+    "obj": "w_pole_03",
+    "sub_condition": "table/04",
+    "path": "phys101/scenarios/fall/w_pole_03/table/04/Camera_1.mp4",
+    "restitution": 0.8715083174063198,
+    "h_drop": 98.17832647462276,
+    "h_bounce": 74.56906496345188,
+    "valid": true,
+    "mass": 12.3
+  },
+  {
+    "obj": "w_pole_05",
+    "sub_condition": "foam/01",
+    "path": "phys101/scenarios/fall/w_pole_05/foam/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 17.95884773662553,
+    "h_bounce": 120.95884773662553,
+    "valid": true,
+    "mass": 19.0
+  },
+  {
+    "obj": "w_pole_05",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/w_pole_05/foam/02/Camera_1.mp4",
+    "restitution": 0.4771202001578668,
+    "h_drop": 54.37904656956161,
+    "h_bounce": 12.37904656956161,
+    "valid": true,
+    "mass": 19.0
+  },
+  {
+    "obj": "w_pole_05",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/w_pole_05/foam/04/Camera_1.mp4",
+    "restitution": 0.8415956946927249,
+    "h_drop": 58.275720164609055,
+    "h_bounce": 41.275720164609055,
+    "valid": true,
+    "mass": 19.0
+  },
+  {
+    "obj": "w_pole_05",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/w_pole_05/glass/02/Camera_1.mp4",
+    "restitution": 1.2694329039721373,
+    "h_drop": 29.3456790123457,
+    "h_bounce": 47.289384898794054,
+    "valid": true,
+    "mass": 19.0
+  },
+  {
+    "obj": "w_pole_05",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/w_pole_05/glass/03/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 13.664722267696078,
+    "h_bounce": 40.16472226769608,
+    "valid": true,
+    "mass": 19.0
+  },
+  {
+    "obj": "w_pole_05",
+    "sub_condition": "metal/01",
+    "path": "phys101/scenarios/fall/w_pole_05/metal/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 14.935528120713315,
+    "h_bounce": 44.93541889295051,
+    "valid": true,
+    "mass": 19.0
+  },
+  {
+    "obj": "w_pole_05",
+    "sub_condition": "metal/02",
+    "path": "phys101/scenarios/fall/w_pole_05/metal/02/Camera_1.mp4",
+    "restitution": 1.3180786672252476,
+    "h_drop": 13.855967078189309,
+    "h_bounce": 24.07240630811424,
+    "valid": true,
+    "mass": 19.0
+  },
+  {
+    "obj": "w_pole_05",
+    "sub_condition": "metal/03",
+    "path": "phys101/scenarios/fall/w_pole_05/metal/03/Camera_1.mp4",
+    "restitution": 0.9386155344168038,
+    "h_drop": 41.987654320987644,
+    "h_bounce": 36.9910865684752,
+    "valid": true,
+    "mass": 19.0
+  },
+  {
+    "obj": "w_pole_05",
+    "sub_condition": "metal/04",
+    "path": "phys101/scenarios/fall/w_pole_05/metal/04/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 16.48148148148148,
+    "h_bounce": 38.73421603935873,
+    "valid": true,
+    "mass": 19.0
+  },
+  {
+    "obj": "w_pole_05",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/w_pole_05/rug/03/Camera_1.mp4",
+    "restitution": 0.45969181632364015,
+    "h_drop": 79.24599060311695,
+    "h_bounce": 16.74599060311695,
+    "valid": true,
+    "mass": 19.0
+  },
+  {
+    "obj": "w_pole_05",
+    "sub_condition": "table/01",
+    "path": "phys101/scenarios/fall/w_pole_05/table/01/Camera_1.mp4",
+    "restitution": 0.3012246353564364,
+    "h_drop": 67.63714279060744,
+    "h_bounce": 6.137142790607442,
+    "valid": true,
+    "mass": 19.0
+  },
+  {
+    "obj": "w_pole_07",
+    "sub_condition": "foam/02",
+    "path": "phys101/scenarios/fall/w_pole_07/foam/02/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 18.839506172839492,
+    "h_bounce": 62.977290047248886,
+    "valid": true,
+    "mass": 27.1
+  },
+  {
+    "obj": "w_pole_07",
+    "sub_condition": "foam/04",
+    "path": "phys101/scenarios/fall/w_pole_07/foam/04/Camera_1.mp4",
+    "restitution": 0.5640747732713149,
+    "h_drop": 89.98377618587952,
+    "h_bounce": 28.63106938684507,
+    "valid": true,
+    "mass": 27.1
+  },
+  {
+    "obj": "w_pole_07",
+    "sub_condition": "glass/01",
+    "path": "phys101/scenarios/fall/w_pole_07/glass/01/Camera_1.mp4",
+    "restitution": 1.5,
+    "h_drop": 30.564198095367118,
+    "h_bounce": 88.4415866991542,
+    "valid": true,
+    "mass": 27.1
+  },
+  {
+    "obj": "w_pole_07",
+    "sub_condition": "glass/02",
+    "path": "phys101/scenarios/fall/w_pole_07/glass/02/Camera_1.mp4",
+    "restitution": 0.7119028157345977,
+    "h_drop": 33.45536899314584,
+    "h_bounce": 16.95536899314584,
+    "valid": true,
+    "mass": 27.1
+  },
+  {
+    "obj": "w_pole_07",
+    "sub_condition": "glass/03",
+    "path": "phys101/scenarios/fall/w_pole_07/glass/03/Camera_1.mp4",
+    "restitution": 1.3901777656736516,
+    "h_drop": 15.919753086419746,
+    "h_bounce": 30.76642280140222,
+    "valid": true,
+    "mass": 27.1
+  },
+  {
+    "obj": "w_pole_07",
+    "sub_condition": "glass/05",
+    "path": "phys101/scenarios/fall/w_pole_07/glass/05/Camera_1.mp4",
+    "restitution": 0.5697564044216746,
+    "h_drop": 63.668083569013305,
+    "h_bounce": 20.668083569013305,
+    "valid": true,
+    "mass": 27.1
+  },
+  {
+    "obj": "w_pole_07",
+    "sub_condition": "metal/05",
+    "path": "phys101/scenarios/fall/w_pole_07/metal/05/Camera_1.mp4",
+    "restitution": 1.0763300525174813,
+    "h_drop": 106.46639231824417,
+    "h_bounce": 123.33986563627512,
+    "valid": true,
+    "mass": 27.1
+  },
+  {
+    "obj": "w_pole_07",
+    "sub_condition": "rug/02",
+    "path": "phys101/scenarios/fall/w_pole_07/rug/02/Camera_1.mp4",
+    "restitution": 1.033792427009678,
+    "h_drop": 44.42386831275721,
+    "h_bounce": 47.47697783221787,
+    "valid": true,
+    "mass": 27.1
+  },
+  {
+    "obj": "w_pole_07",
+    "sub_condition": "rug/03",
+    "path": "phys101/scenarios/fall/w_pole_07/rug/03/Camera_1.mp4",
+    "restitution": 1.013453270284241,
+    "h_drop": 55.37603250886954,
+    "h_bounce": 56.87603250886954,
+    "valid": true,
+    "mass": 27.1
+  },
+  {
+    "obj": "w_pole_07",
+    "sub_condition": "table/02",
+    "path": "phys101/scenarios/fall/w_pole_07/table/02/Camera_1.mp4",
+    "restitution": 0.7986969149372563,
+    "h_drop": 115.9954275262917,
+    "h_bounce": 73.9954275262917,
+    "valid": true,
+    "mass": 27.1
+  },
+  {
+    "obj": "w_pole_07",
+    "sub_condition": "table/03",
+    "path": "phys101/scenarios/fall/w_pole_07/table/03/Camera_1.mp4",
+    "restitution": 0.7318261292345868,
+    "h_drop": 128.67078189300412,
+    "h_bounce": 68.91214419103194,
+    "valid": true,
+    "mass": 27.1
+  }
+]
