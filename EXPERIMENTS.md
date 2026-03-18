@@ -6131,3 +6131,107 @@ Need 2000+ CoPhy scenes with V-JEPA 2 extraction at 48 frames (24 temporal posit
 
 ### Files
 - `results/phase86b_cophy_training.json`
+
+---
+
+## Phase 87: Physics 101 — Real-Video Emergent Communication
+**Date:** Mar 17-18 | **Duration:** ~10 hours overnight
+
+### Dataset
+MIT Physics 101 (Wu et al. BMVC 2016): 101 real objects, 15 materials, measured mass (0.1-269.9g) and volume (0.5-2515.4ml). 3 scenarios: spring (206 trials), fall (666 trials), ramp (1802 trials). Real camera footage at 1920×1080, 30fps.
+
+### Step 1: Feature Extraction
+- V-JEPA 2 ViT-L features: 16 frames → (N, 8, 1024) per scenario
+- DINOv2 ViT-S static features: middle frame → (N, 384) per scenario
+- Spring: 206, Fall: 666, Ramp: 1801 (1 corrupted), extraction ~70 min total
+
+### Step 1.5: Probe Gate — Dynamics vs Appearance
+
+| Scenario | V-JEPA2 AUC | DINOv2 Static | Volume Only | Gap |
+|----------|-------------|---------------|-------------|---------|
+| **Spring** | **0.905** | 0.819 | 0.761 | **+0.086** |
+| Fall | 0.657 | 0.718 | 0.531 | -0.061 |
+| Ramp | 0.727 | 0.817 | 0.733 | -0.090 |
+
+**Key finding:** V-JEPA 2 temporal features beat DINOv2 static on spring (+0.086), confirming dynamics contribute for mass inference. On fall/ramp, appearance dominates.
+
+### Step 2: Spring Mass Communication
+- 2-agent: **84.1% ± 5.6%** holdout (chance 50%), best seed 90.6%
+- 4-agent: 83.4% ± 6.3%
+- TopSim: 0.57-0.79, mass-symbol |ρ|: 0.71-0.90
+
+### Step 3: Fall Restitution Extraction
+- Automated bounce tracking: 383/666 valid trials
+- Restitution range: [0.027, 1.500] (values >1.0 are tracking errors)
+
+### Step 4: Two-Property Compositionality
+- 2-agent: both=55.0%, PosDis=0.318, 3/10 compositional
+- 4-agent: both=52.5%, PosDis=0.357, 2/10 compositional
+
+### Files
+- `results/phase87_phys101.json`, `results/phase87_phys101_{spring,fall,ramp}_features.pt`
+
+---
+
+## Phase 87b: Clean Restitution + Stabilized Training
+**Date:** Mar 18 | **Duration:** 47 min
+
+- Filtered restitution to 0.05 < e < 0.95 → 178 valid trials
+- Mass-restitution correlation drops to ρ=-0.046 (independent!)
+- Two-property (cleaned): both=51.6%, **PosDis=0.422** (up from 0.318), **5/10 comp**
+- Spring mass (stabilized lr=3e-4): **85.6% ± 5.8%**, only 2 NaN events
+
+---
+
+## Phase 87c: Anti-Shortcut Controls
+**Date:** Mar 18 | **Duration:** ~3.3 hrs
+
+| Experiment | Result | Interpretation |
+|-----------|--------|---------------|
+| Exp 1: Static DINOv2 comm | 72.9% ± 13.2% | Temporal gap: +11.2% over static |
+| Exp 2: Within-material holdout | 85.0% ± 6.2% | Protocol works within same material |
+| Exp 3: Volume-residualized mass | 80.1% ± 6.6% | Mass comm survives after removing size |
+| Exp 4: Cross-scenario (spring→fall) | 58.7% | Modest cross-scenario transfer |
+| Exp 5: Ramp collision-only | 80.7% vs full 81.5% | Mass signal throughout, not just collision |
+
+---
+
+## Phase 87d: Extended Compositionality Sweep
+**Date:** Mar 18 | **Duration:** ~4.5 hrs
+
+### Exp 6: Stabilized 4-agent (20 seeds, 600 epochs)
+- Both: 52.8% ± 16.1%, PosDis: 0.417 ± 0.147, 9/20 compositional
+
+### Exp 7: Agent Scaling — THE KEY REAL-VIDEO RESULT
+
+| Agents | Both Acc | PosDis | Comp Rate |
+|--------|----------|--------|-----------|
+| 1 | 50.8% | 0.294 | 2/10 |
+| 2 | 55.0% | 0.325 | 3/10 |
+| **4** | 49.9% | **0.483** | **9/10** |
+
+**PosDis increases monotonically with agent count (0.29 → 0.33 → 0.48). Compositionality rate: 20% → 30% → 90%. This replicates the paper's central finding on real video.**
+
+---
+
+## Phase 87h: Message Reuse & Vocabulary Sweep
+**Date:** Mar 18 | **Duration:** ~1 hr
+
+### Exp 12: Frozen Message Downstream Prediction
+- Mass bin: 69.9% (chance 20%) — messages retain mass info
+- Material: 15.4% (chance 11.1%) — no material encoding
+- Density: 29.1% (chance 20%) — slight above chance
+
+### Exp 13: Vocabulary Sweep
+
+| Vocab | Holdout | TopSim | Entropy |
+|-------|---------|--------|---------|
+| 2×3 | 81.1% | 0.509 | 0.811 |
+| **2×5** | **83.6%** | 0.500 | 0.696 |
+| 2×8 | 77.9% | 0.507 | 0.456 |
+| 2×10 | 75.8% | 0.465 | 0.392 |
+
+Small vocab (9 messages) nearly matches default (25). Larger vocabs don't help.
+
+### Exp 14: Multi-Scenario Joint Training
+- Joint (spring+fall+ramp): 65.5% (vs 84.1% spring-only)
