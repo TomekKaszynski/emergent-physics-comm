@@ -1,36 +1,36 @@
 {
   "mi_matrix": [
     [
-      0.05115827965579538,
-      0.4705281462222206
+      0.0,
+      0.0
     ],
     [
-      0.06726005269289415,
-      0.6068929322066762
+      0.0,
+      0.0
     ],
     [
-      0.5963998401118541,
-      0.0010945020873568967
+      0.0,
+      0.0
     ],
     [
-      0.5777383829413327,
-      9.043159754169687e-05
+      0.0,
+      0.0
     ],
     [
-      0.10734938852050638,
-      0.8576591215728203
+      0.0,
+      0.0
     ],
     [
-      0.039744476165583395,
-      0.8466735663658439
+      0.0,
+      0.0
     ],
     [
-      0.4698610068841386,
-      0.46268717162489037
+      0.0,
+      0.0
     ],
     [
-      0.3973085795806469,
-      0.48168129675017735
+      0.0,
+      0.0
     ]
   ],
   "step1_action_conditioned": {
@@ -38,43 +38,43 @@
       {
         "held_vel_bin": 0,
         "n_test": 120,
-        "mean_acc": 0.9574999809265137,
-        "std_acc": 0.002499997615814209
+        "mean_acc": 0.3333333432674408,
+        "std_acc": 0.0
       },
       {
         "held_vel_bin": 1,
         "n_test": 120,
-        "mean_acc": 0.8604166746139527,
-        "std_acc": 0.009816020378635156
+        "mean_acc": 0.36666667461395264,
+        "std_acc": 0.0
       },
       {
         "held_vel_bin": 2,
         "n_test": 120,
-        "mean_acc": 0.925000011920929,
+        "mean_acc": 0.4166666567325592,
         "std_acc": 0.0
       },
       {
         "held_vel_bin": 3,
         "n_test": 120,
-        "mean_acc": 0.9166666865348816,
+        "mean_acc": 0.4583333432674408,
         "std_acc": 0.0
       },
       {
         "held_vel_bin": 4,
         "n_test": 120,
-        "mean_acc": 0.9166666865348816,
+        "mean_acc": 0.32499998807907104,
         "std_acc": 0.0
       }
     ],
-    "overall_mean": 0.9152500081062318,
-    "overall_std": 0.03127564929819066,
+    "overall_mean": 0.3800000011920929,
+    "overall_std": 0.050717082154132426,
     "raw_features_mean": 0.9237500131130219,
     "raw_features_std": 0.006601235170296749
   },
   "step2_selective_querying": {
     "mass_ratio_relevant": {
-      "mean": 0.8561834733893556,
-      "std": 0.0026737589730188405,
+      "mean": 0.5966386554621848,
+      "std": 1.1102230246251565e-16,
       "positions": [
         6,
         7
@@ -82,8 +82,8 @@
       "n_dims": 10
     },
     "mass_ratio_irrelevant": {
-      "mean": 0.8259978991596638,
-      "std": 0.010009594212570467,
+      "mean": 0.5966386554621848,
+      "std": 1.1102230246251565e-16,
       "positions": [
         2,
         3,
@@ -93,8 +93,8 @@
       "n_dims": 20
     },
     "mass_ratio_all": {
-      "mean": 0.8881512605042016,
-      "std": 0.0039678516300677555,
+      "mean": 0.5966386554621848,
+      "std": 1.1102230246251565e-16,
       "positions": [
         0,
         1,
@@ -108,8 +108,8 @@
       "n_dims": 40
     },
     "restitution_relevant": {
-      "mean": 0.9045098039215687,
-      "std": 0.012829169877501061,
+      "mean": 0.5966386554621848,
+      "std": 1.1102230246251565e-16,
       "positions": [
         2,
         3,
@@ -119,8 +119,8 @@
       "n_dims": 20
     },
     "restitution_irrelevant": {
-      "mean": 0.8578711484593837,
-      "std": 0.00321400345391706,
+      "mean": 0.5966386554621848,
+      "std": 1.1102230246251565e-16,
       "positions": [
         6,
         7
@@ -128,8 +128,8 @@
       "n_dims": 10
     },
     "restitution_all": {
-      "mean": 0.9135189075630252,
-      "std": 0.003795070815622084,
+      "mean": 0.5966386554621848,
+      "std": 1.1102230246251565e-16,
       "positions": [
         0,
         1,
@@ -147,66 +147,66 @@
     "per_seed": [
       {
         "seed": 0,
-        "regression_r": 0.7750419491459047,
-        "regression_p": 2.822794663206557e-25,
+        "regression_r": 0.0,
+        "regression_p": 1.0,
         "monotonic_fraction": 1.0
       },
       {
         "seed": 1,
-        "regression_r": 0.7734759328224879,
-        "regression_p": 4.042720575483744e-25,
+        "regression_r": 0.0,
+        "regression_p": 1.0,
         "monotonic_fraction": 1.0
       },
       {
         "seed": 2,
-        "regression_r": 0.7780804026230801,
-        "regression_p": 1.3944477844162018e-25,
+        "regression_r": 0.0,
+        "regression_p": 1.0,
         "monotonic_fraction": 1.0
       },
       {
         "seed": 3,
-        "regression_r": 0.7841320324069295,
-        "regression_p": 3.309386774420177e-26,
+        "regression_r": 0.0,
+        "regression_p": 1.0,
         "monotonic_fraction": 1.0
       },
       {
         "seed": 4,
-        "regression_r": 0.7823683796304186,
-        "regression_p": 5.0565176390816287e-26,
+        "regression_r": 0.0,
+        "regression_p": 1.0,
         "monotonic_fraction": 1.0
       },
       {
         "seed": 5,
-        "regression_r": 0.7759451847628613,
-        "regression_p": 2.2915749904272377e-25,
+        "regression_r": 0.0,
+        "regression_p": 1.0,
         "monotonic_fraction": 1.0
       },
       {
         "seed": 6,
-        "regression_r": 0.7783592464216118,
-        "regression_p": 1.3063291270682684e-25,
+        "regression_r": 0.0,
+        "regression_p": 1.0,
         "monotonic_fraction": 1.0
       },
       {
         "seed": 7,
-        "regression_r": 0.7868362681026546,
-        "regression_p": 1.7142797979610882e-26,
+        "regression_r": 0.0,
+        "regression_p": 1.0,
         "monotonic_fraction": 1.0
       },
       {
         "seed": 8,
-        "regression_r": 0.786389441599513,
-        "regression_p": 1.9123536738547737e-26,
+        "regression_r": 0.0,
+        "regression_p": 1.0,
         "monotonic_fraction": 1.0
       },
       {
         "seed": 9,
-        "regression_r": 0.7832222319440271,
-        "regression_p": 4.120352629839462e-26,
+        "regression_r": 0.0,
+        "regression_p": 1.0,
         "monotonic_fraction": 1.0
       }
     ],
-    "mean_regression_r": 0.7803851069459489,
+    "mean_regression_r": 0.0,
     "mean_monotonic_fraction": 1.0
   }
 }

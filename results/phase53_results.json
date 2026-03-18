@@ -1,0 +1,59 @@
+{
+  "original_val": {
+    "accuracy": 0.85375,
+    "entropy": 0.48658398514017337,
+    "symbols_used": 4,
+    "symbol_ordering": [
+      15,
+      12,
+      7,
+      10
+    ]
+  },
+  "training": {
+    "n_epochs": 250,
+    "best_epoch": 210,
+    "best_val_comm": 0.865625,
+    "augmentation": "ColorJitter(0.4/0.4/0.4/0.15)+HFlip+Affine+Erasing"
+  },
+  "transfer": {
+    "all_transfer": {
+      "accuracy": 0.6071875,
+      "n_pairs": 3200
+    },
+    "near_transfer": {
+      "accuracy": 0.5353125,
+      "n_pairs": 3200
+    },
+    "far_transfer": {
+      "accuracy": 0.6134375,
+      "n_pairs": 3200
+    },
+    "cross_domain": {
+      "accuracy": 0.7684375,
+      "n_pairs": 3200
+    },
+    "symbol_consistency": {
+      "kendall_tau": 0.6666666666666666,
+      "original_ordering": [
+        15,
+        12,
+        7,
+        10
+      ],
+      "transfer_ordering": [
+        15,
+        7,
+        12,
+        10
+      ],
+      "transfer_entropy": 0.26970896014947154,
+      "transfer_symbols_used": 4
+    }
+  },
+  "comparison": {
+    "phase51_val": 84.5,
+    "phase52_near_transfer": 50.1,
+    "phase52_far_transfer": 54.8
+  }
+}

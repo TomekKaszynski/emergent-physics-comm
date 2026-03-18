@@ -10,13 +10,13 @@
     "n_seeds": 20
   },
   "dinov2_agg24": {
-    "holdout_both_mean": 0.7179166666666666,
-    "holdout_both_std": 0.012025346513909282,
-    "pos_dis_mean": 0.9821268505140587,
-    "pos_dis_std": 0.007079713043662598,
-    "topsim_mean": 0.5981334664318168,
-    "topsim_std": 0.020159936106025737,
-    "compositional_count": 20,
+    "holdout_both_mean": 0.6186169467787115,
+    "holdout_both_std": 0.15000877494459147,
+    "pos_dis_mean": 0.0,
+    "pos_dis_std": 0.0,
+    "topsim_mean": 0.0,
+    "topsim_std": 0.0,
+    "compositional_count": 0,
     "n_seeds": 20
   },
   "dinov2_24frame": {
@@ -43,9 +43,9 @@
       "d": -2.1136041457215997
     },
     "agg24_vs_24fr": {
-      "t": -6.38017970189037,
-      "p": 1.7155463635982826e-07,
-      "d": -2.070003636620601
+      "t": -4.464611053345963,
+      "p": 6.957308057331968e-05,
+      "d": -1.4485110997397856
     }
   }
 }
