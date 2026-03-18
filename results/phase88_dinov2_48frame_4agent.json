@@ -1,0 +1,135 @@
+{
+  "config": "DINOv2 ViT-S 48-frame",
+  "per_seed": [
+    {
+      "seed": 0,
+      "holdout_both": 0.711,
+      "pos_dis": 0.975,
+      "topsim": 0.668
+    },
+    {
+      "seed": 1,
+      "holdout_both": 0.719,
+      "pos_dis": 0.988,
+      "topsim": 0.617
+    },
+    {
+      "seed": 2,
+      "holdout_both": 0.682,
+      "pos_dis": 0.977,
+      "topsim": 0.572
+    },
+    {
+      "seed": 3,
+      "holdout_both": 0.726,
+      "pos_dis": 0.977,
+      "topsim": 0.587
+    },
+    {
+      "seed": 4,
+      "holdout_both": 0.675,
+      "pos_dis": 0.982,
+      "topsim": 0.609
+    },
+    {
+      "seed": 5,
+      "holdout_both": 0.731,
+      "pos_dis": 0.987,
+      "topsim": 0.583
+    },
+    {
+      "seed": 6,
+      "holdout_both": 0.725,
+      "pos_dis": 0.974,
+      "topsim": 0.574
+    },
+    {
+      "seed": 7,
+      "holdout_both": 0.717,
+      "pos_dis": 0.99,
+      "topsim": 0.552
+    },
+    {
+      "seed": 8,
+      "holdout_both": 0.728,
+      "pos_dis": 0.991,
+      "topsim": 0.583
+    },
+    {
+      "seed": 9,
+      "holdout_both": 0.718,
+      "pos_dis": 0.983,
+      "topsim": 0.569
+    },
+    {
+      "seed": 10,
+      "holdout_both": 0.716,
+      "pos_dis": 0.977,
+      "topsim": 0.6
+    },
+    {
+      "seed": 11,
+      "holdout_both": 0.711,
+      "pos_dis": 0.97,
+      "topsim": 0.572
+    },
+    {
+      "seed": 12,
+      "holdout_both": 0.726,
+      "pos_dis": 0.972,
+      "topsim": 0.571
+    },
+    {
+      "seed": 13,
+      "holdout_both": 0.729,
+      "pos_dis": 0.978,
+      "topsim": 0.612
+    },
+    {
+      "seed": 14,
+      "holdout_both": 0.713,
+      "pos_dis": 0.9,
+      "topsim": 0.58
+    },
+    {
+      "seed": 15,
+      "holdout_both": 0.715,
+      "pos_dis": 0.991,
+      "topsim": 0.639
+    },
+    {
+      "seed": 16,
+      "holdout_both": 0.707,
+      "pos_dis": 0.97,
+      "topsim": 0.602
+    },
+    {
+      "seed": 17,
+      "holdout_both": 0.71,
+      "pos_dis": 0.974,
+      "topsim": 0.558
+    },
+    {
+      "seed": 18,
+      "holdout_both": 0.732,
+      "pos_dis": 0.981,
+      "topsim": 0.575
+    },
+    {
+      "seed": 19,
+      "holdout_both": 0.72,
+      "pos_dis": 0.984,
+      "topsim": 0.611
+    }
+  ],
+  "summary": {
+    "holdout_both_mean": 0.7155500000000001,
+    "holdout_both_std": 0.01434390114299452,
+    "pos_dis_mean": 0.9760500000000001,
+    "pos_dis_std": 0.018661390623423535,
+    "topsim_mean": 0.5917,
+    "topsim_std": 0.027651582233210462,
+    "compositional_count": 20,
+    "n_seeds": 20
+  }
+}
