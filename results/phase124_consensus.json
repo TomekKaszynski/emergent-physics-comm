@@ -1,0 +1,6 @@
+{
+  "single_round_acc": 0.7908496732026143,
+  "consensus_3round_acc": 0.7712418300653595,
+  "n_trials": 153,
+  "n_agents": 8
+}
