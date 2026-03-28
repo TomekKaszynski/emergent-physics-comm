@@ -1,0 +1,29 @@
+{
+  "spring": {
+    "n_clips": 206,
+    "n_objects": 26,
+    "wall_clock_s": "22\u00b15",
+    "wall_clock_mean": 22.112426662445067,
+    "accuracy": "82.9%\u00b17.9%",
+    "posdis": "0.675\u00b10.152",
+    "posdis_above_0.5": "True"
+  },
+  "fall": {
+    "n_clips": 666,
+    "n_objects": 33,
+    "wall_clock_s": "66\u00b17",
+    "wall_clock_mean": 65.74577670097351,
+    "accuracy": "87.7%\u00b17.9%",
+    "posdis": "0.467\u00b10.084",
+    "posdis_above_0.5": "False"
+  },
+  "ramp": {
+    "n_clips": 500,
+    "n_objects": 101,
+    "wall_clock_s": "50\u00b18",
+    "wall_clock_mean": 50.339214944839476,
+    "accuracy": "80.7%\u00b12.4%",
+    "posdis": "0.580\u00b10.073",
+    "posdis_above_0.5": "True"
+  }
+}

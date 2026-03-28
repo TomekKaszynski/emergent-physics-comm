@@ -1,0 +1,19 @@
+{
+  "n_agents": 100,
+  "sequential": {
+    "mean_ms": 14.01193245000002,
+    "median_ms": 13.844479000000076,
+    "p95_ms": 15.097936050000138,
+    "throughput_per_s": 71.367743426425
+  },
+  "concurrent": {
+    "n_threads": 100,
+    "msgs_per_thread": 10,
+    "total_messages": 1000,
+    "received": 1000,
+    "drops": 0,
+    "mean_ms": 1802.5029936290002,
+    "p95_ms": 1904.1039389499992,
+    "throughput_per_s": 0.5547840994076179
+  }
+}
