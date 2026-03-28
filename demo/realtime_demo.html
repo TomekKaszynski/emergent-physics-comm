@@ -1,0 +1,107 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WMCP Real-Time Demo</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,system-ui,sans-serif;background:#0a0a0a;color:#e5e5e5;padding:24px;max-width:900px;margin:0 auto}
+h1{font-size:20px;margin-bottom:4px}
+.subtitle{color:#666;font-size:13px;margin-bottom:24px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.card{background:#1a1a1a;border-radius:12px;padding:16px;border:1px solid #333}
+.card h3{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+.tokens{display:flex;gap:6px;margin-bottom:8px}
+.token{width:40px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:18px;transition:all .3s}
+.t0{background:#3b82f6}.t1{background:#ef4444}.t2{background:#22c55e}
+.pred{font-size:24px;font-weight:bold;margin:8px 0}
+.pred.gt{color:#22c55e}.pred.lt{color:#ef4444}
+.metric{display:inline-block;background:#222;padding:6px 12px;border-radius:6px;margin:4px;font-size:13px}
+.metric .val{font-weight:bold;color:#fff}
+.agent{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:13px}
+.dot{width:8px;height:8px;border-radius:50%}
+.dot.online{background:#22c55e}.dot.offline{background:#666}.dot.quarantined{background:#f59e0b}
+.log{background:#111;border-radius:8px;padding:12px;font-family:monospace;font-size:11px;max-height:200px;overflow-y:auto;color:#888;margin-top:16px}
+.log .entry{margin:2px 0}
+#status{font-size:12px;color:#666;margin-bottom:16px}
+</style></head><body>
+<h1>WMCP Real-Time Demo</h1>
+<p class="subtitle">World Model Communication Protocol — Live Message Stream</p>
+<div id="status">Connecting to ws://localhost:8765...</div>
+
+<div class="grid">
+<div class="card">
+<h3>Scene A</h3>
+<div class="tokens" id="tokens-a"></div>
+</div>
+<div class="card">
+<h3>Scene B</h3>
+<div class="tokens" id="tokens-b"></div>
+</div>
+</div>
+
+<div class="card" style="text-align:center;margin-bottom:16px">
+<h3>Prediction</h3>
+<div class="pred" id="prediction">—</div>
+</div>
+
+<div class="grid">
+<div class="card">
+<h3>Metrics</h3>
+<div id="metrics">
+<span class="metric">Round: <span class="val" id="m-round">0</span></span>
+<span class="metric">Latency: <span class="val" id="m-latency">—</span></span>
+</div>
+</div>
+<div class="card">
+<h3>Agents</h3>
+<div id="agents"></div>
+</div>
+</div>
+
+<div class="log" id="log"></div>
+
+<script>
+const COLORS = ['t0','t1','t2'];
+const ws = new WebSocket('ws://localhost:8765');
+const log = document.getElementById('log');
+
+function renderTokens(containerId, tokens) {
+    const c = document.getElementById(containerId);
+    c.innerHTML = tokens.map(t =>
+        `<div class="token ${COLORS[t]}">${t}</div>`).join('');
+}
+
+ws.onopen = () => {
+    document.getElementById('status').textContent = 'Connected ✓';
+    document.getElementById('status').style.color = '#22c55e';
+};
+
+ws.onclose = () => {
+    document.getElementById('status').textContent = 'Disconnected';
+    document.getElementById('status').style.color = '#ef4444';
+};
+
+ws.onmessage = (event) => {
+    const d = JSON.parse(event.data);
+    renderTokens('tokens-a', d.tokens_a);
+    renderTokens('tokens-b', d.tokens_b);
+
+    const pred = document.getElementById('prediction');
+    pred.textContent = d.a_greater ? 'A > B' : 'B > A';
+    pred.className = 'pred ' + (d.a_greater ? 'gt' : 'lt');
+
+    document.getElementById('m-round').textContent = d.round;
+    document.getElementById('m-latency').textContent = d.latency_ms + 'ms';
+
+    const agents = document.getElementById('agents');
+    agents.innerHTML = d.agents.map(a =>
+        `<div class="agent"><div class="dot ${a.status}"></div>${a.type} (agent ${a.id})</div>`
+    ).join('');
+
+    const entry = document.createElement('div');
+    entry.className = 'entry';
+    entry.textContent = `[${d.round}] A=${JSON.stringify(d.tokens_a)} B=${JSON.stringify(d.tokens_b)} → ${d.a_greater?'A>B':'B>A'} (${d.latency_ms}ms)`;
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+};
+</script>
+</body></html>
