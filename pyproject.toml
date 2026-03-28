@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "wmcp"
+version = "0.1.0"
+description = "World Model Communication Protocol — discrete compositional communication between heterogeneous vision models"
+readme = "wmcp/README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.9"
+dependencies = [
+    "torch>=2.0",
+    "numpy",
+    "scipy",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+wmcp = "wmcp.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["wmcp*"]
