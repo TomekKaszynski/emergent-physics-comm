@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-wmcp
+  labels:
+    app: wmcp
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: wmcp
+  template:
+    metadata:
+      labels:
+        app: wmcp
+      {{- if .Values.monitoring.enabled }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.service.port }}"
+        prometheus.io/path: "/metrics"
+      {{- end }}
+    spec:
+      containers:
+      - name: wmcp
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        command: ["python", "-m", "wmcp.server"]
+        ports:
+        - containerPort: {{ .Values.service.port }}
+        env:
+        - name: WMCP_VOCAB_SIZE
+          value: "{{ .Values.protocol.vocabSize }}"
+        - name: WMCP_N_HEADS
+          value: "{{ .Values.protocol.nHeads }}"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: {{ .Values.service.port }}
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: {{ .Values.service.port }}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}

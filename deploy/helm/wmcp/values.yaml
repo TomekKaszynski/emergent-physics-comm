@@ -1,0 +1,33 @@
+replicaCount: 1
+
+image:
+  repository: wmcp
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: false
+  className: nginx
+  host: wmcp.example.com
+
+protocol:
+  vocabSize: 3
+  nHeads: 2
+  hiddenDim: 128
+
+monitoring:
+  enabled: true
+  prometheus:
+    scrapeInterval: 10s
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
