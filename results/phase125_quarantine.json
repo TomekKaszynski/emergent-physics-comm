@@ -1,0 +1,26 @@
+{
+  "0": {
+    "acc_no_quarantine": 0.7908496732026143,
+    "acc_with_quarantine": 0.5490196078431373,
+    "detection_rate": 0,
+    "false_positive_rate": 1.0
+  },
+  "1": {
+    "acc_no_quarantine": 0.7564102564102564,
+    "acc_with_quarantine": 0.46153846153846156,
+    "detection_rate": 1.0,
+    "false_positive_rate": 1.0
+  },
+  "2": {
+    "acc_no_quarantine": 0.7515151515151515,
+    "acc_with_quarantine": 0.5333333333333333,
+    "detection_rate": 1.0,
+    "false_positive_rate": 1.0
+  },
+  "3": {
+    "acc_no_quarantine": 0.6794871794871795,
+    "acc_with_quarantine": 0.4935897435897436,
+    "detection_rate": 1.0,
+    "false_positive_rate": 1.0
+  }
+}
