@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  wmcp:
+    build: ..
+    command: ["python", "-m", "wmcp.server"]
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - wmcp
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=wmcp
+    volumes:
+      - ./grafana_dashboard.json:/var/lib/grafana/dashboards/wmcp.json
+    depends_on:
+      - prometheus
