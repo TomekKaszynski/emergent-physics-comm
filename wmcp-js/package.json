@@ -1,0 +1,17 @@
+{
+  "name": "wmcp-client",
+  "version": "0.1.0",
+  "description": "JavaScript client for WMCP protocol server",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "keywords": ["wmcp", "protocol", "world-model", "communication", "robotics"],
+  "author": "Tomek Kaszynski <t.kaszynski@proton.me>",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TomekKaszynski/emergent-physics-comm"
+  }
+}
