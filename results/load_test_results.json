@@ -1,0 +1,40 @@
+{
+  "concurrent": {
+    "test": "concurrent_communication",
+    "n_requests": 1000,
+    "n_threads": 8,
+    "completed": 1000,
+    "errors": 0,
+    "error_rate": 0.0,
+    "total_time_s": 0.8924150466918945,
+    "requests_per_s": 1120.5548401575181,
+    "latency_p50_ms": 6.51812499999993,
+    "latency_p95_ms": 7.773788949999971,
+    "latency_p99_ms": 8.548793420000054
+  },
+  "memory": {
+    "test": "memory_stability",
+    "checkpoints": [
+      {
+        "round": 1000,
+        "mem_mb": 187.640625
+      },
+      {
+        "round": 2000,
+        "mem_mb": 187.640625
+      },
+      {
+        "round": 3000,
+        "mem_mb": 187.640625
+      },
+      {
+        "round": 4000,
+        "mem_mb": 187.640625
+      },
+      {
+        "round": 5000,
+        "mem_mb": 187.640625
+      }
+    ]
+  }
+}
