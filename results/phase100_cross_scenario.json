@@ -1,0 +1,26 @@
+{
+  "heterogeneous train=spring test=fall": {
+    "acc_mean": 0.5648093469747557,
+    "acc_std": 0.08276609127683617
+  },
+  "heterogeneous train=spring test=ramp": {
+    "acc_mean": 0.517877984366353,
+    "acc_std": 0.04372114047567269
+  },
+  "heterogeneous train=spring test=spring": {
+    "acc_mean": 0.7876145257605868,
+    "acc_std": 0.10265787259640873
+  },
+  "homo_vjepa train=spring test=fall": {
+    "acc_mean": 0.6558460053509731,
+    "acc_std": 0.08924150558059626
+  },
+  "homo_vjepa train=spring test=ramp": {
+    "acc_mean": 0.5202478595311405,
+    "acc_std": 0.03975086231818291
+  },
+  "homo_vjepa train=spring test=spring": {
+    "acc_mean": 0.8178461323380752,
+    "acc_std": 0.06878265672335845
+  }
+}

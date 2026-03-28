@@ -1,0 +1,11 @@
+{
+  "n_rounds": 1000,
+  "exchanges_completed": 953,
+  "success_rate": 0.953,
+  "accuracy": 0.9286463798530955,
+  "latency_mean_ms": 0.7021089632773437,
+  "latency_median_ms": 0.6949999999505962,
+  "latency_p95_ms": 0.7266409999829193,
+  "latency_p99_ms": 0.7490383599542838,
+  "throughput_per_s": 1424.2803500643884
+}

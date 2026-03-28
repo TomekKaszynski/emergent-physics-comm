@@ -1,0 +1,18 @@
+{
+  "direction_v2d": {
+    "train_acc": 0.8943338437978561,
+    "native_posdis": 0.7186015876419787,
+    "transferred_posdis": 0.7005337890996508,
+    "token_agreement": 0.6614077669902912,
+    "posdis_drop": 0.018067798542327873
+  },
+  "direction_d2v": {
+    "train_acc": 0.8932655654383735,
+    "native_posdis": 0.8404210332611783,
+    "transferred_posdis": 0.8247216278488619,
+    "token_agreement": 0.8058252427184466,
+    "posdis_drop": 0.015699405412316403
+  },
+  "asymmetry": 0.0023683931300114702,
+  "elapsed_min": 3.829746119181315
+}
