@@ -1,0 +1,7 @@
+{
+  "fleet_size": 8,
+  "architecture_mix": "3V+3D+2C",
+  "single_acc": 0.831151832460733,
+  "consensus_acc": 0.8758169934640523,
+  "consensus_trials": 153
+}

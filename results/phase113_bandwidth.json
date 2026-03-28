@@ -1,0 +1,20 @@
+{
+  "message_bits": 6.339850002884624,
+  "encoders": {
+    "V-JEPA 2": {
+      "feature_dim": 1024,
+      "raw_bits": 32768,
+      "compression_ratio": 5168.57654125738
+    },
+    "DINOv2": {
+      "feature_dim": 384,
+      "raw_bits": 12288,
+      "compression_ratio": 1938.2162029715173
+    },
+    "CLIP ViT-L/14": {
+      "feature_dim": 768,
+      "raw_bits": 24576,
+      "compression_ratio": 3876.4324059430346
+    }
+  }
+}
