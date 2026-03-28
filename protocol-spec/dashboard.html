@@ -1,0 +1,47 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WMCP Dashboard</title><style>
+*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,system-ui,sans-serif;background:#f5f5f5;padding:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;max-width:1200px;margin:0 auto}
+.card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.card h3{font-size:14px;color:#666;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+.metric{font-size:36px;font-weight:700;color:#1a1a1a}.unit{font-size:14px;color:#999;margin-left:4px}
+.pass{color:#22c55e}.fail{color:#ef4444}.bar{height:8px;background:#e5e7eb;border-radius:4px;margin-top:8px}
+.bar-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,#3b82f6,#8b5cf6)}
+h1{text-align:center;margin-bottom:24px;font-size:24px}
+.subtitle{text-align:center;color:#666;margin-bottom:24px;font-size:14px}
+table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:6px 8px;text-align:left;border-bottom:1px solid #eee}
+th{color:#666;font-weight:600}
+</style></head><body>
+<h1>WMCP v0.1 Dashboard</h1>
+<p class="subtitle">World Model Communication Protocol — Compliance & Performance</p>
+<div class="grid">
+<div class="card"><h3>Compliance</h3><div class="metric"><span class="pass">8</span>/9</div>
+<div class="bar"><div class="bar-fill" style="width:89%"></div></div></div>
+<div class="card"><h3>CPU Latency</h3><div class="metric">1.19<span class="unit">ms</span></div>
+<p style="color:#22c55e;font-size:13px;margin-top:4px">Under 10ms threshold</p></div>
+<div class="card"><h3>Onboarding</h3><div class="metric">50<span class="unit">steps</span></div>
+<p style="color:#666;font-size:13px;margin-top:4px">New encoder to 90% accuracy</p></div>
+<div class="card"><h3>Min Parameters</h3><div class="metric">886K</div>
+<p style="color:#666;font-size:13px;margin-top:4px">hidden_dim=8 passes PosDis>0.5</p></div>
+<div class="card"><h3>Bootstrap</h3><div class="metric">22<span class="unit">sec</span></div>
+<p style="color:#666;font-size:13px;margin-top:4px">New domain from scratch</p></div>
+<div class="card"><h3>Architectures</h3><div class="metric">3</div>
+<p style="color:#666;font-size:13px;margin-top:4px">V-JEPA 2 · DINOv2 · CLIP</p></div>
+<div class="card" style="grid-column:span 2"><h3>Encoder Compatibility (PosDis)</h3>
+<table><tr><th></th><th>V-JEPA 2</th><th>DINOv2</th><th>CLIP</th></tr>
+<tr><td><b>V-JEPA 2</b></td><td>0.777</td><td>0.764</td><td>0.737</td></tr>
+<tr><td><b>DINOv2</b></td><td>0.764</td><td>0.661</td><td>0.657</td></tr>
+<tr><td><b>CLIP</b></td><td>0.737</td><td>0.657</td><td>0.547</td></tr></table></div>
+<div class="card" style="grid-column:span 2"><h3>Noise Robustness</h3>
+<table><tr><th>σ</th><th>0.0</th><th>0.3</th><th>0.5</th><th>0.7</th><th>0.9</th></tr>
+<tr><td><b>Accuracy</b></td><td>77.9%</td><td>75.4%</td><td>72.1%</td><td>70.2%</td><td>67.8%</td></tr></table></div>
+<div class="card" style="grid-column:span 2"><h3>Population Scaling (PosDis)</h3>
+<table><tr><th>Agents</th><th>1</th><th>2</th><th>4</th><th>8</th><th>16</th></tr>
+<tr><td><b>Hetero</b></td><td>0.788</td><td>0.764</td><td>0.676</td><td>0.604</td><td>0.534</td></tr></table></div>
+</div>
+<p style="text-align:center;color:#999;font-size:12px;margin-top:24px">
+Generated from experimental data (Phases 91–115).
+<a href="https://doi.org/10.5281/zenodo.19197757">Paper</a> ·
+<a href="https://github.com/TomekKaszynski/emergent-physics-comm">Code</a></p>
+</body></html>

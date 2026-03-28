@@ -1,0 +1,25 @@
+{
+  "version": "0.1.0",
+  "latency_cpu_ms": 1.19,
+  "latency_mps_ms": 7.88,
+  "onboarding_steps": 50,
+  "min_params": 886200,
+  "bootstrap_s": 22,
+  "noise_tolerance": {
+    "0.0": 77.9,
+    "0.3": 75.4,
+    "0.5": 72.1,
+    "0.9": 67.8
+  },
+  "population_scaling": {
+    "1": 0.788,
+    "2": 0.764,
+    "4": 0.676,
+    "8": 0.604,
+    "16": 0.534
+  },
+  "compliance": {
+    "pass": 8,
+    "total": 9
+  }
+}
