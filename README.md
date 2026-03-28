@@ -4,6 +4,7 @@
 
 > Neural agents with different vision backbones develop shared compositional languages about physics through a discrete bottleneck — no alignment maps, no shared architecture.
 
+[![CI](https://github.com/TomekKaszynski/emergent-physics-comm/actions/workflows/ci.yml/badge.svg)](https://github.com/TomekKaszynski/emergent-physics-comm/actions/workflows/ci.yml)
 [![Paper](https://img.shields.io/badge/Paper-Zenodo-blue)](https://doi.org/10.5281/zenodo.19197757)
 [![Protocol Spec](https://img.shields.io/badge/WMCP-v0.1_Draft-orange)](protocol-spec/)
 [![License](https://img.shields.io/badge/License-MIT-green)](#license)
