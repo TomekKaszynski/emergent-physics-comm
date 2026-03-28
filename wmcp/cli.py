@@ -112,6 +112,14 @@ def main():
     p_onb.add_argument("--protocol", type=str, required=True)
     p_onb.add_argument("--steps", type=int, default=50)
 
+    p_export = sub.add_parser("export", help="Export protocol to .wmcp file")
+    p_export.add_argument("--protocol", type=str, required=True)
+    p_export.add_argument("--domain", type=str, default="physics_spring")
+    p_export.add_argument("--output", type=str, default="protocol.wmcp")
+
+    p_load = sub.add_parser("load", help="Inspect a .wmcp file")
+    p_load.add_argument("--file", type=str, required=True)
+
     args = parser.parse_args()
 
     if args.command == "info":
@@ -122,6 +130,15 @@ def main():
         cmd_benchmark(args)
     elif args.command == "onboard":
         cmd_onboard(args)
+    elif args.command == "export":
+        print(f"Export: --protocol={args.protocol} --domain={args.domain} "
+              f"--output={args.output}")
+        print("See: wmcp.offline.export_protocol() for programmatic use.")
+    elif args.command == "load":
+        from wmcp.offline import inspect_wmcp
+        info = inspect_wmcp(args.file)
+        import json
+        print(json.dumps(info, indent=2))
     else:
         parser.print_help()
 
