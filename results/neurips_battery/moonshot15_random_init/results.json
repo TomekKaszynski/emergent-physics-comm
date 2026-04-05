@@ -1,0 +1,12 @@
+{
+  "random_accuracy": "77.3%\u00b13.6%",
+  "random_posdis": "0.641\u00b10.155",
+  "random_within_agreement": "100.0%",
+  "random_vs_vision": "95.0%",
+  "random_vs_text": "92.5%",
+  "vision_vs_text": "87.5%",
+  "rv_m": 0.95,
+  "rt_m": 0.925,
+  "vt_m": 0.875,
+  "verdict": "BOTTLENECK IMPOSES STRUCTURE REGARDLESS \u2014 different paper"
+}
