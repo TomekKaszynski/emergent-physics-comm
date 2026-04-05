@@ -1,0 +1,70 @@
+{
+  "seeds": [
+    {
+      "seed": 0,
+      "directional_consistency": 0.615,
+      "edit_specificity": 0.82,
+      "graded_monotonic": true,
+      "graded_means": {
+        "0": 0.761641566323815,
+        "1": 0.7476222667201758,
+        "2": 0.7414399750707232
+      },
+      "crossmodal_directional": 0.32
+    },
+    {
+      "seed": 1,
+      "directional_consistency": 0.59,
+      "edit_specificity": 0.78,
+      "graded_monotonic": false,
+      "graded_means": {
+        "0": 0.4514189464659089,
+        "1": 0.34207235600333663,
+        "2": 0.5500008532126697
+      },
+      "crossmodal_directional": 0.64
+    },
+    {
+      "seed": 2,
+      "directional_consistency": 0.385,
+      "edit_specificity": 0.7,
+      "graded_monotonic": false,
+      "graded_means": {
+        "0": 0.5728321819764247,
+        "1": 0.7809294681405512,
+        "2": 0.541978227481794
+      },
+      "crossmodal_directional": 0.4
+    },
+    {
+      "seed": 3,
+      "directional_consistency": 0.85,
+      "edit_specificity": 0.63,
+      "graded_monotonic": true,
+      "graded_means": {
+        "0": 0.8839382132515311,
+        "1": 0.7285449562522655,
+        "2": 0.5890329314680929
+      },
+      "crossmodal_directional": 0.0
+    },
+    {
+      "seed": 4,
+      "directional_consistency": 0.0,
+      "edit_specificity": 1.0,
+      "graded_monotonic": true,
+      "graded_means": {
+        "0": 0.4913838803768158,
+        "1": 0.4913838803768158,
+        "2": 0.4913838803768158
+      },
+      "crossmodal_directional": 0.0
+    }
+  ],
+  "summary": {
+    "directional": "48.8%\u00b128.5%",
+    "specificity": "78.6%\u00b112.5%",
+    "monotonic": "3/5",
+    "crossmodal": "27.2%\u00b124.6%"
+  }
+}
