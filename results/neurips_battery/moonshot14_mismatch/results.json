@@ -1,0 +1,8 @@
+{
+  "cross_modal_agreement_mismatched": "91.7%",
+  "cross_agree_m": 0.9166666666666666,
+  "original_agreement": "96.2%",
+  "n_vision_scenes": 103,
+  "n_text_scenes": 103,
+  "verdict": "CONVERGENCE IS SCENE-INDEPENDENT \u2014 universal physics structure"
+}
