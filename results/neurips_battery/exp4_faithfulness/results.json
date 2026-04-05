@@ -1,0 +1,110 @@
+{
+  "seeds": [
+    {
+      "seed": 0,
+      "accuracy": 0.7684027777777778,
+      "mass_position": 0,
+      "iia": 0.03,
+      "specificity": 1.0,
+      "necessity_mass_drop": 0.002419441640377045,
+      "necessity_other_drop": 0.0009292367100715637,
+      "n_pairs": 200
+    },
+    {
+      "seed": 1,
+      "accuracy": 0.7010416666666667,
+      "mass_position": 3,
+      "iia": 0.015,
+      "specificity": 0.99,
+      "necessity_mass_drop": 0.008110266476869583,
+      "necessity_other_drop": 0.002927323877811432,
+      "n_pairs": 200
+    },
+    {
+      "seed": 2,
+      "accuracy": 0.7944444444444444,
+      "mass_position": 5,
+      "iia": 0.0,
+      "specificity": 0.995,
+      "necessity_mass_drop": 0.0027540208399295806,
+      "necessity_other_drop": 0.004725718647241592,
+      "n_pairs": 200
+    },
+    {
+      "seed": 3,
+      "accuracy": 0.8003472222222222,
+      "mass_position": 4,
+      "iia": 0.015,
+      "specificity": 1.0,
+      "necessity_mass_drop": 0.01501356452703476,
+      "necessity_other_drop": 0.04150647044181824,
+      "n_pairs": 200
+    },
+    {
+      "seed": 4,
+      "accuracy": 0.8159722222222222,
+      "mass_position": 4,
+      "iia": 0.0,
+      "specificity": 1.0,
+      "necessity_mass_drop": 0.0,
+      "necessity_other_drop": 0.0,
+      "n_pairs": 200
+    },
+    {
+      "seed": 5,
+      "accuracy": 0.7895833333333333,
+      "mass_position": 5,
+      "iia": 0.09,
+      "specificity": 1.0,
+      "necessity_mass_drop": 0.00757490336894989,
+      "necessity_other_drop": 0.004030101299285889,
+      "n_pairs": 200
+    },
+    {
+      "seed": 6,
+      "accuracy": 0.8611111111111112,
+      "mass_position": 7,
+      "iia": 0.055,
+      "specificity": 1.0,
+      "necessity_mass_drop": 0.0075938798487186435,
+      "necessity_other_drop": 0.013016466796398164,
+      "n_pairs": 200
+    },
+    {
+      "seed": 7,
+      "accuracy": 0.7395833333333334,
+      "mass_position": 2,
+      "iia": 0.065,
+      "specificity": 0.94,
+      "necessity_mass_drop": 0.008600537702441215,
+      "necessity_other_drop": 0.03026306111365557,
+      "n_pairs": 200
+    },
+    {
+      "seed": 8,
+      "accuracy": 0.8347222222222223,
+      "mass_position": 4,
+      "iia": 0.0,
+      "specificity": 1.0,
+      "necessity_mass_drop": 0.0021623480319976807,
+      "necessity_other_drop": 0.000517437756061554,
+      "n_pairs": 200
+    },
+    {
+      "seed": 9,
+      "accuracy": 0.7506944444444444,
+      "mass_position": 0,
+      "iia": 0.005,
+      "specificity": 1.0,
+      "necessity_mass_drop": 0.004306268692016601,
+      "necessity_other_drop": 0.003984355628490448,
+      "n_pairs": 200
+    }
+  ],
+  "summary": {
+    "iia": "0.028\u00b10.030",
+    "specificity": "0.993\u00b10.018",
+    "necessity_mass_drop": "0.006\u00b10.004",
+    "necessity_other_drop": "0.010\u00b10.014"
+  }
+}
