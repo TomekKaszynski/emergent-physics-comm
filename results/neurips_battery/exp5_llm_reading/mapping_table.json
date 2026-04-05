@@ -1,0 +1,85 @@
+{
+  "mapping": [
+    {
+      "position": 0,
+      "property": "mass",
+      "mi": 0.7381009051885807,
+      "token_meanings": {
+        "0": "medium",
+        "1": "light",
+        "2": "heavy"
+      }
+    },
+    {
+      "position": 1,
+      "property": "mass",
+      "mi": 0.531684777108886,
+      "token_meanings": {
+        "0": "heavy",
+        "1": "light",
+        "2": "heavy"
+      }
+    },
+    {
+      "position": 2,
+      "property": "mass",
+      "mi": 0.6216312158508512,
+      "token_meanings": {
+        "0": "light",
+        "1": "medium",
+        "2": "heavy"
+      }
+    },
+    {
+      "position": 3,
+      "property": "mass",
+      "mi": 0.5709212093119296,
+      "token_meanings": {
+        "0": "medium",
+        "1": "light",
+        "2": "heavy"
+      }
+    },
+    {
+      "position": 4,
+      "property": "mass",
+      "mi": 0.1607501970765073,
+      "token_meanings": {
+        "0": "light",
+        "1": "heavy",
+        "2": "medium"
+      }
+    },
+    {
+      "position": 5,
+      "property": "mass",
+      "mi": 0.5241105277387483,
+      "token_meanings": {
+        "0": "heavy",
+        "1": "light",
+        "2": "heavy"
+      }
+    },
+    {
+      "position": 6,
+      "property": "mass",
+      "mi": 0.4054714769597991,
+      "token_meanings": {
+        "0": "light",
+        "1": "heavy",
+        "2": "light"
+      }
+    },
+    {
+      "position": 7,
+      "property": "mass",
+      "mi": 0.5484055242593464,
+      "token_meanings": {
+        "0": "medium",
+        "1": "light",
+        "2": "heavy"
+      }
+    }
+  ],
+  "mapping_str": "WMCP Protocol Mapping:\n  Position 0: mass \u2014 token 0=medium, token 1=light, token 2=heavy\n  Position 1: mass \u2014 token 0=heavy, token 1=light, token 2=heavy\n  Position 2: mass \u2014 token 0=light, token 1=medium, token 2=heavy\n  Position 3: mass \u2014 token 0=medium, token 1=light, token 2=heavy\n  Position 4: mass \u2014 token 0=light, token 1=heavy, token 2=medium\n  Position 5: mass \u2014 token 0=heavy, token 1=light, token 2=heavy\n  Position 6: mass \u2014 token 0=light, token 1=heavy, token 2=light\n  Position 7: mass \u2014 token 0=medium, token 1=light, token 2=heavy\n"
+}

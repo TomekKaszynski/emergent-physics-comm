@@ -1,0 +1,21 @@
+{
+  "rule_based_accuracy": 0.6195652173913043,
+  "conditions": {
+    "real_mapping_real_tokens": {
+      "accuracy": 0.7333333333333333,
+      "n": 30
+    },
+    "shuffled_mapping": {
+      "accuracy": 0.6666666666666666,
+      "n": 30
+    },
+    "real_mapping_random_tokens": {
+      "accuracy": 0.43333333333333335,
+      "n": 30
+    }
+  },
+  "zero_shot_inference": {
+    "accuracy": 0.5666666666666667,
+    "n": 30
+  }
+}
