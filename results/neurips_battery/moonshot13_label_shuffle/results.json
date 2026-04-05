@@ -1,0 +1,11 @@
+{
+  "cross_modal_agreement": "63.5%",
+  "vision_within_agreement": "66.0%",
+  "text_within_agreement": "76.0%",
+  "vision_acc": "54.7%\u00b12.9%",
+  "text_acc": "54.5%\u00b11.1%",
+  "transfer_acc": "48.7%\u00b12.7%",
+  "cross_agree_m": 0.635,
+  "labels": "shuffled",
+  "verdict": "CONVERGENCE IS LABEL-INDEPENDENT \u2014 representations are pre-aligned"
+}
