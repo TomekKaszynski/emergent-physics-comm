@@ -1,0 +1,10 @@
+{
+  "discrete_native": "82.0%\u00b18.0%",
+  "discrete_transfer": "68.7%\u00b13.2%",
+  "discrete_native_m": 0.8198468885541719,
+  "discrete_transfer_m": 0.6870312500000001,
+  "continuous_native": "84.3%\u00b15.9%",
+  "continuous_transfer": "58.9%\u00b12.3%",
+  "continuous_native_m": 0.843117102746622,
+  "continuous_transfer_m": 0.5890625
+}
