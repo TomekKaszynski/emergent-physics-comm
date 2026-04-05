@@ -1,0 +1,141 @@
+{
+  "seeds": [
+    {
+      "seed": 0,
+      "accuracy": 0.7684027777777778,
+      "n_groups": 41,
+      "n_groups_ge3": 21,
+      "discrete_within_var": 242.01995594773126,
+      "kmeans_within_var": 425.57498249725677,
+      "random_within_var": 3710.96173384375,
+      "stat_complexity": 2.705823711757229,
+      "pred_info": 5.181852311185648,
+      "efficiency": 1.915073878859767,
+      "posdis": 0.6977087570997149
+    },
+    {
+      "seed": 1,
+      "accuracy": 0.7010416666666667,
+      "n_groups": 39,
+      "n_groups_ge3": 19,
+      "discrete_within_var": 362.37434310802115,
+      "kmeans_within_var": 428.536292801317,
+      "random_within_var": 3774.4487784492676,
+      "stat_complexity": 2.817827244012772,
+      "pred_info": 5.527766689701728,
+      "efficiency": 1.9617124156375974,
+      "posdis": 0.736211208030088
+    },
+    {
+      "seed": 2,
+      "accuracy": 0.7944444444444444,
+      "n_groups": 34,
+      "n_groups_ge3": 17,
+      "discrete_within_var": 364.65432465312665,
+      "kmeans_within_var": 396.42285936935696,
+      "random_within_var": 4184.652739715165,
+      "stat_complexity": 2.4607626947893535,
+      "pred_info": 4.723636847862644,
+      "efficiency": 1.9195824359109919,
+      "posdis": 0.8322379318247173
+    },
+    {
+      "seed": 3,
+      "accuracy": 0.8003472222222222,
+      "n_groups": 35,
+      "n_groups_ge3": 19,
+      "discrete_within_var": 1317.8902412487435,
+      "kmeans_within_var": 1268.7467960344898,
+      "random_within_var": 3769.2940025026005,
+      "stat_complexity": 2.3181033725229057,
+      "pred_info": 3.780734258964888,
+      "efficiency": 1.6309601650120242,
+      "posdis": 0.5276658131676466
+    },
+    {
+      "seed": 4,
+      "accuracy": 0.8159722222222222,
+      "n_groups": 34,
+      "n_groups_ge3": 22,
+      "discrete_within_var": 506.26994229943995,
+      "kmeans_within_var": 526.2752612579784,
+      "random_within_var": 3685.255964056584,
+      "stat_complexity": 2.8815785467021096,
+      "pred_info": 4.443860615791994,
+      "efficiency": 1.542161889315103,
+      "posdis": 0.7057184966761694
+    },
+    {
+      "seed": 5,
+      "accuracy": 0.7895833333333333,
+      "n_groups": 39,
+      "n_groups_ge3": 17,
+      "discrete_within_var": 123.6947471375039,
+      "kmeans_within_var": 149.08993617386773,
+      "random_within_var": 3944.0942125249653,
+      "stat_complexity": 2.592783889479275,
+      "pred_info": 5.560290827388558,
+      "efficiency": 2.144525369025363,
+      "posdis": 0.7040457571439748
+    },
+    {
+      "seed": 6,
+      "accuracy": 0.8611111111111112,
+      "n_groups": 21,
+      "n_groups_ge3": 10,
+      "discrete_within_var": 715.2585430105335,
+      "kmeans_within_var": 780.2207762653277,
+      "random_within_var": 3893.764827302001,
+      "stat_complexity": 1.990221455636163,
+      "pred_info": 3.764291270128077,
+      "efficiency": 1.8913931710804728,
+      "posdis": 0.5915378759037138
+    },
+    {
+      "seed": 7,
+      "accuracy": 0.7395833333333334,
+      "n_groups": 29,
+      "n_groups_ge3": 21,
+      "discrete_within_var": 339.17412629278436,
+      "kmeans_within_var": 359.1694460987784,
+      "random_within_var": 3968.6939672716767,
+      "stat_complexity": 2.770673210853743,
+      "pred_info": 4.843357469438109,
+      "efficiency": 1.7480796545997925,
+      "posdis": 0.6878878652438398
+    },
+    {
+      "seed": 8,
+      "accuracy": 0.8347222222222223,
+      "n_groups": 42,
+      "n_groups_ge3": 17,
+      "discrete_within_var": 307.27988976789123,
+      "kmeans_within_var": 369.87488918267604,
+      "random_within_var": 3836.2045198941582,
+      "stat_complexity": 2.393789194330234,
+      "pred_info": 5.562193280445602,
+      "efficiency": 2.323593612010545,
+      "posdis": 0.7545290895523553
+    },
+    {
+      "seed": 9,
+      "accuracy": 0.7506944444444444,
+      "n_groups": 29,
+      "n_groups_ge3": 17,
+      "discrete_within_var": 309.1553591186289,
+      "kmeans_within_var": 319.3026879029223,
+      "random_within_var": 3874.9980867803047,
+      "stat_complexity": 2.6774743500665643,
+      "pred_info": 4.857690762976342,
+      "efficiency": 1.8142809707422878,
+      "posdis": 0.7173418543437974
+    }
+  ],
+  "summary": {
+    "discrete_var": "458.8\u00b1323.0",
+    "kmeans_var": "502.3\u00b1297.3",
+    "random_var": "3864.2\u00b1139.4",
+    "efficiency": "1.889\u00b10.218"
+  },
+  "verdict": "DISCRETE CODES ARE BETTER CAUSAL STATES than K-means clusters"
+}
