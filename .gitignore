@@ -12,6 +12,14 @@ results/*.pt
 results/*.pth
 results/*.npz
 
+# Large cache files
+frames_*.pt
+feat_*.pt
+*.pt
+!results/phase87_phys101_spring_features.pt
+!results/crossmodal/text_hidden_states.pt
+dsprites*.npz
+
 # Python
 __pycache__/
 *.pyc

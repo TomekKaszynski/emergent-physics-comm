@@ -1,0 +1,30 @@
+{
+  "lambdas": {
+    "0.0": {
+      "acc": "74.1%\u00b17.6%",
+      "agreement": "97.5%\u00b15.0%",
+      "agree_m": 0.975
+    },
+    "0.1": {
+      "acc": "61.5%\u00b11.2%",
+      "agreement": "97.5%\u00b15.0%",
+      "agree_m": 0.975
+    },
+    "0.3": {
+      "acc": "61.5%\u00b11.2%",
+      "agreement": "100.0%\u00b10.0%",
+      "agree_m": 1.0
+    },
+    "0.5": {
+      "acc": "61.5%\u00b11.2%",
+      "agreement": "100.0%\u00b10.0%",
+      "agree_m": 1.0
+    },
+    "1.0": {
+      "acc": "61.5%\u00b11.2%",
+      "agreement": "100.0%\u00b10.0%",
+      "agree_m": 1.0
+    }
+  },
+  "verdict": "IMPOSSIBILITY OF DISAGREEMENT \u2014 convergence is an attractor"
+}

@@ -1,0 +1,25 @@
+{
+  "discrete": {
+    "train_acc": "93.8%\u00b10.9%",
+    "test_acc": "74.9%\u00b112.7%",
+    "posdis": "0.975\u00b10.075",
+    "generalization_ratio": 0.7982283486606252
+  },
+  "continuous": {
+    "train_acc": "96.7%\u00b11.0%",
+    "test_acc": "80.4%\u00b11.7%",
+    "posdis": "0.000\u00b10.000",
+    "generalization_ratio": 0.8318490455666124
+  },
+  "verdict": "COMPOSITIONAL \u2014 discrete generalizes to unseen property combinations",
+  "held_out_combos": [
+    [
+      2,
+      0
+    ],
+    [
+      0,
+      2
+    ]
+  ]
+}

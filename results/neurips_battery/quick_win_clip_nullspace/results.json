@@ -1,0 +1,8 @@
+{
+  "original_clip_accuracy": "62.8%\u00b111.7%",
+  "debiased_clip_accuracy": "62.6%\u00b111.6%",
+  "original_vjepa_agreement": "75.0%",
+  "debiased_vjepa_agreement": "83.3%",
+  "n_language_directions_removed": 10,
+  "verdict": "LANGUAGE ALIGNMENT IS THE DISTORTION \u2014 removing it increases physics agreement"
+}

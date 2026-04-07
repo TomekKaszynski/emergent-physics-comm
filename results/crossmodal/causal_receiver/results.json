@@ -1,0 +1,25 @@
+{
+  "conditions": {
+    "standard": {
+      "accuracy": "89.2%\u00b11.9%",
+      "iia": "0.423\u00b10.216",
+      "posdis": "0.729\u00b10.091",
+      "structural_agreement": "100.0%\u00b10.0%",
+      "acc_m": 0.8916319444444444,
+      "iia_m": 0.42290275569370206,
+      "pd_m": 0.7291083554185053,
+      "struct_m": 1.0
+    },
+    "causal_dropout": {
+      "accuracy": "87.9%\u00b12.1%",
+      "iia": "0.397\u00b10.261",
+      "posdis": "0.827\u00b10.019",
+      "structural_agreement": "100.0%\u00b10.0%",
+      "acc_m": 0.8786805555555557,
+      "iia_m": 0.3967963758616048,
+      "pd_m": 0.8273793735176808,
+      "struct_m": 1.0
+    }
+  },
+  "verdict": "NO SIGNIFICANT IIA IMPROVEMENT from dropout"
+}

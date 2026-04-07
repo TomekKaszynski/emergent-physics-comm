@@ -1,0 +1,23 @@
+{
+  "conditions": {
+    "frozen": {
+      "accuracy": "74.4%\u00b110.0%",
+      "posdis": "0.723\u00b10.025",
+      "acc_m": 0.744375,
+      "pd_m": 0.722676500858185
+    },
+    "e2e": {
+      "accuracy": "81.4%\u00b112.1%",
+      "posdis": "0.709\u00b10.077",
+      "acc_m": 0.8140625,
+      "pd_m": 0.7085380665024363
+    },
+    "supervised": {
+      "accuracy": "82.0%\u00b113.7%",
+      "posdis": "0.680\u00b10.033",
+      "acc_m": 0.81953125,
+      "pd_m": 0.680218718074229
+    }
+  },
+  "verdict": "E2E IMPROVES ACCURACY but not compositionality"
+}

@@ -1,0 +1,48 @@
+{
+  "hops": [
+    {
+      "hop": 0,
+      "modality": "vjepa2",
+      "agreement": "100%",
+      "accuracy": "76.8%",
+      "posdis": "0.698"
+    },
+    {
+      "hop": 1,
+      "modality": "text",
+      "agreement_with_original": "100.0%",
+      "agreement_with_previous": "100.0%",
+      "accuracy": "82.5%",
+      "posdis": "0.480",
+      "agree_orig_m": 1.0
+    },
+    {
+      "hop": 2,
+      "modality": "audio",
+      "agreement_with_original": "100.0%",
+      "agreement_with_previous": "100.0%",
+      "accuracy": "92.0%",
+      "posdis": "0.636",
+      "agree_orig_m": 1.0
+    },
+    {
+      "hop": 3,
+      "modality": "dinov2",
+      "agreement_with_original": "100.0%",
+      "agreement_with_previous": "100.0%",
+      "accuracy": "80.5%",
+      "posdis": "0.606",
+      "agree_orig_m": 1.0
+    },
+    {
+      "hop": 4,
+      "modality": "vjepa2",
+      "agreement_with_original": "100.0%",
+      "agreement_with_previous": "100.0%",
+      "accuracy": "81.6%",
+      "posdis": "0.706",
+      "agree_orig_m": 1.0
+    }
+  ],
+  "verdict": "FIXED-POINT ATTRACTOR \u2014 protocol survives full chain"
+}

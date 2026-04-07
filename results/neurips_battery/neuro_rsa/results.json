@@ -1,0 +1,8 @@
+{
+  "data_source": "synthetic_categorical_rdm",
+  "wmcp_vs_category": 0.23242029150645704,
+  "wmcp_vs_physics": 0.8027200639015739,
+  "raw_vs_category": 0.2457070080098478,
+  "raw_vs_physics": 0.34872712812756984,
+  "verdict": "WMCP discrete codes are MORE physics-aligned than raw features"
+}

@@ -1,0 +1,13 @@
+{
+  "tinyllama": {
+    "params": "1.1B",
+    "vjepa_agreement": "92.0%"
+  },
+  "phi2": {
+    "params": "phi-2",
+    "accuracy": "88.5%\u00b14.3%",
+    "vjepa_agreement": "95.0%",
+    "tinyllama_agreement": "95.0%"
+  },
+  "qwen15b": "qwen15b"
+}

@@ -4,24 +4,38 @@
 
 > Neural agents with different vision backbones develop shared compositional languages about physics through a discrete bottleneck — no alignment maps, no shared architecture.
 
+[![arXiv](https://img.shields.io/badge/arXiv-2604.03266-b31b1b.svg)](https://arxiv.org/abs/2604.03266)
 [![CI](https://github.com/TomekKaszynski/emergent-physics-comm/actions/workflows/ci.yml/badge.svg)](https://github.com/TomekKaszynski/emergent-physics-comm/actions/workflows/ci.yml)
 [![Paper](https://img.shields.io/badge/Paper-Zenodo-blue)](https://doi.org/10.5281/zenodo.19197757)
 [![Protocol Spec](https://img.shields.io/badge/WMCP-v0.1_Draft-orange)](protocol-spec/)
 [![License](https://img.shields.io/badge/License-MIT-green)](#license)
 
+## Paper
+
+**Emergent Compositional Communication for Latent World Properties**
+Tomasz Kaszyński, 2026
+
+[arXiv:2604.03266](https://arxiv.org/abs/2604.03266)
+
 ## Key Numbers
 
 | Metric | Value | Source |
 |--------|-------|--------|
-| Experiment phases | 109 | Phases 1–109 |
+| Experiment phases | 127 | Phases 1–127 |
 | Architecture pairings validated | V-JEPA 2 + DINOv2 + CLIP ViT-L/14 | Phase 96 |
-| Total training runs | 1,350+ (full sweep) | Phase 94 |
+| Total training runs | 2,500+ | Phases 94, 119–127 |
 | Compositionality metrics | 3 (PosDis, TopSim, BosDis), zero divergences | Phase 94 |
 | Real-video accuracy (hetero) | 81.8% on Physics 101 spring | Phase 95 |
-| Inference latency | 1.19ms CPU, 7.88ms MPS | Phase 103 |
-| New model onboarding | 50 training steps | Phase 104 |
+| Inference latency | 1.19ms CPU, 0.70ms pub-sub | Phases 103, 106 |
+| Feature compression | 5,200× vs raw features | Phase 113 |
+| New model onboarding | 50 steps to 90% accuracy | Phase 104 |
+| Minimum viable model | 886K parameters (hidden_dim=8) | Phase 108 |
+| Domain bootstrap | 22 seconds (spring) | Phase 109 |
 | Population scaling | 1–16 agents, PosDis never collapses | Phase 99 |
-| Noise tolerance | <6pp drop at σ=0.5 | Phase 98 |
+| Noise tolerance | <6pp drop at σ=0.5, graceful to σ=0.9 | Phase 98 |
+| Stress test | 100 agents, 0 message drops | Phase 107 |
+| Agent dropout | Graceful: ~8pp per dropped agent | Phase 124-EXP |
+| Vocab scaling | K=2 optimal for compositionality | Phase 122-EXP |
 
 ## What This Does
 
@@ -127,9 +141,9 @@ Hardware: Tested on M3 MacBook Pro with MPS acceleration (float32 only).
 ```bibtex
 @article{kaszynski2026emergent,
   title={Emergent Compositional Communication for Latent World Properties},
-  author={Kaszy{\'n}ski, Tomek},
-  year={2026},
-  doi={10.5281/zenodo.19197757}
+  author={Kaszy{\'n}ski, Tomasz},
+  journal={arXiv preprint arXiv:2604.03266},
+  year={2026}
 }
 ```
 

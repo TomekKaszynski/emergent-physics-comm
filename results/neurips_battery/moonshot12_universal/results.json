@@ -1,0 +1,17 @@
+{
+  "conditions": {
+    "without_grl": {
+      "physics_acc": "79.3%\u00b11.5%",
+      "task_disc_acc": "56.3%\u00b19.9%",
+      "phys_m": 0.7928124999999999,
+      "task_m": 0.5631011635065079
+    },
+    "with_grl": {
+      "physics_acc": "78.2%\u00b11.5%",
+      "task_disc_acc": "46.3%\u00b118.2%",
+      "phys_m": 0.7825,
+      "task_m": 0.4631840787827969
+    }
+  },
+  "verdict": "GRL partial: task_disc 46% (chance=33%), physics 78%"
+}

@@ -1,0 +1,11 @@
+{
+  "new_model": "qwen15b",
+  "new_accuracy": "88.3%\u00b16.0%",
+  "new_vjepa_agreement": "95.0%",
+  "new_tinyllama_agreement": "95.0%",
+  "vjepa_tinyllama_agreement": "92.0%",
+  "new_to_vjepa_transfer": "73.9%\u00b113.5%",
+  "vjepa_to_new_transfer": "74.6%\u00b114.0%",
+  "new_to_tinyllama_transfer": "78.9%\u00b114.2%",
+  "tinyllama_to_new_transfer": "73.3%\u00b115.6%"
+}

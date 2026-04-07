@@ -1,0 +1,30 @@
+{
+  "audio_accuracy": "92.1%\u00b13.6%",
+  "audio_within_agreement": "100.0%",
+  "audio_vision_agreement": "95.0%",
+  "audio_text_agreement": "95.0%",
+  "vision_text_agreement": "92.0%",
+  "transfer_matrix": [
+    [
+      0.804782181460858,
+      0.4836772573425046,
+      0.6528005240746806
+    ],
+    [
+      0.5748444153291844,
+      0.8273829020635439,
+      0.642646577137242
+    ],
+    [
+      0.6191723987334862,
+      0.5361939076318376,
+      0.7466098919095971
+    ]
+  ],
+  "transfer_labels": [
+    "vision",
+    "text",
+    "audio"
+  ],
+  "verdict": "PARTIAL \u2014 mean off-diagonal 58.5%"
+}
