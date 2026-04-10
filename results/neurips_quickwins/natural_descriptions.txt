@@ -1,0 +1,206 @@
+Scene 0: I see a light cardboard box going up and down. The scale reads 14g.
+Scene 1: Spring-mass system with a 14g box constructed from cardboard. Light category.
+Scene 2: On a spring, there's a box made of cardboard. Light object, 14g.
+Scene 3: Spring experiment: 14g cardboard box. The object is light.
+Scene 4: Spring-mass system with a 14g box constructed from cardboard. Light category.
+Scene 5: Observation: box of cardboard, mass 14g, attached to spring. Classified as light.
+Scene 6: Test sample: box (cardboard), 14g. Spring oscillation shows light behavior.
+Scene 7: On a spring, there's a box made of cardboard. Light object, 14g.
+Scene 8: Spring experiment: 14g cardboard box. The object is light.
+Scene 9: Light cardboard box (14g) bouncing up and down on a spring mechanism.
+Scene 10: Attached to the spring: one heavy cardboard box, approximately 51 grams.
+Scene 11: The 51-gram cardboard box compresses the spring. It's a heavy object.
+Scene 12: A heavy cardboard box oscillates on a spring. It weighs about 51 grams.
+Scene 13: On a spring, there's a box made of cardboard. Heavy object, 51g.
+Scene 14: Attached to the spring: one heavy cardboard box, approximately 51 grams.
+Scene 15: A spring supports a heavy box. Material: cardboard. Recorded mass: 51g.
+Scene 16: A box weighing 51g hangs on the spring. It's cardboard and considered heavy.
+Scene 17: Test sample: box (cardboard), 51g. Spring oscillation shows heavy behavior.
+Scene 18: Observation: box of cardboard, mass 115g, attached to spring. Classified as very heavy.
+Scene 19: The 115-gram cardboard box compresses the spring. It's a very heavy object.
+Scene 20: Spring-mass system with a 115g box constructed from cardboard. Very heavy category.
+Scene 21: On a spring, there's a box made of cardboard. Very heavy object, 115g.
+Scene 22: A spring supports a very heavy box. Material: cardboard. Recorded mass: 115g.
+Scene 23: A box weighing 115g hangs on the spring. It's cardboard and considered very heavy.
+Scene 24: Test sample: box (cardboard), 115g. Spring oscillation shows very heavy behavior.
+Scene 25: A spring supports a very heavy box. Material: cardboard. Recorded mass: 115g.
+Scene 26: Spring-mass system with a 115g box constructed from cardboard. Very heavy category.
+Scene 27: The 32-gram dough lump compresses the spring. It's a medium-weight object.
+Scene 28: Attached to the spring: one medium-weight dough lump, approximately 32 grams.
+Scene 29: Test sample: lump (dough), 32g. Spring oscillation shows medium-weight behavior.
+Scene 30: On a spring, there's a lump made of dough. Medium-weight object, 32g.
+Scene 31: A medium-weight dough lump oscillates on a spring. It weighs about 32 grams.
+Scene 32: On a spring, there's a lump made of dough. Medium-weight object, 32g.
+Scene 33: Spring-mass system with a 32g lump constructed from dough. Medium-weight category.
+Scene 34: Test sample: lump (dough), 32g. Spring oscillation shows medium-weight behavior.
+Scene 35: The dough lump on this spring has a mass of 67g. That makes it heavy.
+Scene 36: On a spring, there's a lump made of dough. Heavy object, 67g.
+Scene 37: The 67-gram dough lump compresses the spring. It's a heavy object.
+Scene 38: A spring supports a heavy lump. Material: dough. Recorded mass: 67g.
+Scene 39: I see a heavy dough lump going up and down. The scale reads 67g.
+Scene 40: Heavy dough lump (67g) bouncing up and down on a spring mechanism.
+Scene 41: This lump is heavy and made of dough. When placed on the spring it weighs 67g.
+Scene 42: A spring supports a heavy lump. Material: dough. Recorded mass: 67g.
+Scene 43: Attached to the spring: one heavy dough lump, approximately 67 grams.
+Scene 44: On a spring, there's a lump made of dough. Heavy object, 67g.
+Scene 45: On a spring, there's a piece made of metal. Light object, 19g.
+Scene 46: Physics demo: metal piece on spring, light, measured at 19 grams.
+Scene 47: Spring experiment: 19g metal piece. The object is light.
+Scene 48: The metal piece on this spring has a mass of 19g. That makes it light.
+Scene 49: A light metal piece oscillates on a spring. It weighs about 19 grams.
+Scene 50: Spring-mass system with a 19g piece constructed from metal. Light category.
+Scene 51: Spring experiment: 19g metal piece. The object is light.
+Scene 52: The metal piece on this spring has a mass of 19g. That makes it light.
+Scene 53: I see a heavy metal piece going up and down. The scale reads 62g.
+Scene 54: Spring-mass system with a 62g piece constructed from metal. Heavy category.
+Scene 55: Spring experiment: 62g metal piece. The object is heavy.
+Scene 56: A spring supports a heavy piece. Material: metal. Recorded mass: 62g.
+Scene 57: A piece weighing 62g hangs on the spring. It's metal and considered heavy.
+Scene 58: Attached to the spring: one heavy metal piece, approximately 62 grams.
+Scene 59: Heavy metal piece (62g) bouncing up and down on a spring mechanism.
+Scene 60: Spring-mass system with a 62g piece constructed from metal. Heavy category.
+Scene 61: Attached to the spring: one very heavy metal piece, approximately 270 grams.
+Scene 62: A very heavy metal piece oscillates on a spring. It weighs about 270 grams.
+Scene 63: Observation: piece of metal, mass 270g, attached to spring. Classified as very heavy.
+Scene 64: Spring experiment: 270g metal piece. The object is very heavy.
+Scene 65: On a spring, there's a piece made of metal. Very heavy object, 270g.
+Scene 66: This piece is very heavy and made of metal. When placed on the spring it weighs 270g.
+Scene 67: Very heavy metal piece (270g) bouncing up and down on a spring mechanism.
+Scene 68: On a spring, there's a piece made of metal. Very heavy object, 270g.
+Scene 69: Spring-mass system with a 8g item constructed from plastic. Very light category.
+Scene 70: Test sample: item (plastic), 8g. Spring oscillation shows very light behavior.
+Scene 71: Physics demo: plastic item on spring, very light, measured at 8 grams.
+Scene 72: The plastic item on this spring has a mass of 8g. That makes it very light.
+Scene 73: Spring experiment: 8g plastic item. The object is very light.
+Scene 74: A very light plastic item oscillates on a spring. It weighs about 8 grams.
+Scene 75: Observation: item of plastic, mass 8g, attached to spring. Classified as very light.
+Scene 76: The plastic item on this spring has a mass of 10g. That makes it very light.
+Scene 77: Physics demo: plastic item on spring, very light, measured at 10 grams.
+Scene 78: This item is very light and made of plastic. When placed on the spring it weighs 10g.
+Scene 79: Spring-mass system with a 10g item constructed from plastic. Very light category.
+Scene 80: Attached to the spring: one very light plastic item, approximately 10 grams.
+Scene 81: Very light plastic item (10g) bouncing up and down on a spring mechanism.
+Scene 82: Attached to the spring: one very light plastic item, approximately 10 grams.
+Scene 83: The plastic item on this spring has a mass of 10g. That makes it very light.
+Scene 84: On a spring, there's a item made of plastic. Light object, 20g.
+Scene 85: The plastic item on this spring has a mass of 20g. That makes it light.
+Scene 86: The 20-gram plastic item compresses the spring. It's a light object.
+Scene 87: A light plastic item oscillates on a spring. It weighs about 20 grams.
+Scene 88: A spring supports a light item. Material: plastic. Recorded mass: 20g.
+Scene 89: Light plastic item (20g) bouncing up and down on a spring mechanism.
+Scene 90: On a spring, there's a item made of plastic. Light object, 20g.
+Scene 91: Spring-mass system with a 28g item constructed from plastic. Medium-weight category.
+Scene 92: This item is medium-weight and made of plastic. When placed on the spring it weighs 28g.
+Scene 93: Attached to the spring: one medium-weight plastic item, approximately 28 grams.
+Scene 94: Test sample: item (plastic), 28g. Spring oscillation shows medium-weight behavior.
+Scene 95: This item is medium-weight and made of plastic. When placed on the spring it weighs 28g.
+Scene 96: Spring-mass system with a 28g item constructed from plastic. Medium-weight category.
+Scene 97: Attached to the spring: one medium-weight plastic item, approximately 28 grams.
+Scene 98: Medium-weight plastic item (28g) bouncing up and down on a spring mechanism.
+Scene 99: Attached to the spring: one medium-weight plastic item, approximately 28 grams.
+Scene 100: The plastic item on this spring has a mass of 12g. That makes it very light.
+Scene 101: This item is very light and made of plastic. When placed on the spring it weighs 12g.
+Scene 102: A very light plastic item oscillates on a spring. It weighs about 12 grams.
+Scene 103: Attached to the spring: one heavy plastic item, approximately 35 grams.
+Scene 104: Spring-mass system with a 35g item constructed from plastic. Heavy category.
+Scene 105: Spring experiment: 35g plastic item. The object is heavy.
+Scene 106: Spring experiment: 35g plastic item. The object is heavy.
+Scene 107: Physics demo: plastic item on spring, heavy, measured at 35 grams.
+Scene 108: This item is heavy and made of plastic. When placed on the spring it weighs 51g.
+Scene 109: The plastic item on this spring has a mass of 51g. That makes it heavy.
+Scene 110: Heavy plastic item (51g) bouncing up and down on a spring mechanism.
+Scene 111: A item weighing 51g hangs on the spring. It's plastic and considered heavy.
+Scene 112: This item is heavy and made of plastic. When placed on the spring it weighs 51g.
+Scene 113: Heavy plastic item (51g) bouncing up and down on a spring mechanism.
+Scene 114: A heavy plastic item oscillates on a spring. It weighs about 51 grams.
+Scene 115: The plastic item on this spring has a mass of 51g. That makes it heavy.
+Scene 116: Spring experiment: 22g plastic item. The object is light.
+Scene 117: Physics demo: plastic item on spring, light, measured at 22 grams.
+Scene 118: Spring experiment: 22g plastic item. The object is light.
+Scene 119: Test sample: item (plastic), 22g. Spring oscillation shows light behavior.
+Scene 120: Test sample: item (plastic), 22g. Spring oscillation shows light behavior.
+Scene 121: Observation: item of plastic, mass 22g, attached to spring. Classified as light.
+Scene 122: Light plastic item (22g) bouncing up and down on a spring mechanism.
+Scene 123: Attached to the spring: one medium-weight plastic item, approximately 33 grams.
+Scene 124: I see a medium-weight plastic item going up and down. The scale reads 33g.
+Scene 125: The 33-gram plastic item compresses the spring. It's a medium-weight object.
+Scene 126: A spring supports a medium-weight item. Material: plastic. Recorded mass: 33g.
+Scene 127: Spring-mass system with a 33g item constructed from plastic. Medium-weight category.
+Scene 128: Test sample: item (plastic), 33g. Spring oscillation shows medium-weight behavior.
+Scene 129: Test sample: item (plastic), 33g. Spring oscillation shows medium-weight behavior.
+Scene 130: The 33-gram plastic item compresses the spring. It's a medium-weight object.
+Scene 131: The 33-gram plastic item compresses the spring. It's a medium-weight object.
+Scene 132: A medium-weight plastic item oscillates on a spring. It weighs about 33 grams.
+Scene 133: Physics demo: porcelain dish on spring, very light, measured at 8 grams.
+Scene 134: The 8-gram porcelain dish compresses the spring. It's a very light object.
+Scene 135: Attached to the spring: one very light porcelain dish, approximately 8 grams.
+Scene 136: A dish weighing 8g hangs on the spring. It's porcelain and considered very light.
+Scene 137: I see a very light porcelain dish going up and down. The scale reads 8g.
+Scene 138: Observation: dish of porcelain, mass 8g, attached to spring. Classified as very light.
+Scene 139: The porcelain dish on this spring has a mass of 33g. That makes it heavy.
+Scene 140: The porcelain dish on this spring has a mass of 33g. That makes it heavy.
+Scene 141: Heavy porcelain dish (33g) bouncing up and down on a spring mechanism.
+Scene 142: On a spring, there's a dish made of porcelain. Heavy object, 33g.
+Scene 143: A dish weighing 33g hangs on the spring. It's porcelain and considered heavy.
+Scene 144: Test sample: dish (porcelain), 33g. Spring oscillation shows heavy behavior.
+Scene 145: Observation: dish of porcelain, mass 33g, attached to spring. Classified as heavy.
+Scene 146: Observation: dish of porcelain, mass 33g, attached to spring. Classified as heavy.
+Scene 147: Physics demo: porcelain dish on spring, heavy, measured at 33 grams.
+Scene 148: This stick is light and made of wood. When placed on the spring it weighs 21g.
+Scene 149: Light wood stick (21g) bouncing up and down on a spring mechanism.
+Scene 150: Spring experiment: 21g wood stick. The object is light.
+Scene 151: A light wood stick oscillates on a spring. It weighs about 21 grams.
+Scene 152: This stick is light and made of wood. When placed on the spring it weighs 21g.
+Scene 153: Physics demo: wood stick on spring, light, measured at 21 grams.
+Scene 154: I see a light wood stick going up and down. The scale reads 21g.
+Scene 155: Attached to the spring: one light wood stick, approximately 21 grams.
+Scene 156: The 110-gram wood stick compresses the spring. It's a very heavy object.
+Scene 157: I see a very heavy wood stick going up and down. The scale reads 110g.
+Scene 158: Attached to the spring: one very heavy wood stick, approximately 110 grams.
+Scene 159: The 110-gram wood stick compresses the spring. It's a very heavy object.
+Scene 160: A very heavy wood stick oscillates on a spring. It weighs about 110 grams.
+Scene 161: Very heavy wood stick (110g) bouncing up and down on a spring mechanism.
+Scene 162: Observation: stick of wood, mass 110g, attached to spring. Classified as very heavy.
+Scene 163: The 110-gram wood stick compresses the spring. It's a very heavy object.
+Scene 164: Physics demo: wood stick on spring, very heavy, measured at 110 grams.
+Scene 165: Physics demo: wood stick on spring, very heavy, measured at 117 grams.
+Scene 166: The wood stick on this spring has a mass of 117g. That makes it very heavy.
+Scene 167: This stick is very heavy and made of wood. When placed on the spring it weighs 117g.
+Scene 168: The wood stick on this spring has a mass of 117g. That makes it very heavy.
+Scene 169: This stick is very heavy and made of wood. When placed on the spring it weighs 117g.
+Scene 170: A stick weighing 117g hangs on the spring. It's wood and considered very heavy.
+Scene 171: The wood stick on this spring has a mass of 117g. That makes it very heavy.
+Scene 172: Spring experiment: 117g wood stick. The object is very heavy.
+Scene 173: Spring experiment: 117g wood stick. The object is very heavy.
+Scene 174: Very heavy wood stick (231g) bouncing up and down on a spring mechanism.
+Scene 175: Attached to the spring: one very heavy wood stick, approximately 231 grams.
+Scene 176: This stick is very heavy and made of wood. When placed on the spring it weighs 231g.
+Scene 177: A very heavy wood stick oscillates on a spring. It weighs about 231 grams.
+Scene 178: The wood stick on this spring has a mass of 231g. That makes it very heavy.
+Scene 179: This stick is very heavy and made of wood. When placed on the spring it weighs 231g.
+Scene 180: This stick is very heavy and made of wood. When placed on the spring it weighs 231g.
+Scene 181: Physics demo: wood stick on spring, very heavy, measured at 231 grams.
+Scene 182: The 12-gram wood stick compresses the spring. It's a very light object.
+Scene 183: Spring-mass system with a 12g stick constructed from wood. Very light category.
+Scene 184: Spring experiment: 12g wood stick. The object is very light.
+Scene 185: Physics demo: wood stick on spring, very light, measured at 12 grams.
+Scene 186: A very light wood stick oscillates on a spring. It weighs about 12 grams.
+Scene 187: Spring-mass system with a 12g stick constructed from wood. Very light category.
+Scene 188: A very light wood stick oscillates on a spring. It weighs about 12 grams.
+Scene 189: Attached to the spring: one very light wood stick, approximately 12 grams.
+Scene 190: I see a very light wood stick going up and down. The scale reads 12g.
+Scene 191: A very light wood stick oscillates on a spring. It weighs about 12 grams.
+Scene 192: Light wood stick (19g) bouncing up and down on a spring mechanism.
+Scene 193: A stick weighing 19g hangs on the spring. It's wood and considered light.
+Scene 194: A light wood stick oscillates on a spring. It weighs about 19 grams.
+Scene 195: This stick is light and made of wood. When placed on the spring it weighs 19g.
+Scene 196: Light wood stick (19g) bouncing up and down on a spring mechanism.
+Scene 197: Test sample: stick (wood), 19g. Spring oscillation shows light behavior.
+Scene 198: The 19-gram wood stick compresses the spring. It's a light object.
+Scene 199: A stick weighing 19g hangs on the spring. It's wood and considered light.
+Scene 200: Medium-weight wood stick (27g) bouncing up and down on a spring mechanism.
+Scene 201: On a spring, there's a stick made of wood. Medium-weight object, 27g.
+Scene 202: A spring supports a medium-weight stick. Material: wood. Recorded mass: 27g.
+Scene 203: A medium-weight wood stick oscillates on a spring. It weighs about 27 grams.
+Scene 204: Observation: stick of wood, mass 27g, attached to spring. Classified as medium-weight.
+Scene 205: A medium-weight wood stick oscillates on a spring. It weighs about 27 grams.

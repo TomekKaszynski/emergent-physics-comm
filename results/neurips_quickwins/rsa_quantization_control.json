@@ -1,0 +1,60 @@
+{
+  "pairs": {
+    "vjepa2_vs_dinov2": {
+      "rsa_continuous": 0.503,
+      "rsa_naive_quantized": 0.405,
+      "rsa_wmcp_trained": 0.807
+    },
+    "vjepa2_vs_clip": {
+      "rsa_continuous": 0.519,
+      "rsa_naive_quantized": 0.408,
+      "rsa_wmcp_trained": 0.783
+    },
+    "vjepa2_vs_text": {
+      "rsa_continuous": 0.138,
+      "rsa_naive_quantized": 0.243,
+      "rsa_wmcp_trained": 0.739
+    },
+    "vjepa2_vs_audio": {
+      "rsa_continuous": 0.334,
+      "rsa_naive_quantized": 0.278,
+      "rsa_wmcp_trained": 0.851
+    },
+    "dinov2_vs_clip": {
+      "rsa_continuous": 0.555,
+      "rsa_naive_quantized": 0.373,
+      "rsa_wmcp_trained": 0.723
+    },
+    "dinov2_vs_text": {
+      "rsa_continuous": 0.188,
+      "rsa_naive_quantized": 0.123,
+      "rsa_wmcp_trained": 0.758
+    },
+    "dinov2_vs_audio": {
+      "rsa_continuous": 0.164,
+      "rsa_naive_quantized": 0.125,
+      "rsa_wmcp_trained": 0.812
+    },
+    "clip_vs_text": {
+      "rsa_continuous": 0.3,
+      "rsa_naive_quantized": 0.192,
+      "rsa_wmcp_trained": 0.708
+    },
+    "clip_vs_audio": {
+      "rsa_continuous": 0.16,
+      "rsa_naive_quantized": 0.151,
+      "rsa_wmcp_trained": 0.723
+    },
+    "text_vs_audio": {
+      "rsa_continuous": 0.104,
+      "rsa_naive_quantized": 0.404,
+      "rsa_wmcp_trained": 0.704
+    }
+  },
+  "summary": {
+    "mean_continuous": 0.297,
+    "mean_naive_quantized": 0.27,
+    "mean_wmcp_trained": 0.761
+  },
+  "verdict": "TRAINING DRIVES RSA: naive quantization is much lower than trained WMCP"
+}

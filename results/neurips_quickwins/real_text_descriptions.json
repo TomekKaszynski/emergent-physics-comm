@@ -1,0 +1,11 @@
+{
+  "natural_vs_vjepa": "100.0%",
+  "template_vs_vjepa": "100.0%",
+  "natural_vs_template": "100.0%",
+  "natural_accuracy": "92.0%\u00b13.0%",
+  "template_accuracy": "93.5%\u00b12.3%",
+  "nat_v_m": 1.0,
+  "tmpl_v_m": 1.0,
+  "n_templates_used": 15,
+  "verdict": "NATURAL TEXT MAINTAINS STRUCTURAL CONVERGENCE"
+}
