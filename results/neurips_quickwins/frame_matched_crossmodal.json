@@ -1,0 +1,18 @@
+{
+  "dinov2_1frame": {
+    "shape": "torch.Size([206, 1, 384])",
+    "n_positions": 2,
+    "agreement_with_text": "100.0%",
+    "accuracy": "84.8%+/-1.0%",
+    "agree_m": 1.0,
+    "acc_m": 0.8483333333333334
+  },
+  "vjepa_1frame": {
+    "shape": "torch.Size([206, 1, 1024])",
+    "n_positions": 2,
+    "agreement_with_text": "100.0%",
+    "accuracy": "86.6%+/-2.0%",
+    "agree_m": 1.0,
+    "acc_m": 0.8658333333333333
+  }
+}
