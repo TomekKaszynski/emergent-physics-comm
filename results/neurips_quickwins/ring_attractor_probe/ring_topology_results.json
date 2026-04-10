@@ -1,0 +1,172 @@
+{
+  "positions": [
+    {
+      "position": 0,
+      "vocab_size": 8,
+      "beta_1_activations": 23,
+      "beta_1_codebook": 1,
+      "longest_loop_activations": 1.1403610706329346,
+      "longest_loop_codebook": 0.11545902490615845,
+      "ring_score": 0.2527202069759369,
+      "spearman_rho": 1.0,
+      "monotonic": true,
+      "token_mass_ordering": [
+        6,
+        0,
+        4,
+        5,
+        2,
+        3
+      ],
+      "token_mass_means": {
+        "0": 54.9,
+        "2": 114.8,
+        "3": 269.9,
+        "4": 56.1,
+        "5": 74.9,
+        "6": 23.6
+      },
+      "n_active_tokens": 6
+    },
+    {
+      "position": 1,
+      "vocab_size": 8,
+      "beta_1_activations": 34,
+      "beta_1_codebook": 0,
+      "longest_loop_activations": 0.9010226726531982,
+      "longest_loop_codebook": 0.0,
+      "ring_score": 0.019496768712997437,
+      "spearman_rho": 0.9999999999999999,
+      "monotonic": true,
+      "token_mass_ordering": [
+        2,
+        7,
+        5,
+        3,
+        0
+      ],
+      "token_mass_means": {
+        "0": 83.9,
+        "2": 24.4,
+        "3": 83.7,
+        "5": 47.1,
+        "7": 34.7
+      },
+      "n_active_tokens": 5
+    }
+  ],
+  "summary": {
+    "model": "phase54c_model.pt (sender_2x8)",
+    "n_positions": 2,
+    "vocab_size": 8,
+    "n_scenes": 206,
+    "positions_with_ring": 2,
+    "positions_monotonic": 2,
+    "headline": "2/2 positions show circular topology (\u03b2\u2081>0)"
+  },
+  "k3_model": {
+    "n_positions": 8,
+    "positions": [
+      {
+        "position": 0,
+        "agent": 0,
+        "head": 0,
+        "beta_1": 18,
+        "longest_loop": 1.0340263843536377,
+        "n_active": 3,
+        "token_mass_means": {
+          "0": 10.8,
+          "1": 17.8,
+          "2": 72.3
+        }
+      },
+      {
+        "position": 1,
+        "agent": 0,
+        "head": 1,
+        "beta_1": 17,
+        "longest_loop": 1.5240888595581055,
+        "n_active": 3,
+        "token_mass_means": {
+          "0": 23.9,
+          "1": 88.7,
+          "2": 13.2
+        }
+      },
+      {
+        "position": 2,
+        "agent": 1,
+        "head": 0,
+        "beta_1": 26,
+        "longest_loop": 0.22767001390457153,
+        "n_active": 3,
+        "token_mass_means": {
+          "0": 256.9,
+          "1": 10.1,
+          "2": 59.2
+        }
+      },
+      {
+        "position": 3,
+        "agent": 1,
+        "head": 1,
+        "beta_1": 21,
+        "longest_loop": 0.16618523001670837,
+        "n_active": 3,
+        "token_mass_means": {
+          "0": 49.9,
+          "1": 234.8,
+          "2": 8.0
+        }
+      },
+      {
+        "position": 4,
+        "agent": 2,
+        "head": 0,
+        "beta_1": 9,
+        "longest_loop": 0.00798199325799942,
+        "n_active": 1,
+        "token_mass_means": {
+          "2": 57.3
+        }
+      },
+      {
+        "position": 5,
+        "agent": 2,
+        "head": 1,
+        "beta_1": 7,
+        "longest_loop": 0.010689226910471916,
+        "n_active": 1,
+        "token_mass_means": {
+          "1": 57.3
+        }
+      },
+      {
+        "position": 6,
+        "agent": 3,
+        "head": 0,
+        "beta_1": 2,
+        "longest_loop": 0.01490771770477295,
+        "n_active": 3,
+        "token_mass_means": {
+          "0": 43.2,
+          "1": 91.5,
+          "2": 19.7
+        }
+      },
+      {
+        "position": 7,
+        "agent": 3,
+        "head": 1,
+        "beta_1": 3,
+        "longest_loop": 0.01355069875717163,
+        "n_active": 2,
+        "token_mass_means": {
+          "1": 19.7,
+          "2": 85.3
+        }
+      }
+    ],
+    "n_with_ring": 8
+  }
+}
