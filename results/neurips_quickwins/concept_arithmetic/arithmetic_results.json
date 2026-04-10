@@ -1,0 +1,6 @@
+{
+  "mass_shift": "12.0%",
+  "random_shift": "24.0%",
+  "no_shift": "16.0%",
+  "n_test": 50
+}
