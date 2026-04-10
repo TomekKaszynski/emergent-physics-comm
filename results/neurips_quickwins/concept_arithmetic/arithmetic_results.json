@@ -1,6 +1,10 @@
 {
-  "mass_shift": "12.0%",
-  "random_shift": "24.0%",
-  "no_shift": "16.0%",
-  "n_test": 50
+  "mass_shift": "94.0%",
+  "random_shift": "10.0%",
+  "no_shift": "8.0%",
+  "n_test": 50,
+  "mass_dir_magnitude": 71.12260437011719,
+  "mass_shift_m": 0.94,
+  "random_shift_m": 0.1,
+  "no_shift_m": 0.08
 }

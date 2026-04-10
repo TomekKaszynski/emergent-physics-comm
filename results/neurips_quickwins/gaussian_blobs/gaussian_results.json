@@ -1,14 +1,26 @@
 {
-  "real_posdis": 0.347,
-  "gaussian_posdis": 0.315,
-  "real_accuracy": "50.8%",
-  "gaussian_accuracy": "51.8%",
+  "real_posdis": 0.599,
+  "gaussian_posdis": 0.215,
+  "real_accuracy": "93.9%",
+  "gaussian_accuracy": "48.9%",
   "real_entropy": [
-    0.307,
-    0.354
+    0.928,
+    0.789,
+    0.888,
+    0.988,
+    -0.0,
+    -0.0,
+    0.678,
+    0.912
   ],
   "gaussian_entropy": [
-    0.259,
-    0.336
+    0.603,
+    0.478,
+    0.981,
+    0.894,
+    -0.0,
+    -0.0,
+    0.202,
+    0.572
   ]
 }
